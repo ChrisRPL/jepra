@@ -59,6 +59,36 @@ impl Tensor {
             shape: self.shape.clone(),
         }
     }
+
+    pub fn offset(&self, indices: &[usize]) -> usize {
+        assert!(
+            indices.len() == self.ndim(),
+            "index rank mismatch: got {}, expected {}",
+            indices.len(),
+            self.ndim()
+        );
+
+        let mut offset = 0;
+        let mut stride = 1;
+
+        for (idx, dim) in indices.iter().rev().zip(self.shape.iter().rev()) {
+            assert!(
+                *idx < *dim,
+                "index out of bounds: index {} for dim size {}",
+                idx,
+                dim
+            );
+            offset += idx * stride;
+            stride *= dim;
+        }
+
+        offset
+    }
+
+    pub fn get(&self, indices: &[usize]) -> f32 {
+        let offset = self.offset(indices);
+        self.data[offset]
+    }
 }
 
 #[cfg(test)]
@@ -107,5 +137,54 @@ mod tests {
         let b = Tensor::new(vec![1.0, 2.0], vec![2]);
 
         let _ = a.add(&b);
+    }
+
+    #[test]
+    fn computes_offset_for_2d_tensor() {
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+
+        assert_eq!(t.offset(&[0, 0]), 0);
+        assert_eq!(t.offset(&[0, 2]), 2);
+        assert_eq!(t.offset(&[1, 0]), 3);
+        assert_eq!(t.offset(&[1, 2]), 5);
+    }
+
+    #[test]
+    fn gets_value_from_2d_tensor() {
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+
+        assert_eq!(t.get(&[0, 0]), 1.0);
+        assert_eq!(t.get(&[0, 2]), 3.0);
+        assert_eq!(t.get(&[1, 1]), 5.0);
+    }
+
+    #[test]
+    fn gets_value_from_3d_tensor() {
+        let t = Tensor::new(
+            vec![
+                1.0, 2.0, 3.0, 4.0,
+                5.0, 6.0, 7.0, 8.0,
+            ],
+            vec![2, 2, 2],
+        );
+
+        assert_eq!(t.get(&[0, 0, 0]), 1.0);
+        assert_eq!(t.get(&[0, 1, 1]), 4.0);
+        assert_eq!(t.get(&[1, 0, 0]), 5.0);
+        assert_eq!(t.get(&[1, 1, 1]), 8.0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_on_index_rank_mismatch() {
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let _ = t.get(&[0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_on_out_of_bounds_index() {
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let _ = t.get(&[0, 2]);
     }
 }
