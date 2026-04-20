@@ -89,6 +89,11 @@ impl Tensor {
         let offset = self.offset(indices);
         self.data[offset]
     }
+
+    pub fn set(&mut self, indices: &[usize], value: f32) {
+        let offset = self.offset(indices);
+        self.data[offset] = value;
+    }
 }
 
 #[cfg(test)]
@@ -175,6 +180,18 @@ mod tests {
     }
 
     #[test]
+    fn sets_value_in_2d_tensor() {
+        let mut t = Tensor::zeros(vec![2, 2]);
+
+        t.set(&[0, 1], 3.5);
+        t.set(&[1, 0], 7.0);
+
+        assert_eq!(t.get(&[0, 1]), 3.5);
+        assert_eq!(t.get(&[1, 0]), 7.0);
+        assert_eq!(t.data, vec![0.0, 3.5, 7.0, 0.0]);
+    }
+
+    #[test]
     #[should_panic]
     fn panics_on_index_rank_mismatch() {
         let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
@@ -186,5 +203,12 @@ mod tests {
     fn panics_on_out_of_bounds_index() {
         let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
         let _ = t.get(&[0, 2]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_on_set_out_of_bounds_index() {
+        let mut t = Tensor::zeros(vec![2, 2]);
+        t.set(&[2, 0], 1.0);
     }
 }
