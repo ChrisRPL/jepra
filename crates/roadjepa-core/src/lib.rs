@@ -131,6 +131,68 @@ impl Tensor {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Linear {
+    pub weight: Tensor, // shape: [in_features, out_features]
+    pub bias: Tensor,   // shape: [out_features]
+}
+
+impl Linear {
+    pub fn new(weight: Tensor, bias: Tensor) -> Self {
+        assert!(
+            weight.ndim() == 2,
+            "Linear weight must be 2D, got shape {:?}",
+            weight.shape
+        );
+
+        assert!(
+            bias.ndim() == 1,
+            "Linear bias must be 1D, got shape {:?}",
+            bias.shape
+        );
+
+        let out_features = weight.shape[1];
+        assert!(
+            bias.shape[0] == out_features,
+            "Linear bias shape mismatch: bias {:?}, expected [{}]",
+            bias.shape,
+            out_features
+        );
+
+        Self { weight, bias }
+    }
+
+    pub fn forward(&self, x: &Tensor) -> Tensor {
+        assert!(
+            x.ndim() == 2,
+            "Linear input must be 2D, got shape {:?}",
+            x.shape
+        );
+
+        let in_features = self.weight.shape[0];
+        let out_features = self.weight.shape[1];
+
+        assert!(
+            x.shape[1] == in_features,
+            "Linear input feature mismatch: input {:?}, weight {:?}",
+            x.shape,
+            self.weight.shape
+        );
+
+        let mut y = x.matmul(&self.weight);
+        let batch_size = x.shape[0];
+
+        for i in 0..batch_size {
+            for j in 0..out_features {
+                let value = y.get(&[i, j]) + self.bias.get(&[j]);
+                y.set(&[i, j], value);
+            }
+        }
+
+        y
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -276,5 +338,63 @@ mod tests {
     fn panics_on_set_out_of_bounds_index() {
         let mut t = Tensor::zeros(vec![2, 2]);
         t.set(&[2, 0], 1.0);
+    }
+
+        #[test]
+    fn linear_forward_works() {
+        let weight = Tensor::new(
+            vec![
+                1.0, 2.0,
+                3.0, 4.0,
+                5.0, 6.0,
+            ],
+            vec![3, 2],
+        );
+
+        let bias = Tensor::new(vec![0.5, -1.0], vec![2]);
+
+        let linear = Linear::new(weight, bias);
+
+        let x = Tensor::new(
+            vec![
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+            ],
+            vec![2, 3],
+        );
+
+        let y = linear.forward(&x);
+
+        assert_eq!(y.shape, vec![2, 2]);
+        assert_eq!(y.data, vec![22.5, 27.0, 49.5, 63.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn linear_panics_on_bias_shape_mismatch() {
+        let weight = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let bias = Tensor::new(vec![1.0], vec![1]);
+
+        let _ = Linear::new(weight, bias);
+    }
+
+    #[test]
+    #[should_panic]
+    fn linear_panics_on_input_feature_mismatch() {
+        let weight = Tensor::new(
+            vec![
+                1.0, 2.0,
+                3.0, 4.0,
+                5.0, 6.0,
+            ],
+            vec![3, 2],
+        );
+
+        let bias = Tensor::new(vec![0.0, 0.0], vec![2]);
+        let linear = Linear::new(weight, bias);
+
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+
+        let _ = linear.forward(&x);
     }
 }
