@@ -38,6 +38,27 @@ impl Tensor {
     pub fn is_empty(&self) -> bool {
         self.data.is_empty()
     }
+
+    pub fn add(&self, other: &Tensor) -> Tensor {
+        assert!(
+            self.shape == other.shape,
+            "shape mismatch in add: left {:?}, right {:?}",
+            self.shape,
+            other.shape
+        );
+
+        let data = self
+            .data
+            .iter()
+            .zip(other.data.iter())
+            .map(|(a, b)| a + b)
+            .collect();
+
+        Tensor {
+            data,
+            shape: self.shape.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -66,5 +87,25 @@ mod tests {
     #[should_panic]
     fn panics_on_invalid_shape() {
         let _ = Tensor::new(vec![1.0, 2.0, 3.0], vec![2, 2]);
+    }
+
+    #[test]
+    fn adds_two_tensors() {
+        let a = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b = Tensor::new(vec![10.0, 20.0, 30.0, 40.0], vec![2, 2]);
+
+        let c = a.add(&b);
+
+        assert_eq!(c.shape, vec![2, 2]);
+        assert_eq!(c.data, vec![11.0, 22.0, 33.0, 44.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_on_add_shape_mismatch() {
+        let a = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b = Tensor::new(vec![1.0, 2.0], vec![2]);
+
+        let _ = a.add(&b);
     }
 }
