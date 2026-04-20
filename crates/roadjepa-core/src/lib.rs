@@ -60,6 +60,19 @@ impl Tensor {
         }
     }
 
+    pub fn relu(&self) -> Tensor {
+        let data = self
+            .data
+            .iter()
+            .map(|x| if *x > 0.0 { *x } else { 0.0 })
+            .collect();
+
+        Tensor {
+            data,
+            shape: self.shape.clone(),
+        }
+    }
+
     pub fn offset(&self, indices: &[usize]) -> usize {
         assert!(
             indices.len() == self.ndim(),
@@ -396,5 +409,29 @@ mod tests {
         let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
 
         let _ = linear.forward(&x);
+    }
+
+    #[test]
+    fn relu_works() {
+        let t = Tensor::new(
+            vec![
+                -2.0, -0.5, 0.0,
+                 1.0,  3.5, -4.0,
+            ],
+            vec![2, 3],
+        );
+
+        let y = t.relu();
+
+        assert_eq!(y.shape, vec![2, 3]);
+        assert_eq!(y.data, vec![0.0, 0.0, 0.0, 1.0, 3.5, 0.0]);
+    }
+
+    #[test]
+    fn relu_preserves_shape() {
+        let t = Tensor::new(vec![-1.0, 2.0, -3.0, 4.0], vec![2, 2]);
+        let y = t.relu();
+
+        assert_eq!(y.shape, vec![2, 2]);
     }
 }
