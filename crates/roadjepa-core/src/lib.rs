@@ -206,6 +206,31 @@ impl Linear {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct Predictor {
+    pub fc1: Linear,
+    pub fc2: Linear,
+}
+
+impl Predictor {
+    pub fn new(fc1: Linear, fc2: Linear) -> Self {
+        assert!(
+            fc1.weight.shape[1] == fc2.weight.shape[0],
+            "Predictor layer mismatch: fc1 output {} != fc2 input {}",
+            fc1.weight.shape[1],
+            fc2.weight.shape[0]
+        );
+
+        Self { fc1, fc2 }
+    }
+
+    pub fn forward(&self, x: &Tensor) -> Tensor {
+        let h = self.fc1.forward(x);
+        let h = h.relu();
+        self.fc2.forward(&h)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,5 +458,78 @@ mod tests {
         let y = t.relu();
 
         assert_eq!(y.shape, vec![2, 2]);
+    }
+
+        #[test]
+    fn tiny_predictor_forward_works() {
+        let fc1 = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, 0.0,
+                ],
+                vec![3, 4],
+            ),
+            Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![4]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0,
+                    0.0, 1.0,
+                    1.0, 1.0,
+                    0.0, 0.0,
+                ],
+                vec![4, 2],
+            ),
+            Tensor::new(vec![0.5, -0.5], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+
+        let x = Tensor::new(
+            vec![
+                1.0, -2.0, 3.0,
+                -1.0, 2.0, -3.0,
+            ],
+            vec![2, 3],
+        );
+
+        let y = predictor.forward(&x);
+
+        assert_eq!(y.shape, vec![2, 2]);
+        assert_eq!(y.data, vec![4.5, 2.5, 0.5, 1.5]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn tiny_predictor_panics_on_layer_mismatch() {
+        let fc1 = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0,
+                ],
+                vec![2, 3],
+            ),
+            Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0,
+                    0.0, 1.0,
+                    1.0, 1.0,
+                    0.0, 0.0,
+                ],
+                vec![4, 2],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let _ = Predictor::new(fc1, fc2);
     }
 }
