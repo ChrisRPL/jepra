@@ -94,6 +94,41 @@ impl Tensor {
         let offset = self.offset(indices);
         self.data[offset] = value;
     }
+
+    pub fn matmul(&self, other: &Tensor) -> Tensor {
+        assert!(
+            self.ndim() == 2 && other.ndim() == 2,
+            "matmul currently supports only 2D tensors, got {:?} and {:?}",
+            self.shape,
+            other.shape
+        );
+
+        let m = self.shape[0];
+        let k_left = self.shape[1];
+        let k_right = other.shape[0];
+        let n = other.shape[1];
+
+        assert!(
+            k_left == k_right,
+            "matmul inner dimension mismatch: left {:?}, right {:?}",
+            self.shape,
+            other.shape
+        );
+
+        let mut out = Tensor::zeros(vec![m, n]);
+
+        for i in 0..m {
+            for j in 0..n {
+                let mut sum = 0.0;
+                for k in 0..k_left {
+                    sum += self.get(&[i, k]) * other.get(&[k, j]);
+                }
+                out.set(&[i, j], sum);
+            }
+        }
+
+        out
+    }
 }
 
 #[cfg(test)]
@@ -166,10 +201,7 @@ mod tests {
     #[test]
     fn gets_value_from_3d_tensor() {
         let t = Tensor::new(
-            vec![
-                1.0, 2.0, 3.0, 4.0,
-                5.0, 6.0, 7.0, 8.0,
-            ],
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
             vec![2, 2, 2],
         );
 
@@ -189,6 +221,40 @@ mod tests {
         assert_eq!(t.get(&[0, 1]), 3.5);
         assert_eq!(t.get(&[1, 0]), 7.0);
         assert_eq!(t.data, vec![0.0, 3.5, 7.0, 0.0]);
+    }
+
+    #[test]
+    fn matmul_works_for_2d_tensors() {
+        let a = Tensor::new(
+            vec![
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+            ],
+            vec![2, 3],
+        );
+
+        let b = Tensor::new(
+            vec![
+                7.0,  8.0,
+                9.0, 10.0,
+                11.0, 12.0,
+            ],
+            vec![3, 2],
+        );
+
+        let c = a.matmul(&b);
+
+        assert_eq!(c.shape, vec![2, 2]);
+        assert_eq!(c.data, vec![58.0, 64.0, 139.0, 154.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn panics_on_matmul_dimension_mismatch() {
+        let a = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
+
+        let _ = a.matmul(&b);
     }
 
     #[test]
