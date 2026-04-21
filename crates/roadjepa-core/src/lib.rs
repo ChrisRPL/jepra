@@ -332,7 +332,7 @@ impl Linear {
         }
     }
 
-        pub fn sgd_step(&mut self, grads: &LinearGrads, lr: f32) {
+    pub fn sgd_step(&mut self, grads: &LinearGrads, lr: f32) {
         assert!(
             self.weight.shape == grads.grad_weight.shape,
             "sgd_step weight shape mismatch: weight {:?}, grad {:?}",
@@ -396,6 +396,29 @@ pub fn mse_loss(pred: &Tensor, target: &Tensor) -> f32 {
         .sum();
 
     sum_sq / pred.len() as f32
+}
+
+pub fn mse_loss_grad(pred: &Tensor, target: &Tensor) -> Tensor {
+    assert!(
+        pred.shape == target.shape,
+        "mse_loss_grad shape mismatch: pred {:?}, target {:?}",
+        pred.shape,
+        target.shape
+    );
+
+    let scale = 2.0 / pred.len() as f32;
+
+    let data = pred
+        .data
+        .iter()
+        .zip(target.data.iter())
+        .map(|(p, t)| scale * (p - t))
+        .collect();
+
+    Tensor {
+        data,
+        shape: pred.shape.clone(),
+    }
 }
 
 #[cfg(test)]
@@ -809,7 +832,10 @@ mod tests {
         let grads = linear.backward(&x, &grad_out);
 
         assert_eq!(grads.grad_weight.shape, vec![3, 2]);
-        assert_eq!(grads.grad_weight.data, vec![6.5, 9.0, 8.5, 12.0, 10.5, 15.0]);
+        assert_eq!(
+            grads.grad_weight.data,
+            vec![6.5, 9.0, 8.5, 12.0, 10.5, 15.0]
+        );
 
         assert_eq!(grads.grad_bias.shape, vec![2]);
         assert_eq!(grads.grad_bias.data, vec![2.0, 3.0]);
@@ -833,43 +859,22 @@ mod tests {
         let _ = linear.backward(&x, &grad_out);
     }
 
-        #[test]
+    #[test]
     fn linear_sgd_step_updates_parameters() {
         let mut linear = Linear::new(
-            Tensor::new(
-                vec![
-                    1.0, 2.0,
-                    3.0, 4.0,
-                    5.0, 6.0,
-                ],
-                vec![3, 2],
-            ),
+            Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]),
             Tensor::new(vec![0.1, -0.2], vec![2]),
         );
 
         let grads = LinearGrads {
             grad_input: Tensor::zeros(vec![2, 3]),
-            grad_weight: Tensor::new(
-                vec![
-                    0.5, 1.0,
-                    1.5, 2.0,
-                    2.5, 3.0,
-                ],
-                vec![3, 2],
-            ),
+            grad_weight: Tensor::new(vec![0.5, 1.0, 1.5, 2.0, 2.5, 3.0], vec![3, 2]),
             grad_bias: Tensor::new(vec![0.25, 0.75], vec![2]),
         };
 
         linear.sgd_step(&grads, 0.1);
 
-        assert_eq!(
-            linear.weight.data,
-            vec![
-                0.95, 1.9,
-                2.85, 3.8,
-                4.75, 5.7,
-            ]
-        );
+        assert_eq!(linear.weight.data, vec![0.95, 1.9, 2.85, 3.8, 4.75, 5.7,]);
 
         assert_eq!(linear.bias.data, vec![0.075, -0.275]);
     }
@@ -878,14 +883,7 @@ mod tests {
     #[should_panic]
     fn linear_sgd_step_panics_on_weight_shape_mismatch() {
         let mut linear = Linear::new(
-            Tensor::new(
-                vec![
-                    1.0, 2.0,
-                    3.0, 4.0,
-                    5.0, 6.0,
-                ],
-                vec![3, 2],
-            ),
+            Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]),
             Tensor::new(vec![0.0, 0.0], vec![2]),
         );
 
@@ -896,5 +894,57 @@ mod tests {
         };
 
         linear.sgd_step(&grads, 0.1);
+    }
+
+    #[test]
+    fn mse_loss_grad_works() {
+        let pred = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
+        let target = Tensor::new(vec![1.0, 4.0, 2.0], vec![3]);
+
+        let grad = mse_loss_grad(&pred, &target);
+
+        assert_eq!(grad.shape, vec![3]);
+        assert!((grad.data[0] - 0.0).abs() < 1e-6);
+        assert!((grad.data[1] - (-1.3333334)).abs() < 1e-6);
+        assert!((grad.data[2] - 0.6666667).abs() < 1e-6);
+    }
+
+    #[test]
+    fn linear_training_step_reduces_mse_loss() {
+        let mut linear = Linear::new(
+            Tensor::new(vec![0.0, 0.0], vec![2, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+        );
+
+        let x = Tensor::new(vec![1.0, 2.0], vec![1, 2]);
+        let target = Tensor::new(vec![3.0], vec![1, 1]);
+
+        let pred_before = linear.forward(&x);
+        let loss_before = mse_loss(&pred_before, &target);
+
+        let grad_out = mse_loss_grad(&pred_before, &target);
+        let grads = linear.backward(&x, &grad_out);
+        linear.sgd_step(&grads, 0.1);
+
+        let pred_after = linear.forward(&x);
+        let loss_after = mse_loss(&pred_after, &target);
+
+        assert!(loss_after < loss_before);
+
+        assert!((linear.weight.data[0] - 0.6).abs() < 1e-6);
+        assert!((linear.weight.data[1] - 1.2).abs() < 1e-6);
+        assert!((linear.bias.data[0] - 0.6).abs() < 1e-6);
+
+        assert!((loss_before - 9.0).abs() < 1e-6);
+        assert!((loss_after - 0.36).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic]
+    fn mse_loss_grad_panics_on_shape_mismatch() {
+        let pred = Tensor::new(vec![1.0, 2.0], vec![2]);
+        let target = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
+
+        let _ = mse_loss_grad(&pred, &target);
     }
 }
