@@ -112,7 +112,7 @@ impl Tensor {
         self.data[offset] = value;
     }
 
-        pub fn add_inplace(&mut self, other: &Tensor) {
+    pub fn add_inplace(&mut self, other: &Tensor) {
         assert!(
             self.shape == other.shape,
             "add_inplace shape mismatch: left {:?}, right {:?}",
@@ -173,7 +173,7 @@ impl Tensor {
         out
     }
 
-        pub fn transpose(&self) -> Tensor {
+    pub fn transpose(&self) -> Tensor {
         assert!(
             self.ndim() == 2,
             "transpose currently supports only 2D tensors, got shape {:?}",
@@ -189,6 +189,29 @@ impl Tensor {
             for j in 0..cols {
                 out.set(&[j, i], self.get(&[i, j]));
             }
+        }
+
+        out
+    }
+
+    pub fn sum_axis0(&self) -> Tensor {
+        assert!(
+            self.ndim() == 2,
+            "sum_axis0 currently supports only 2D tensors, got shape {:?}",
+            self.shape
+        );
+
+        let rows = self.shape[0];
+        let cols = self.shape[1];
+
+        let mut out = Tensor::zeros(vec![cols]);
+
+        for j in 0..cols {
+            let mut sum = 0.0;
+            for i in 0..rows {
+                sum += self.get(&[i, j]);
+            }
+            out.set(&[j], sum);
         }
 
         out
@@ -372,10 +395,7 @@ mod tests {
 
     #[test]
     fn gets_value_from_3d_tensor() {
-        let t = Tensor::new(
-            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0],
-            vec![2, 2, 2],
-        );
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], vec![2, 2, 2]);
 
         assert_eq!(t.get(&[0, 0, 0]), 1.0);
         assert_eq!(t.get(&[0, 1, 1]), 4.0);
@@ -397,22 +417,9 @@ mod tests {
 
     #[test]
     fn matmul_works_for_2d_tensors() {
-        let a = Tensor::new(
-            vec![
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-            ],
-            vec![2, 3],
-        );
+        let a = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
 
-        let b = Tensor::new(
-            vec![
-                7.0,  8.0,
-                9.0, 10.0,
-                11.0, 12.0,
-            ],
-            vec![3, 2],
-        );
+        let b = Tensor::new(vec![7.0, 8.0, 9.0, 10.0, 11.0, 12.0], vec![3, 2]);
 
         let c = a.matmul(&b);
 
@@ -450,28 +457,15 @@ mod tests {
         t.set(&[2, 0], 1.0);
     }
 
-        #[test]
+    #[test]
     fn linear_forward_works() {
-        let weight = Tensor::new(
-            vec![
-                1.0, 2.0,
-                3.0, 4.0,
-                5.0, 6.0,
-            ],
-            vec![3, 2],
-        );
+        let weight = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
 
         let bias = Tensor::new(vec![0.5, -1.0], vec![2]);
 
         let linear = Linear::new(weight, bias);
 
-        let x = Tensor::new(
-            vec![
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-            ],
-            vec![2, 3],
-        );
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
 
         let y = linear.forward(&x);
 
@@ -491,14 +485,7 @@ mod tests {
     #[test]
     #[should_panic]
     fn linear_panics_on_input_feature_mismatch() {
-        let weight = Tensor::new(
-            vec![
-                1.0, 2.0,
-                3.0, 4.0,
-                5.0, 6.0,
-            ],
-            vec![3, 2],
-        );
+        let weight = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]);
 
         let bias = Tensor::new(vec![0.0, 0.0], vec![2]);
         let linear = Linear::new(weight, bias);
@@ -510,13 +497,7 @@ mod tests {
 
     #[test]
     fn relu_works() {
-        let t = Tensor::new(
-            vec![
-                -2.0, -0.5, 0.0,
-                 1.0,  3.5, -4.0,
-            ],
-            vec![2, 3],
-        );
+        let t = Tensor::new(vec![-2.0, -0.5, 0.0, 1.0, 3.5, -4.0], vec![2, 3]);
 
         let y = t.relu();
 
@@ -532,42 +513,24 @@ mod tests {
         assert_eq!(y.shape, vec![2, 2]);
     }
 
-        #[test]
+    #[test]
     fn tiny_predictor_forward_works() {
         let fc1 = Linear::new(
             Tensor::new(
-                vec![
-                    1.0, 0.0, 0.0, 0.0,
-                    0.0, 1.0, 0.0, 0.0,
-                    0.0, 0.0, 1.0, 0.0,
-                ],
+                vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
                 vec![3, 4],
             ),
             Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![4]),
         );
 
         let fc2 = Linear::new(
-            Tensor::new(
-                vec![
-                    1.0, 0.0,
-                    0.0, 1.0,
-                    1.0, 1.0,
-                    0.0, 0.0,
-                ],
-                vec![4, 2],
-            ),
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0], vec![4, 2]),
             Tensor::new(vec![0.5, -0.5], vec![2]),
         );
 
         let predictor = Predictor::new(fc1, fc2);
 
-        let x = Tensor::new(
-            vec![
-                1.0, -2.0, 3.0,
-                -1.0, 2.0, -3.0,
-            ],
-            vec![2, 3],
-        );
+        let x = Tensor::new(vec![1.0, -2.0, 3.0, -1.0, 2.0, -3.0], vec![2, 3]);
 
         let y = predictor.forward(&x);
 
@@ -579,33 +542,19 @@ mod tests {
     #[should_panic]
     fn tiny_predictor_panics_on_layer_mismatch() {
         let fc1 = Linear::new(
-            Tensor::new(
-                vec![
-                    1.0, 0.0, 0.0,
-                    0.0, 1.0, 0.0,
-                ],
-                vec![2, 3],
-            ),
+            Tensor::new(vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0], vec![2, 3]),
             Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
         );
 
         let fc2 = Linear::new(
-            Tensor::new(
-                vec![
-                    1.0, 0.0,
-                    0.0, 1.0,
-                    1.0, 1.0,
-                    0.0, 0.0,
-                ],
-                vec![4, 2],
-            ),
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0], vec![4, 2]),
             Tensor::new(vec![0.0, 0.0], vec![2]),
         );
 
         let _ = Predictor::new(fc1, fc2);
     }
 
-        #[test]
+    #[test]
     fn mse_loss_works() {
         let pred = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
         let target = Tensor::new(vec![1.0, 4.0, 2.0], vec![3]);
@@ -635,50 +584,26 @@ mod tests {
         let _ = mse_loss(&pred, &target);
     }
 
-        #[test]
+    #[test]
     fn end_to_end_predictor_and_loss_works() {
         let fc1 = Linear::new(
             Tensor::new(
-                vec![
-                    1.0, 0.0, 0.0, 0.0,
-                    0.0, 1.0, 0.0, 0.0,
-                    0.0, 0.0, 1.0, 0.0,
-                ],
+                vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
                 vec![3, 4],
             ),
             Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![4]),
         );
 
         let fc2 = Linear::new(
-            Tensor::new(
-                vec![
-                    1.0, 0.0,
-                    0.0, 1.0,
-                    1.0, 1.0,
-                    0.0, 0.0,
-                ],
-                vec![4, 2],
-            ),
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0], vec![4, 2]),
             Tensor::new(vec![0.5, -0.5], vec![2]),
         );
 
         let predictor = Predictor::new(fc1, fc2);
 
-        let x = Tensor::new(
-            vec![
-                1.0, -2.0, 3.0,
-                -1.0, 2.0, -3.0,
-            ],
-            vec![2, 3],
-        );
+        let x = Tensor::new(vec![1.0, -2.0, 3.0, -1.0, 2.0, -3.0], vec![2, 3]);
 
-        let target = Tensor::new(
-            vec![
-                4.0, 3.0,
-                1.0, 1.0,
-            ],
-            vec![2, 2],
-        );
+        let target = Tensor::new(vec![4.0, 3.0, 1.0, 1.0], vec![2, 2]);
 
         let pred = predictor.forward(&x);
         let loss = mse_loss(&pred, &target);
@@ -686,16 +611,16 @@ mod tests {
         assert_eq!(pred.shape, vec![2, 2]);
         assert_eq!(pred.data, vec![4.5, 2.5, 0.5, 1.5]);
 
-        let expected =
-            ((4.5_f32 - 4.0).powi(2)
+        let expected = ((4.5_f32 - 4.0).powi(2)
             + (2.5_f32 - 3.0).powi(2)
             + (0.5_f32 - 1.0).powi(2)
-            + (1.5_f32 - 1.0).powi(2)) / 4.0;
+            + (1.5_f32 - 1.0).powi(2))
+            / 4.0;
 
         assert!((loss - expected).abs() < 1e-6);
     }
 
-        #[test]
+    #[test]
     fn add_inplace_works() {
         let mut a = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
         let b = Tensor::new(vec![10.0, 20.0, 30.0, 40.0], vec![2, 2]);
@@ -744,15 +669,9 @@ mod tests {
         assert_eq!(z.data, vec![0.0, 0.0, 0.0, 0.0]);
     }
 
-        #[test]
+    #[test]
     fn transpose_works_for_2d_tensor() {
-        let t = Tensor::new(
-            vec![
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-            ],
-            vec![2, 3],
-        );
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
 
         let y = t.transpose();
 
@@ -762,13 +681,7 @@ mod tests {
 
     #[test]
     fn transpose_of_square_tensor_works() {
-        let t = Tensor::new(
-            vec![
-                1.0, 2.0,
-                3.0, 4.0,
-            ],
-            vec![2, 2],
-        );
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
 
         let y = t.transpose();
 
@@ -781,5 +694,38 @@ mod tests {
     fn transpose_panics_for_non_2d_tensor() {
         let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2, 1]);
         let _ = t.transpose();
+    }
+
+        #[test]
+    fn sum_axis0_works_for_2d_tensor() {
+        let t = Tensor::new(
+            vec![
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+            ],
+            vec![2, 3],
+        );
+
+        let y = t.sum_axis0();
+
+        assert_eq!(y.shape, vec![3]);
+        assert_eq!(y.data, vec![5.0, 7.0, 9.0]);
+    }
+
+    #[test]
+    fn sum_axis0_works_for_single_row() {
+        let t = Tensor::new(vec![1.5, -2.0, 4.0], vec![1, 3]);
+
+        let y = t.sum_axis0();
+
+        assert_eq!(y.shape, vec![3]);
+        assert_eq!(y.data, vec![1.5, -2.0, 4.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn sum_axis0_panics_for_non_2d_tensor() {
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2, 1]);
+        let _ = t.sum_axis0();
     }
 }
