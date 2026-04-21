@@ -231,6 +231,27 @@ impl Predictor {
     }
 }
 
+pub fn mse_loss(pred: &Tensor, target: &Tensor) -> f32 {
+    assert!(
+        pred.shape == target.shape,
+        "mse_loss shape mismatch: pred {:?}, target {:?}",
+        pred.shape,
+        target.shape
+    );
+
+    let sum_sq: f32 = pred
+        .data
+        .iter()
+        .zip(target.data.iter())
+        .map(|(a, b)| {
+            let diff = a - b;
+            diff * diff
+        })
+        .sum();
+
+    sum_sq / pred.len() as f32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -531,5 +552,35 @@ mod tests {
         );
 
         let _ = Predictor::new(fc1, fc2);
+    }
+
+        #[test]
+    fn mse_loss_works() {
+        let pred = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
+        let target = Tensor::new(vec![1.0, 4.0, 2.0], vec![3]);
+
+        let loss = mse_loss(&pred, &target);
+
+        let expected = (0.0_f32.powi(2) + (-2.0_f32).powi(2) + 1.0_f32.powi(2)) / 3.0;
+        assert!((loss - expected).abs() < 1e-6);
+    }
+
+    #[test]
+    fn mse_loss_is_zero_for_identical_tensors() {
+        let pred = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let target = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+
+        let loss = mse_loss(&pred, &target);
+
+        assert!((loss - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic]
+    fn mse_loss_panics_on_shape_mismatch() {
+        let pred = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
+        let target = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+
+        let _ = mse_loss(&pred, &target);
     }
 }
