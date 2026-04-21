@@ -108,6 +108,32 @@ impl Tensor {
         self.data[offset] = value;
     }
 
+        pub fn add_inplace(&mut self, other: &Tensor) {
+        assert!(
+            self.shape == other.shape,
+            "add_inplace shape mismatch: left {:?}, right {:?}",
+            self.shape,
+            other.shape
+        );
+
+        for (a, b) in self.data.iter_mut().zip(other.data.iter()) {
+            *a += *b;
+        }
+    }
+
+    pub fn sub_scaled_inplace(&mut self, other: &Tensor, scale: f32) {
+        assert!(
+            self.shape == other.shape,
+            "sub_scaled_inplace shape mismatch: left {:?}, right {:?}",
+            self.shape,
+            other.shape
+        );
+
+        for (a, b) in self.data.iter_mut().zip(other.data.iter()) {
+            *a -= scale * *b;
+        }
+    }
+
     pub fn matmul(&self, other: &Tensor) -> Tensor {
         assert!(
             self.ndim() == 2 && other.ndim() == 2,
@@ -642,5 +668,44 @@ mod tests {
             + (1.5_f32 - 1.0).powi(2)) / 4.0;
 
         assert!((loss - expected).abs() < 1e-6);
+    }
+
+        #[test]
+    fn add_inplace_works() {
+        let mut a = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b = Tensor::new(vec![10.0, 20.0, 30.0, 40.0], vec![2, 2]);
+
+        a.add_inplace(&b);
+
+        assert_eq!(a.shape, vec![2, 2]);
+        assert_eq!(a.data, vec![11.0, 22.0, 33.0, 44.0]);
+    }
+
+    #[test]
+    fn sub_scaled_inplace_works() {
+        let mut param = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
+        let grad = Tensor::new(vec![0.1, 0.2, 0.3], vec![3]);
+
+        param.sub_scaled_inplace(&grad, 0.5);
+
+        assert_eq!(param.data, vec![0.95, 1.9, 2.85]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn add_inplace_panics_on_shape_mismatch() {
+        let mut a = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let b = Tensor::new(vec![1.0, 2.0], vec![2]);
+
+        a.add_inplace(&b);
+    }
+
+    #[test]
+    #[should_panic]
+    fn sub_scaled_inplace_panics_on_shape_mismatch() {
+        let mut param = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
+        let grad = Tensor::new(vec![0.1, 0.2], vec![2]);
+
+        param.sub_scaled_inplace(&grad, 0.1);
     }
 }
