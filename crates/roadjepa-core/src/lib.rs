@@ -172,6 +172,27 @@ impl Tensor {
 
         out
     }
+
+        pub fn transpose(&self) -> Tensor {
+        assert!(
+            self.ndim() == 2,
+            "transpose currently supports only 2D tensors, got shape {:?}",
+            self.shape
+        );
+
+        let rows = self.shape[0];
+        let cols = self.shape[1];
+
+        let mut out = Tensor::zeros(vec![cols, rows]);
+
+        for i in 0..rows {
+            for j in 0..cols {
+                out.set(&[j, i], self.get(&[i, j]));
+            }
+        }
+
+        out
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -721,5 +742,44 @@ mod tests {
 
         assert_eq!(z.shape, vec![2, 2]);
         assert_eq!(z.data, vec![0.0, 0.0, 0.0, 0.0]);
+    }
+
+        #[test]
+    fn transpose_works_for_2d_tensor() {
+        let t = Tensor::new(
+            vec![
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+            ],
+            vec![2, 3],
+        );
+
+        let y = t.transpose();
+
+        assert_eq!(y.shape, vec![3, 2]);
+        assert_eq!(y.data, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+    }
+
+    #[test]
+    fn transpose_of_square_tensor_works() {
+        let t = Tensor::new(
+            vec![
+                1.0, 2.0,
+                3.0, 4.0,
+            ],
+            vec![2, 2],
+        );
+
+        let y = t.transpose();
+
+        assert_eq!(y.shape, vec![2, 2]);
+        assert_eq!(y.data, vec![1.0, 3.0, 2.0, 4.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn transpose_panics_for_non_2d_tensor() {
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2, 1]);
+        let _ = t.transpose();
     }
 }
