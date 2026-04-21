@@ -1,16 +1,18 @@
+pub mod conv;
+pub mod encoder;
 pub mod init;
 pub mod linear;
 pub mod losses;
 pub mod predictor;
 pub mod tensor;
-pub mod conv;
 
+pub use conv::Conv2d;
+pub use encoder::ConvEncoder;
 pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
 pub use predictor::{Predictor, PredictorGrads};
 pub use tensor::Tensor;
-pub use conv::Conv2d;
 
 #[cfg(test)]
 mod tests {
@@ -727,24 +729,14 @@ mod tests {
         assert_eq!(linear.bias.shape, vec![4]);
     }
 
-        #[test]
+    #[test]
     fn conv2d_forward_works_without_padding() {
         let x = Tensor::new(
-            vec![
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-                7.0, 8.0, 9.0,
-            ],
+            vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
             vec![1, 1, 3, 3],
         );
 
-        let weight = Tensor::new(
-            vec![
-                1.0, 0.0,
-                0.0, 1.0,
-            ],
-            vec![1, 1, 2, 2],
-        );
+        let weight = Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![1, 1, 2, 2]);
 
         let bias = Tensor::new(vec![0.0], vec![1]);
 
@@ -757,21 +749,9 @@ mod tests {
 
     #[test]
     fn conv2d_forward_works_with_padding() {
-        let x = Tensor::new(
-            vec![
-                1.0, 2.0,
-                3.0, 4.0,
-            ],
-            vec![1, 1, 2, 2],
-        );
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
 
-        let weight = Tensor::new(
-            vec![
-                1.0, 1.0,
-                1.0, 1.0,
-            ],
-            vec![1, 1, 2, 2],
-        );
+        let weight = Tensor::new(vec![1.0, 1.0, 1.0, 1.0], vec![1, 1, 2, 2]);
 
         let bias = Tensor::new(vec![0.0], vec![1]);
 
@@ -791,5 +771,69 @@ mod tests {
 
         let conv = Conv2d::new(weight, bias, 1, 0);
         let _ = conv.forward(&x);
+    }
+
+    #[test]
+    fn conv_encoder_forward_works() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0, in channel 0, 1x1 kernel
+                    2.0, // out channel 1, in channel 0, 1x1 kernel
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0, in channel 0
+                    1.0, // out channel 0, in channel 1
+                ],
+                vec![1, 2, 1, 1],
+            ),
+            Tensor::new(vec![0.0], vec![1]),
+            1,
+            0,
+        );
+
+        let encoder = ConvEncoder::new(conv1, conv2);
+
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+
+        let y = encoder.forward(&x);
+
+        assert_eq!(y.shape, vec![1, 1, 2, 2]);
+        assert_eq!(y.data, vec![3.0, 6.0, 9.0, 12.0]);
+    }
+
+    #[test]
+    fn conv_encoder_relu_blocks_negative_values() {
+        let conv1 = Conv2d::new(
+            Tensor::new(vec![1.0], vec![1, 1, 1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0], vec![1, 1, 1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+            1,
+            0,
+        );
+
+        let encoder = ConvEncoder::new(conv1, conv2);
+
+        let x = Tensor::new(vec![-1.0, 2.0, -3.0, 4.0], vec![1, 1, 2, 2]);
+
+        let y = encoder.forward(&x);
+
+        assert_eq!(y.shape, vec![1, 1, 2, 2]);
+        assert_eq!(y.data, vec![0.0, 2.0, 0.0, 4.0]);
     }
 }
