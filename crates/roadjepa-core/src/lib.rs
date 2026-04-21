@@ -3,12 +3,14 @@ pub mod linear;
 pub mod losses;
 pub mod predictor;
 pub mod tensor;
+pub mod conv;
 
 pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
 pub use predictor::{Predictor, PredictorGrads};
 pub use tensor::Tensor;
+pub use conv::Conv2d;
 
 #[cfg(test)]
 mod tests {
@@ -723,5 +725,71 @@ mod tests {
 
         assert_eq!(linear.weight.shape, vec![3, 4]);
         assert_eq!(linear.bias.shape, vec![4]);
+    }
+
+        #[test]
+    fn conv2d_forward_works_without_padding() {
+        let x = Tensor::new(
+            vec![
+                1.0, 2.0, 3.0,
+                4.0, 5.0, 6.0,
+                7.0, 8.0, 9.0,
+            ],
+            vec![1, 1, 3, 3],
+        );
+
+        let weight = Tensor::new(
+            vec![
+                1.0, 0.0,
+                0.0, 1.0,
+            ],
+            vec![1, 1, 2, 2],
+        );
+
+        let bias = Tensor::new(vec![0.0], vec![1]);
+
+        let conv = Conv2d::new(weight, bias, 1, 0);
+        let y = conv.forward(&x);
+
+        assert_eq!(y.shape, vec![1, 1, 2, 2]);
+        assert_eq!(y.data, vec![6.0, 8.0, 12.0, 14.0]);
+    }
+
+    #[test]
+    fn conv2d_forward_works_with_padding() {
+        let x = Tensor::new(
+            vec![
+                1.0, 2.0,
+                3.0, 4.0,
+            ],
+            vec![1, 1, 2, 2],
+        );
+
+        let weight = Tensor::new(
+            vec![
+                1.0, 1.0,
+                1.0, 1.0,
+            ],
+            vec![1, 1, 2, 2],
+        );
+
+        let bias = Tensor::new(vec![0.0], vec![1]);
+
+        let conv = Conv2d::new(weight, bias, 1, 1);
+        let y = conv.forward(&x);
+
+        assert_eq!(y.shape, vec![1, 1, 3, 3]);
+        assert_eq!(y.data, vec![1.0, 3.0, 2.0, 4.0, 10.0, 6.0, 3.0, 7.0, 4.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn conv2d_panics_on_channel_mismatch() {
+        let x = Tensor::zeros(vec![1, 2, 4, 4]);
+        let weight = Tensor::zeros(vec![1, 1, 3, 3]);
+        let bias = Tensor::zeros(vec![1]);
+
+        let conv = Conv2d::new(weight, bias, 1, 0);
+        let _ = conv.forward(&x);
     }
 }
