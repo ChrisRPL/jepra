@@ -836,4 +836,37 @@ mod tests {
         assert_eq!(y.shape, vec![1, 1, 2, 2]);
         assert_eq!(y.data, vec![0.0, 2.0, 0.0, 4.0]);
     }
+
+    #[test]
+    fn global_avg_pool2d_works() {
+        let x = Tensor::new(
+            vec![1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0],
+            vec![1, 2, 2, 2],
+        );
+
+        let y = x.global_avg_pool2d();
+
+        assert_eq!(y.shape, vec![1, 2]);
+        assert_eq!(y.data, vec![2.5, 25.0]);
+    }
+
+    #[test]
+    fn global_avg_pool2d_works_for_batched_input() {
+        let x = Tensor::new(
+            vec![1.0, 3.0, 5.0, 7.0, 2.0, 4.0, 6.0, 8.0],
+            vec![2, 1, 2, 2],
+        );
+
+        let y = x.global_avg_pool2d();
+
+        assert_eq!(y.shape, vec![2, 1]);
+        assert_eq!(y.data, vec![4.0, 5.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn global_avg_pool2d_panics_for_non_4d_tensor() {
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+        let _ = x.global_avg_pool2d();
+    }
 }

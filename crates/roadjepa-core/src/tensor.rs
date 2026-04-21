@@ -237,4 +237,35 @@ impl Tensor {
 
         out
     }
+
+    pub fn global_avg_pool2d(&self) -> Tensor {
+        assert!(
+            self.ndim() == 4,
+            "global_avg_pool2d expects 4D tensor [B, C, H, W], got shape {:?}",
+            self.shape
+        );
+
+        let batch = self.shape[0];
+        let channels = self.shape[1];
+        let height = self.shape[2];
+        let width = self.shape[3];
+
+        let mut out = Tensor::zeros(vec![batch, channels]);
+
+        let area = (height * width) as f32;
+
+        for b in 0..batch {
+            for c in 0..channels {
+                let mut sum = 0.0;
+                for h in 0..height {
+                    for w in 0..width {
+                        sum += self.get(&[b, c, h, w]);
+                    }
+                }
+                out.set(&[b, c], sum / area);
+            }
+        }
+
+        out
+    }
 }
