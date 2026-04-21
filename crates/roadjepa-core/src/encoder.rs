@@ -17,3 +17,18 @@ impl ConvEncoder {
         self.conv2.forward(&h1).relu()
     }
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmbeddingEncoder {
+    pub backbone: ConvEncoder,
+}
+
+impl EmbeddingEncoder {
+    pub fn new(backbone: ConvEncoder) -> Self {
+        Self { backbone }
+    }
+
+    pub fn forward(&self, x: &Tensor) -> Tensor {
+        self.backbone.forward(x).global_avg_pool2d()
+    }
+}

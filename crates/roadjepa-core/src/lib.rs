@@ -7,7 +7,7 @@ pub mod predictor;
 pub mod tensor;
 
 pub use conv::Conv2d;
-pub use encoder::ConvEncoder;
+pub use encoder::{ConvEncoder, EmbeddingEncoder};
 pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
@@ -868,5 +868,74 @@ mod tests {
     fn global_avg_pool2d_panics_for_non_4d_tensor() {
         let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
         let _ = x.global_avg_pool2d();
+    }
+
+    #[test]
+    fn embedding_encoder_forward_works() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0, in channel 0, 1x1
+                    2.0, // out channel 1, in channel 0, 1x1
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0, // out channel 0 from channels 0,1
+                    0.0, 1.0, // out channel 1 from channels 0,1
+                ],
+                vec![2, 2, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let backbone = ConvEncoder::new(conv1, conv2);
+        let encoder = EmbeddingEncoder::new(backbone);
+
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+
+        let y = encoder.forward(&x);
+
+        assert_eq!(y.shape, vec![1, 2]);
+        assert_eq!(y.data, vec![2.5, 5.0]);
+    }
+
+    #[test]
+    fn embedding_encoder_outputs_batched_embeddings() {
+        let conv1 = Conv2d::new(
+            Tensor::new(vec![1.0], vec![1, 1, 1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0], vec![1, 1, 1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+            1,
+            0,
+        );
+
+        let backbone = ConvEncoder::new(conv1, conv2);
+        let encoder = EmbeddingEncoder::new(backbone);
+
+        let x = Tensor::new(
+            vec![1.0, 3.0, 5.0, 7.0, 2.0, 4.0, 6.0, 8.0],
+            vec![2, 1, 2, 2],
+        );
+
+        let y = encoder.forward(&x);
+
+        assert_eq!(y.shape, vec![2, 1]);
+        assert_eq!(y.data, vec![4.0, 5.0]);
     }
 }
