@@ -281,6 +281,78 @@ impl Linear {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct LinearGrads {
+    pub grad_input: Tensor,
+    pub grad_weight: Tensor,
+    pub grad_bias: Tensor,
+}
+
+impl Linear {
+    pub fn backward(&self, x: &Tensor, grad_out: &Tensor) -> LinearGrads {
+        assert!(
+            x.ndim() == 2,
+            "Linear backward input must be 2D, got shape {:?}",
+            x.shape
+        );
+
+        assert!(
+            grad_out.ndim() == 2,
+            "Linear backward grad_out must be 2D, got shape {:?}",
+            grad_out.shape
+        );
+
+        let batch_size = x.shape[0];
+        let in_features = x.shape[1];
+        let out_features = self.weight.shape[1];
+
+        assert!(
+            grad_out.shape == vec![batch_size, out_features],
+            "Linear backward grad_out shape mismatch: got {:?}, expected [{}, {}]",
+            grad_out.shape,
+            batch_size,
+            out_features
+        );
+
+        assert!(
+            self.weight.shape == vec![in_features, out_features],
+            "Linear backward weight shape mismatch: weight {:?}, expected [{}, {}]",
+            self.weight.shape,
+            in_features,
+            out_features
+        );
+
+        let grad_weight = x.transpose().matmul(grad_out);
+        let grad_bias = grad_out.sum_axis0();
+        let grad_input = grad_out.matmul(&self.weight.transpose());
+
+        LinearGrads {
+            grad_input,
+            grad_weight,
+            grad_bias,
+        }
+    }
+
+        pub fn sgd_step(&mut self, grads: &LinearGrads, lr: f32) {
+        assert!(
+            self.weight.shape == grads.grad_weight.shape,
+            "sgd_step weight shape mismatch: weight {:?}, grad {:?}",
+            self.weight.shape,
+            grads.grad_weight.shape
+        );
+
+        assert!(
+            self.bias.shape == grads.grad_bias.shape,
+            "sgd_step bias shape mismatch: bias {:?}, grad {:?}",
+            self.bias.shape,
+            grads.grad_bias.shape
+        );
+
+        self.weight.sub_scaled_inplace(&grads.grad_weight, lr);
+        self.bias.sub_scaled_inplace(&grads.grad_bias, lr);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Predictor {
     pub fc1: Linear,
     pub fc2: Linear,
@@ -696,15 +768,9 @@ mod tests {
         let _ = t.transpose();
     }
 
-        #[test]
+    #[test]
     fn sum_axis0_works_for_2d_tensor() {
-        let t = Tensor::new(
-            vec![
-                1.0, 2.0, 3.0,
-                4.0, 5.0, 6.0,
-            ],
-            vec![2, 3],
-        );
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
 
         let y = t.sum_axis0();
 
@@ -727,5 +793,108 @@ mod tests {
     fn sum_axis0_panics_for_non_2d_tensor() {
         let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2, 1]);
         let _ = t.sum_axis0();
+    }
+
+    #[test]
+    fn linear_backward_works() {
+        let linear = Linear::new(
+            Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]),
+            Tensor::new(vec![0.1, -0.2], vec![2]),
+        );
+
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+
+        let grad_out = Tensor::new(vec![0.5, 1.0, 1.5, 2.0], vec![2, 2]);
+
+        let grads = linear.backward(&x, &grad_out);
+
+        assert_eq!(grads.grad_weight.shape, vec![3, 2]);
+        assert_eq!(grads.grad_weight.data, vec![6.5, 9.0, 8.5, 12.0, 10.5, 15.0]);
+
+        assert_eq!(grads.grad_bias.shape, vec![2]);
+        assert_eq!(grads.grad_bias.data, vec![2.0, 3.0]);
+
+        assert_eq!(grads.grad_input.shape, vec![2, 3]);
+        assert_eq!(grads.grad_input.data, vec![2.5, 5.5, 8.5, 5.5, 12.5, 19.5]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn linear_backward_panics_on_grad_out_shape_mismatch() {
+        let linear = Linear::new(
+            Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![3, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let x = Tensor::new(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], vec![2, 3]);
+
+        let grad_out = Tensor::new(vec![1.0, 2.0, 3.0], vec![3, 1]);
+
+        let _ = linear.backward(&x, &grad_out);
+    }
+
+        #[test]
+    fn linear_sgd_step_updates_parameters() {
+        let mut linear = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 2.0,
+                    3.0, 4.0,
+                    5.0, 6.0,
+                ],
+                vec![3, 2],
+            ),
+            Tensor::new(vec![0.1, -0.2], vec![2]),
+        );
+
+        let grads = LinearGrads {
+            grad_input: Tensor::zeros(vec![2, 3]),
+            grad_weight: Tensor::new(
+                vec![
+                    0.5, 1.0,
+                    1.5, 2.0,
+                    2.5, 3.0,
+                ],
+                vec![3, 2],
+            ),
+            grad_bias: Tensor::new(vec![0.25, 0.75], vec![2]),
+        };
+
+        linear.sgd_step(&grads, 0.1);
+
+        assert_eq!(
+            linear.weight.data,
+            vec![
+                0.95, 1.9,
+                2.85, 3.8,
+                4.75, 5.7,
+            ]
+        );
+
+        assert_eq!(linear.bias.data, vec![0.075, -0.275]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn linear_sgd_step_panics_on_weight_shape_mismatch() {
+        let mut linear = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 2.0,
+                    3.0, 4.0,
+                    5.0, 6.0,
+                ],
+                vec![3, 2],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let grads = LinearGrads {
+            grad_input: Tensor::zeros(vec![2, 3]),
+            grad_weight: Tensor::zeros(vec![2, 2]),
+            grad_bias: Tensor::zeros(vec![2]),
+        };
+
+        linear.sgd_step(&grads, 0.1);
     }
 }
