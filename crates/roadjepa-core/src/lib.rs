@@ -27,6 +27,10 @@ impl Tensor {
         }
     }
 
+    pub fn zeros_like(&self) -> Tensor {
+        Tensor::zeros(self.shape.clone())
+    }
+
     pub fn len(&self) -> usize {
         self.data.len()
     }
@@ -707,5 +711,15 @@ mod tests {
         let grad = Tensor::new(vec![0.1, 0.2], vec![2]);
 
         param.sub_scaled_inplace(&grad, 0.1);
+    }
+
+    #[test]
+    fn zeros_like_works() {
+        let t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+
+        let z = t.zeros_like();
+
+        assert_eq!(z.shape, vec![2, 2]);
+        assert_eq!(z.data, vec![0.0, 0.0, 0.0, 0.0]);
     }
 }
