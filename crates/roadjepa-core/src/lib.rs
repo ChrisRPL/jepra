@@ -411,6 +411,11 @@ impl Predictor {
             grad_fc2,
         }
     }
+
+    pub fn sgd_step(&mut self, grads: &PredictorGrads, lr: f32) {
+        self.fc1.sgd_step(&grads.grad_fc1, lr);
+        self.fc2.sgd_step(&grads.grad_fc2, lr);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1085,5 +1090,79 @@ mod tests {
         let grad_out = Tensor::new(vec![1.0, 2.0, 3.0], vec![3, 1]);
 
         let _ = predictor.backward(&x, &grad_out);
+    }
+
+    #[test]
+    fn tiny_predictor_sgd_step_updates_parameters() {
+        let fc1 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 1.0], vec![2, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+        );
+
+        let mut predictor = Predictor::new(fc1, fc2);
+
+        let grads = PredictorGrads {
+            grad_input: Tensor::zeros(vec![1, 2]),
+            grad_fc1: LinearGrads {
+                grad_input: Tensor::zeros(vec![1, 2]),
+                grad_weight: Tensor::new(vec![0.1, 0.2, 0.3, 0.4], vec![2, 2]),
+                grad_bias: Tensor::new(vec![0.5, 0.6], vec![2]),
+            },
+            grad_fc2: LinearGrads {
+                grad_input: Tensor::zeros(vec![1, 2]),
+                grad_weight: Tensor::new(vec![0.7, 0.8], vec![2, 1]),
+                grad_bias: Tensor::new(vec![0.9], vec![1]),
+            },
+        };
+
+        predictor.sgd_step(&grads, 0.1);
+
+        assert!((predictor.fc1.weight.data[0] - 0.99).abs() < 1e-6);
+        assert!((predictor.fc1.weight.data[1] - (-0.02)).abs() < 1e-6);
+        assert!((predictor.fc1.weight.data[2] - (-0.03)).abs() < 1e-6);
+        assert!((predictor.fc1.weight.data[3] - 0.96).abs() < 1e-6);
+
+        assert!((predictor.fc1.bias.data[0] - (-0.05)).abs() < 1e-6);
+        assert!((predictor.fc1.bias.data[1] - (-0.06)).abs() < 1e-6);
+
+        assert!((predictor.fc2.weight.data[0] - 0.93).abs() < 1e-6);
+        assert!((predictor.fc2.weight.data[1] - 0.92).abs() < 1e-6);
+
+        assert!((predictor.fc2.bias.data[0] - (-0.09)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn tiny_predictor_training_step_reduces_mse_loss() {
+        let fc1 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 1.0], vec![2, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+        );
+
+        let mut predictor = Predictor::new(fc1, fc2);
+
+        let x = Tensor::new(vec![1.0, 2.0], vec![1, 2]);
+        let target = Tensor::new(vec![5.0], vec![1, 1]);
+
+        let pred_before = predictor.forward(&x);
+        let loss_before = mse_loss(&pred_before, &target);
+
+        let grad_out = mse_loss_grad(&pred_before, &target);
+        let grads = predictor.backward(&x, &grad_out);
+        predictor.sgd_step(&grads, 0.01);
+
+        let pred_after = predictor.forward(&x);
+        let loss_after = mse_loss(&pred_after, &target);
+
+        assert!(loss_after < loss_before);
     }
 }
