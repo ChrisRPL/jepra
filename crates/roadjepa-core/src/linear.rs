@@ -38,6 +38,12 @@ impl Linear {
         Self { weight, bias }
     }
 
+    pub fn randn(in_features: usize, out_features: usize, weight_std: f32, seed: u64) -> Self {
+        let weight = crate::init::randn(vec![in_features, out_features], 0.0, weight_std, seed);
+        let bias = crate::init::zeros(vec![out_features]);
+        Self::new(weight, bias)
+    }
+
     pub fn forward(&self, x: &Tensor) -> Tensor {
         assert!(
             x.ndim() == 2,

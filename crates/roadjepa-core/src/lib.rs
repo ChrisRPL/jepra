@@ -1,12 +1,14 @@
-pub mod tensor;
+pub mod init;
 pub mod linear;
-pub mod predictor;
 pub mod losses;
+pub mod predictor;
+pub mod tensor;
 
-pub use tensor::Tensor;
+pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
-pub use predictor::{Predictor, PredictorGrads};
 pub use losses::{mse_loss, mse_loss_grad};
+pub use predictor::{Predictor, PredictorGrads};
+pub use tensor::Tensor;
 
 #[cfg(test)]
 mod tests {
@@ -703,5 +705,23 @@ mod tests {
         let loss_after = mse_loss(&pred_after, &target);
 
         assert!(loss_after < loss_before);
+    }
+
+    #[test]
+    fn randn_is_reproducible_for_same_seed() {
+        let a = randn(vec![2, 3], 0.0, 1.0, 42);
+        let b = randn(vec![2, 3], 0.0, 1.0, 42);
+
+        assert_eq!(a.shape, vec![2, 3]);
+        assert_eq!(b.shape, vec![2, 3]);
+        assert_eq!(a.data, b.data);
+    }
+
+    #[test]
+    fn linear_randn_creates_valid_shapes() {
+        let linear = Linear::randn(3, 4, 0.02, 123);
+
+        assert_eq!(linear.weight.shape, vec![3, 4]);
+        assert_eq!(linear.bias.shape, vec![4]);
     }
 }

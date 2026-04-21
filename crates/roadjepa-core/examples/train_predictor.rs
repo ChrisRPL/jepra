@@ -1,53 +1,18 @@
-use roadjepa_core::{mse_loss, mse_loss_grad, Linear, Tensor, Predictor};
+use roadjepa_core::{mse_loss, mse_loss_grad, Linear, Predictor, Tensor};
 
 fn main() {
-    let fc1 = Linear::new(
-        Tensor::new(
-            vec![
-                1.0, 0.0,
-                0.0, 1.0,
-            ],
-            vec![2, 2],
-        ),
-        Tensor::new(vec![0.0, 0.0], vec![2]),
-    );
-
-    let fc2 = Linear::new(
-        Tensor::new(
-            vec![
-                0.1,
-                0.1,
-            ],
-            vec![2, 1],
-        ),
-        Tensor::new(vec![0.0], vec![1]),
-    );
+    let fc1 = Linear::randn(2, 8, 0.1, 42);
+    let fc2 = Linear::randn(8, 1, 0.1, 43);
 
     let mut predictor = Predictor::new(fc1, fc2);
 
     // Simple toy regression task:
     // target = x1 + 2 * x2
-    let x = Tensor::new(
-        vec![
-            1.0, 2.0,
-            2.0, 1.0,
-            3.0, 1.0,
-            1.0, 3.0,
-        ],
-        vec![4, 2],
-    );
+    let x = Tensor::new(vec![1.0, 2.0, 2.0, 1.0, 3.0, 1.0, 1.0, 3.0], vec![4, 2]);
 
-    let target = Tensor::new(
-        vec![
-            5.0,
-            4.0,
-            5.0,
-            7.0,
-        ],
-        vec![4, 1],
-    );
+    let target = Tensor::new(vec![5.0, 4.0, 5.0, 7.0], vec![4, 1]);
 
-    let num_steps = 100;
+    let num_steps = 300;
     let lr = 0.01;
 
     for step in 1..=num_steps {
