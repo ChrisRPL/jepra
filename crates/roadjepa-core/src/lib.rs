@@ -583,4 +583,64 @@ mod tests {
 
         let _ = mse_loss(&pred, &target);
     }
+
+        #[test]
+    fn end_to_end_predictor_and_loss_works() {
+        let fc1 = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0, 0.0, 0.0,
+                    0.0, 1.0, 0.0, 0.0,
+                    0.0, 0.0, 1.0, 0.0,
+                ],
+                vec![3, 4],
+            ),
+            Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![4]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0,
+                    0.0, 1.0,
+                    1.0, 1.0,
+                    0.0, 0.0,
+                ],
+                vec![4, 2],
+            ),
+            Tensor::new(vec![0.5, -0.5], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+
+        let x = Tensor::new(
+            vec![
+                1.0, -2.0, 3.0,
+                -1.0, 2.0, -3.0,
+            ],
+            vec![2, 3],
+        );
+
+        let target = Tensor::new(
+            vec![
+                4.0, 3.0,
+                1.0, 1.0,
+            ],
+            vec![2, 2],
+        );
+
+        let pred = predictor.forward(&x);
+        let loss = mse_loss(&pred, &target);
+
+        assert_eq!(pred.shape, vec![2, 2]);
+        assert_eq!(pred.data, vec![4.5, 2.5, 0.5, 1.5]);
+
+        let expected =
+            ((4.5_f32 - 4.0).powi(2)
+            + (2.5_f32 - 3.0).powi(2)
+            + (0.5_f32 - 1.0).powi(2)
+            + (1.5_f32 - 1.0).powi(2)) / 4.0;
+
+        assert!((loss - expected).abs() < 1e-6);
+    }
 }
