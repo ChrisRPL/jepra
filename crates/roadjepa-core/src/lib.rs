@@ -77,6 +77,27 @@ impl Tensor {
         }
     }
 
+    pub fn relu_backward(&self, grad_out: &Tensor) -> Tensor {
+        assert!(
+            self.shape == grad_out.shape,
+            "relu_backward shape mismatch: input {:?}, grad_out {:?}",
+            self.shape,
+            grad_out.shape
+        );
+
+        let data = self
+            .data
+            .iter()
+            .zip(grad_out.data.iter())
+            .map(|(x, g)| if *x > 0.0 { *g } else { 0.0 })
+            .collect();
+
+        Tensor {
+            data,
+            shape: self.shape.clone(),
+        }
+    }
+
     pub fn offset(&self, indices: &[usize]) -> usize {
         assert!(
             indices.len() == self.ndim(),
