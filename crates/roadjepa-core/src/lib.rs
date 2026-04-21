@@ -396,6 +396,28 @@ impl Predictor {
         let h = h.relu();
         self.fc2.forward(&h)
     }
+
+    pub fn backward(&self, x: &Tensor, grad_out: &Tensor) -> PredictorGrads {
+        let h_pre = self.fc1.forward(x);
+        let h = h_pre.relu();
+
+        let grad_fc2 = self.fc2.backward(&h, grad_out);
+        let grad_h_pre = h_pre.relu_backward(&grad_fc2.grad_input);
+        let grad_fc1 = self.fc1.backward(x, &grad_h_pre);
+
+        PredictorGrads {
+            grad_input: grad_fc1.grad_input.clone(),
+            grad_fc1,
+            grad_fc2,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct PredictorGrads {
+    pub grad_input: Tensor,
+    pub grad_fc1: LinearGrads,
+    pub grad_fc2: LinearGrads,
 }
 
 pub fn mse_loss(pred: &Tensor, target: &Tensor) -> f32 {
@@ -967,5 +989,101 @@ mod tests {
         let target = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
 
         let _ = mse_loss_grad(&pred, &target);
+    }
+
+    #[test]
+    fn relu_backward_works() {
+        let x = Tensor::new(vec![-2.0, -0.5, 0.0, 1.0, 3.5, -4.0], vec![2, 3]);
+
+        let grad_out = Tensor::new(vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0], vec![2, 3]);
+
+        let grad_in = x.relu_backward(&grad_out);
+
+        assert_eq!(grad_in.shape, vec![2, 3]);
+        assert_eq!(grad_in.data, vec![0.0, 0.0, 0.0, 40.0, 50.0, 0.0]);
+    }
+
+    #[test]
+    fn relu_backward_preserves_positive_entries() {
+        let x = Tensor::new(vec![1.0, 2.0, 3.0], vec![3]);
+        let grad_out = Tensor::new(vec![0.1, 0.2, 0.3], vec![3]);
+
+        let grad_in = x.relu_backward(&grad_out);
+
+        assert_eq!(grad_in.data, vec![0.1, 0.2, 0.3]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn relu_backward_panics_on_shape_mismatch() {
+        let x = Tensor::new(vec![1.0, -1.0, 2.0], vec![3]);
+        let grad_out = Tensor::new(vec![1.0, 2.0], vec![2]);
+
+        let _ = x.relu_backward(&grad_out);
+    }
+
+    #[test]
+    fn tiny_predictor_backward_works() {
+        let fc1 = Linear::new(
+            Tensor::new(
+                vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                vec![3, 4],
+            ),
+            Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![4]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0], vec![4, 2]),
+            Tensor::new(vec![0.5, -0.5], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+
+        let x = Tensor::new(vec![1.0, -2.0, 3.0, -1.0, 2.0, -3.0], vec![2, 3]);
+
+        let grad_out = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![2, 2]);
+
+        let grads = predictor.backward(&x, &grad_out);
+
+        assert_eq!(grads.grad_fc2.grad_weight.shape, vec![4, 2]);
+        assert_eq!(
+            grads.grad_fc2.grad_weight.data,
+            vec![1.0, 2.0, 6.0, 8.0, 3.0, 6.0, 0.0, 0.0,]
+        );
+        assert_eq!(grads.grad_fc2.grad_bias.data, vec![4.0, 6.0]);
+
+        assert_eq!(grads.grad_fc1.grad_weight.shape, vec![3, 4]);
+        assert_eq!(
+            grads.grad_fc1.grad_weight.data,
+            vec![1.0, -4.0, 3.0, 0.0, -2.0, 8.0, -6.0, 0.0, 3.0, -12.0, 9.0, 0.0,]
+        );
+        assert_eq!(grads.grad_fc1.grad_bias.data, vec![1.0, 4.0, 3.0, 0.0]);
+
+        assert_eq!(grads.grad_input.shape, vec![2, 3]);
+        assert_eq!(grads.grad_input.data, vec![1.0, 0.0, 3.0, 0.0, 4.0, 0.0]);
+    }
+
+    #[test]
+    #[should_panic]
+    fn tiny_predictor_backward_panics_on_grad_shape_mismatch() {
+        let fc1 = Linear::new(
+            Tensor::new(
+                vec![1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                vec![3, 4],
+            ),
+            Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![4]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0, 0.0], vec![4, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+
+        let x = Tensor::new(vec![1.0, 2.0, 3.0], vec![1, 3]);
+        let grad_out = Tensor::new(vec![1.0, 2.0, 3.0], vec![3, 1]);
+
+        let _ = predictor.backward(&x, &grad_out);
     }
 }
