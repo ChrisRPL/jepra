@@ -6,10 +6,10 @@ mod projected_temporal;
 mod temporal_vision;
 
 use projected_temporal::{
-    gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projected_batch_losses,
-    combine_projection_grads, projected_step, projection_stats,
+    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
+    projected_batch_losses, projected_step, projection_stats,
 };
-use roadjepa_core::{EmbeddingEncoder, Linear, Predictor, Tensor};
+use roadjepa_core::{Linear, Predictor, Tensor};
 use temporal_vision::{make_frozen_encoder, make_train_batch};
 
 const PROJECTION_DIM: usize = 4;
