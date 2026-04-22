@@ -7,7 +7,7 @@ mod temporal_vision;
 
 use projected_temporal::{
     gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projected_batch_losses,
-    projected_step, projection_stats,
+    combine_projection_grads, projected_step, projection_stats,
 };
 use roadjepa_core::{EmbeddingEncoder, Linear, Predictor, Tensor};
 use temporal_vision::{make_frozen_encoder, make_train_batch};
@@ -97,6 +97,8 @@ fn projected_training_step_reduces_total_loss_on_fixed_batch() {
     let encoder = make_frozen_encoder();
     let mut online_projector = make_projector();
     let target_projector = online_projector.clone();
+    let target_projector_weight_snapshot = target_projector.weight.clone();
+    let target_projector_bias_snapshot = target_projector.bias.clone();
     let mut predictor = make_predictor();
     let (x_t, x_t1) = make_train_batch(11_000, 0);
 
@@ -121,6 +123,15 @@ fn projected_training_step_reduces_total_loss_on_fixed_batch() {
         REGULARIZER_WEIGHT,
         PREDICTOR_LR,
         PROJECTOR_LR,
+    );
+
+    assert_eq!(
+        target_projector.weight, target_projector_weight_snapshot,
+        "target projector weight mutated during projected step"
+    );
+    assert_eq!(
+        target_projector.bias, target_projector_bias_snapshot,
+        "target projector bias mutated during projected step"
     );
 
     let final_total = projected_batch_losses(
