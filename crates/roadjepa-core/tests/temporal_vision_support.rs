@@ -5,10 +5,10 @@ mod temporal_vision;
 use roadjepa_core::Tensor;
 use temporal_vision::{
     assert_temporal_contract, batch_has_both_motion_modes, batch_has_min_motion_mode_counts,
-    fast_motion_feature_for_sample, make_frozen_encoder, make_temporal_batch, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_dx_for_sample,
-    motion_mode_counts, square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE,
-    MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
+    fast_mode_channel_summary, fast_motion_feature_for_sample, make_frozen_encoder,
+    make_temporal_batch, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
+    square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
 };
 
 fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
@@ -149,6 +149,22 @@ fn frozen_encoder_exposes_fast_motion_mode_feature() {
     }
 
     assert!(checked_samples > 0);
+}
+
+#[test]
+fn fast_mode_channel_summary_matches_mixed_probe_counts() {
+    let encoder = make_frozen_encoder();
+    let (x_t, _, _) = make_validation_batch_with_both_motion_modes(20_000, 1);
+    let z_t = encoder.forward(&x_t);
+    let (slow_count, fast_count) = motion_mode_counts(&x_t);
+    let (inactive_count, active_count, mean_value, max_value) = fast_mode_channel_summary(&z_t);
+
+    assert_eq!(inactive_count, slow_count);
+    assert_eq!(active_count, fast_count);
+    assert!(inactive_count >= MIN_MIXED_MODE_COUNT);
+    assert!(active_count >= MIN_MIXED_MODE_COUNT);
+    assert!(mean_value > 0.0);
+    assert!(max_value > 0.0);
 }
 
 #[test]
