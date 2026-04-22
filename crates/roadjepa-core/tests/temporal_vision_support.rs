@@ -2,7 +2,7 @@
 #[path = "../examples/support/temporal_vision.rs"]
 mod temporal_vision;
 
-use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa, mse_loss, mse_loss_grad};
+use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
     assert_temporal_contract, batch_has_both_motion_modes, batch_has_min_motion_mode_counts,
@@ -25,9 +25,7 @@ fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
 }
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
-    let pred = model.predict_next_latent(x_t);
-    let target = model.target_latent(x_t1);
-    mse_loss(&pred, &target)
+    model.losses(x_t, x_t1).0
 }
 
 fn validation_loss(model: &VisionJepa) -> f32 {
@@ -84,18 +82,13 @@ fn unprojected_random_temporal_training_reduces_train_and_validation_loss() {
 
     for step in 1..=steps {
         let (x_t, x_t1) = make_train_batch(train_base_seed, step as u64);
-        let z_t = model.encode(&x_t);
-        let z_t1 = model.target_latent(&x_t1);
-        let pred = model.predict_next_latent(&x_t);
-        let grad_out = mse_loss_grad(&pred, &z_t1);
-        let grads = model.predictor.backward(&z_t, &grad_out);
-        model.predictor.sgd_step(&grads, lr);
+        let (train_loss, _) = model.step(&x_t, &x_t1, lr);
 
         if step == 1 || step == steps {
             println!(
                 "unprojected random temporal step {:03} | train {:.6} | val {:.6}",
                 step,
-                mse_loss(&pred, &z_t1),
+                train_loss,
                 validation_loss(&model)
             );
         }
@@ -134,19 +127,12 @@ fn unprojected_random_temporal_training_reduces_train_and_validation_loss() {
 fn unprojected_temporal_step_reduces_loss_on_random_batch() {
     let encoder = make_frozen_encoder();
     let (x_t, x_t1) = make_train_batch(31_000, 2);
-    let mut predictor = make_predictor();
-
-    let z_t = encoder.forward(&x_t);
-    let target = encoder.forward(&x_t1);
+    let mut model = VisionJepa::new(encoder, make_predictor());
     let lr = 0.02;
 
-    let pred = predictor.forward(&z_t);
-    let initial_loss = mse_loss(&pred, &target);
-    let grad_out = mse_loss_grad(&pred, &target);
-    let grads = predictor.backward(&z_t, &grad_out);
-    predictor.sgd_step(&grads, lr);
-    let final_pred = predictor.forward(&z_t);
-    let final_loss = mse_loss(&final_pred, &target);
+    let initial_loss = batch_loss(&model, &x_t, &x_t1);
+    model.step(&x_t, &x_t1, lr);
+    let final_loss = batch_loss(&model, &x_t, &x_t1);
 
     assert!(
         final_loss + 1e-6 < initial_loss,

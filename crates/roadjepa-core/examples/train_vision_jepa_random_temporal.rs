@@ -1,11 +1,11 @@
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use roadjepa_core::{mse_loss, mse_loss_grad, Linear, Predictor, Tensor, VisionJepa};
+use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
-    assert_temporal_contract, make_frozen_encoder, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary, MIN_MIXED_MODE_COUNT,
+    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
+    print_batch_summary,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -39,9 +39,7 @@ fn make_predictor() -> Predictor {
 }
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
-    let pred = model.predict_next_latent(x_t);
-    let target = model.target_latent(x_t1);
-    mse_loss(&pred, &target)
+    model.losses(x_t, x_t1).0
 }
 
 fn validation_loss(model: &VisionJepa) -> f32 {
@@ -70,7 +68,8 @@ fn main() {
     assert_ne!(train_probe_t.data, train_probe_next_t.data);
     assert_ne!(train_probe_t.data, val_probe_t.data);
     assert_ne!(val_probe_t.data, mixed_val_probe_t.data);
-    let (mixed_slow_count, mixed_fast_count) = motion_mode_counts(&mixed_val_probe_t, &mixed_val_probe_t1);
+    let (mixed_slow_count, mixed_fast_count) =
+        motion_mode_counts(&mixed_val_probe_t, &mixed_val_probe_t1);
     assert!(
         mixed_slow_count >= MIN_MIXED_MODE_COUNT,
         "mixed validation probe slow count too small: {} < {}",
@@ -117,14 +116,7 @@ fn main() {
 
     for step in 1..=NUM_STEPS {
         let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
-        let z_t = model.encode(&x_t);
-        let z_t1 = model.target_latent(&x_t1);
-        let pred = model.predictor.forward(&z_t);
-        let train_loss = mse_loss(&pred, &z_t1);
-
-        let grad_out = mse_loss_grad(&pred, &z_t1);
-        let grads = model.predictor.backward(&z_t, &grad_out);
-        model.predictor.sgd_step(&grads, LR);
+        let (train_loss, _) = model.step(&x_t, &x_t1, LR);
 
         if step == 1 || step % LOG_EVERY == 0 {
             println!(

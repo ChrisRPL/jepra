@@ -130,6 +130,29 @@ impl VisionJepa {
         let target = self.target_latent(x_t1);
         (pred, target)
     }
+
+    pub fn step(&mut self, x_t: &Tensor, x_t1: &Tensor, lr: f32) -> (f32, f32) {
+        let z_t = self.encode(x_t);
+        let pred = self.predictor.forward(&z_t);
+        let target = self.target_latent(x_t1);
+
+        let prediction_loss = mse_loss(&pred, &target);
+        let total_loss = prediction_loss;
+
+        let grad_out = mse_loss_grad(&pred, &target);
+        let grads = self.predictor.backward(&z_t, &grad_out);
+        self.predictor.sgd_step(&grads, lr);
+
+        (prediction_loss, total_loss)
+    }
+
+    pub fn losses(&self, x_t: &Tensor, x_t1: &Tensor) -> (f32, f32) {
+        let pred = self.predict_next_latent(x_t);
+        let target = self.target_latent(x_t1);
+        let loss = mse_loss(&pred, &target);
+
+        (loss, loss)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
