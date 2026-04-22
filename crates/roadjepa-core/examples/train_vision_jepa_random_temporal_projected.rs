@@ -3,7 +3,7 @@ mod projected_temporal;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use projected_temporal::{projected_batch_losses, projected_step, projection_stats};
+use projected_temporal::{projected_batch_losses, projection_stats};
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, assert_temporal_contract, fast_mode_channel_summary, make_frozen_encoder,
@@ -186,26 +186,8 @@ fn main() {
 
     for step in 1..=NUM_STEPS {
         let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
-        let (prediction_loss, regularizer_loss, total_loss) = projected_batch_losses(
-            &model.encoder,
-            &model.projector,
-            &model.target_projector,
-            &model.predictor,
-            &x_t,
-            &x_t1,
-            REGULARIZER_WEIGHT,
-        );
-        projected_step(
-            &model.encoder,
-            &mut model.projector,
-            &model.target_projector,
-            &mut model.predictor,
-            &x_t,
-            &x_t1,
-            REGULARIZER_WEIGHT,
-            PREDICTOR_LR,
-            PROJECTOR_LR,
-        );
+        let (prediction_loss, regularizer_loss, total_loss) =
+            model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
 
         if step == 1 || step % LOG_EVERY == 0 {
             let (val_prediction_loss, val_regularizer_loss, val_total_loss) =

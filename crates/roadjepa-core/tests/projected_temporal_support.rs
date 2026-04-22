@@ -9,7 +9,7 @@ use projected_temporal::{
     combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
     projected_batch_losses, projected_step, projection_stats,
 };
-use roadjepa_core::{Linear, Predictor, Tensor};
+use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{make_frozen_encoder, make_train_batch};
 
 const PROJECTION_DIM: usize = 4;
@@ -185,6 +185,63 @@ fn projected_training_step_reduces_total_loss_on_fixed_batch() {
     assert!(
         final_total + 1e-6 < initial_total,
         "one projected step did not reduce total loss: {:.6} -> {:.6}",
+        initial_total,
+        final_total
+    );
+}
+
+#[test]
+fn projected_vision_jepa_step_reduces_total_loss_on_fixed_batch() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let target_projector_weight_snapshot = target_projector.weight.clone();
+    let target_projector_bias_snapshot = target_projector.bias.clone();
+    let predictor = make_predictor();
+    let (x_t, x_t1) = make_train_batch(11_000, 0);
+
+    let mut model = ProjectedVisionJepa::new(
+        encoder.clone(),
+        projector,
+        target_projector.clone(),
+        predictor,
+    );
+    let initial_total = projected_batch_losses(
+        &encoder,
+        &model.projector,
+        &target_projector,
+        &model.predictor,
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+    )
+    .2;
+
+    model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+    assert_eq!(
+        model.target_projector.weight, target_projector_weight_snapshot,
+        "target projector weight mutated during projected step"
+    );
+    assert_eq!(
+        model.target_projector.bias, target_projector_bias_snapshot,
+        "target projector bias mutated during projected step"
+    );
+
+    let final_total = projected_batch_losses(
+        &encoder,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+    )
+    .2;
+
+    assert!(
+        final_total + 1e-6 < initial_total,
+        "one projected VisionJePA step did not reduce total loss: {:.6} -> {:.6}",
         initial_total,
         final_total
     );
