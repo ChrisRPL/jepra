@@ -16,6 +16,9 @@ const PROJECTION_DIM: usize = 4;
 const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
+const TRAIN_BASE_SEED: u64 = 11_000;
+const VALIDATION_BASE_SEED: u64 = 111_000;
+const VALIDATION_BATCHES: usize = 8;
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -46,6 +49,40 @@ fn finite_difference_regularizer_grad(latents: &Tensor, index: usize, epsilon: f
     minus.data[index] -= epsilon;
 
     (gaussian_moment_regularizer(&plus) - gaussian_moment_regularizer(&minus)) / (2.0 * epsilon)
+}
+
+fn projected_validation_losses(
+    encoder: &roadjepa_core::EmbeddingEncoder,
+    online_projector: &Linear,
+    target_projector: &Linear,
+    predictor: &Predictor,
+) -> (f32, f32, f32) {
+    let mut prediction_total = 0.0;
+    let mut regularizer_total = 0.0;
+    let mut total = 0.0;
+
+    for batch_idx in 0..VALIDATION_BATCHES {
+        let (x_t, x_t1) = make_train_batch(VALIDATION_BASE_SEED, batch_idx as u64);
+        let (prediction_loss, regularizer_loss, total_loss) = projected_batch_losses(
+            encoder,
+            online_projector,
+            target_projector,
+            predictor,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+        );
+        prediction_total += prediction_loss;
+        regularizer_total += regularizer_loss;
+        total += total_loss;
+    }
+
+    let batches = VALIDATION_BATCHES as f32;
+    (
+        prediction_total / batches,
+        regularizer_total / batches,
+        total / batches,
+    )
 }
 
 #[test]
@@ -196,5 +233,101 @@ fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
         target_projector.bias, target_projector_bias_snapshot,
         "target projector bias mutated during multi-step projected training"
     );
+}
 
+#[test]
+fn projected_random_temporal_loop_reduces_train_and_validation_loss() {
+    let encoder = make_frozen_encoder();
+    let mut online_projector = make_projector();
+    let target_projector = online_projector.clone();
+    let mut predictor = make_predictor();
+    let (probe_t, probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
+    let steps = 120;
+    let initial_losses = projected_batch_losses(
+        &encoder,
+        &online_projector,
+        &target_projector,
+        &predictor,
+        &probe_t,
+        &probe_t1,
+        REGULARIZER_WEIGHT,
+    );
+    let initial_validation =
+        projected_validation_losses(&encoder, &online_projector, &target_projector, &predictor);
+
+    for step in 1..=steps {
+        let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
+        projected_step(
+            &encoder,
+            &mut online_projector,
+            &target_projector,
+            &mut predictor,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+            PREDICTOR_LR,
+            PROJECTOR_LR,
+        );
+
+        if step == 1 || step == steps {
+            println!(
+                "projected temporal step {:03} | train total {:.6} | val total {:.6}",
+                step,
+                projected_batch_losses(
+                    &encoder,
+                    &online_projector,
+                    &target_projector,
+                    &predictor,
+                    &probe_t,
+                    &probe_t1,
+                    REGULARIZER_WEIGHT,
+                )
+                .2,
+                projected_validation_losses(
+                    &encoder,
+                    &online_projector,
+                    &target_projector,
+                    &predictor,
+                )
+                .2
+            );
+        }
+    }
+
+    let final_losses = projected_batch_losses(
+        &encoder,
+        &online_projector,
+        &target_projector,
+        &predictor,
+        &probe_t,
+        &probe_t1,
+        REGULARIZER_WEIGHT,
+    );
+    let final_validation =
+        projected_validation_losses(&encoder, &online_projector, &target_projector, &predictor);
+
+    assert!(
+        final_losses.2 < initial_losses.2,
+        "train total loss did not improve: {:.6} -> {:.6}",
+        initial_losses.2,
+        final_losses.2
+    );
+    assert!(
+        final_validation.2 < initial_validation.2,
+        "validation total loss did not improve: {:.6} -> {:.6}",
+        initial_validation.2,
+        final_validation.2
+    );
+    assert!(
+        final_losses.2 < 0.18,
+        "train total loss too high after {} steps: {:.6}",
+        steps,
+        final_losses.2
+    );
+    assert!(
+        final_validation.2 < 0.18,
+        "validation total loss too high after {} steps: {:.6}",
+        steps,
+        final_validation.2
+    );
 }
