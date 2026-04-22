@@ -152,3 +152,49 @@ fn projected_training_step_reduces_total_loss_on_fixed_batch() {
         final_total
     );
 }
+
+#[test]
+fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
+    let encoder = make_frozen_encoder();
+    let mut online_projector = make_projector();
+    let target_projector = online_projector.clone();
+    let target_projector_weight_snapshot = target_projector.weight.clone();
+    let target_projector_bias_snapshot = target_projector.bias.clone();
+    let mut predictor = make_predictor();
+    let (x_t_step0, x_t1_step0) = make_train_batch(11_000, 0);
+    let (x_t_step1, x_t1_step1) = make_train_batch(11_000, 1);
+
+    projected_step(
+        &encoder,
+        &mut online_projector,
+        &target_projector,
+        &mut predictor,
+        &x_t_step0,
+        &x_t1_step0,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+    );
+
+    projected_step(
+        &encoder,
+        &mut online_projector,
+        &target_projector,
+        &mut predictor,
+        &x_t_step1,
+        &x_t1_step1,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+    );
+
+    assert_eq!(
+        target_projector.weight, target_projector_weight_snapshot,
+        "target projector weight mutated during multi-step projected training"
+    );
+    assert_eq!(
+        target_projector.bias, target_projector_bias_snapshot,
+        "target projector bias mutated during multi-step projected training"
+    );
+
+}
