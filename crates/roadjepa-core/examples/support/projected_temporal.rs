@@ -1,4 +1,4 @@
-use roadjepa_core::{mse_loss, mse_loss_grad, EmbeddingEncoder, Linear, Predictor, Tensor};
+use roadjepa_core::{EmbeddingEncoder, Linear, Predictor, Tensor, mse_loss, mse_loss_grad};
 
 pub fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
     assert!(
@@ -134,6 +134,7 @@ pub fn combine_projection_grads(
     Tensor::new(data, prediction_grad.shape.clone())
 }
 
+#[allow(dead_code)]
 pub fn projected_target(
     encoder: &EmbeddingEncoder,
     target_projector: &Linear,
@@ -143,6 +144,7 @@ pub fn projected_target(
     target_projector.forward(&z_t1)
 }
 
+#[allow(dead_code)]
 pub fn projected_batch_losses(
     encoder: &EmbeddingEncoder,
     online_projector: &Linear,
@@ -163,6 +165,7 @@ pub fn projected_batch_losses(
     (prediction_loss, regularizer_loss, total_loss)
 }
 
+#[allow(dead_code)]
 pub fn projected_step(
     encoder: &EmbeddingEncoder,
     online_projector: &mut Linear,

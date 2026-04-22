@@ -8,8 +8,7 @@ pub const CHANNELS: usize = 1;
 pub const SQUARE_SIZE: usize = 2;
 pub const SLOW_MOTION_DX: usize = 1;
 pub const FAST_MOTION_DX: usize = 2;
-pub const FAST_MOTION_MASS_THRESHOLD: f32 =
-    0.8f32 * (SQUARE_SIZE * SQUARE_SIZE) as f32;
+pub const FAST_MOTION_MASS_THRESHOLD: f32 = 0.8f32 * (SQUARE_SIZE * SQUARE_SIZE) as f32;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
 
@@ -86,6 +85,7 @@ pub fn motion_mode_counts(x_t: &Tensor, x_t1: &Tensor) -> (usize, usize) {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn batch_has_motion_mode(x_t: &Tensor, x_t1: &Tensor, motion_dx: usize) -> bool {
     let (slow_count, fast_count) = motion_mode_counts(x_t, x_t1);
 
@@ -97,6 +97,7 @@ pub fn batch_has_motion_mode(x_t: &Tensor, x_t1: &Tensor, motion_dx: usize) -> b
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn batch_has_both_motion_modes(x_t: &Tensor, x_t1: &Tensor) -> bool {
     batch_has_motion_mode(x_t, x_t1, SLOW_MOTION_DX)
         && batch_has_motion_mode(x_t, x_t1, FAST_MOTION_DX)
@@ -121,12 +122,8 @@ pub fn make_validation_batch_with_both_motion_modes(
         let seed = validation_base_seed + batch_idx;
         let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
 
-        if batch_has_min_motion_mode_counts(
-            &x_t,
-            &x_t1,
-            MIN_MIXED_MODE_COUNT,
-            MIN_MIXED_MODE_COUNT,
-        ) {
+        if batch_has_min_motion_mode_counts(&x_t, &x_t1, MIN_MIXED_MODE_COUNT, MIN_MIXED_MODE_COUNT)
+        {
             return (x_t, x_t1, seed);
         }
     }
@@ -156,14 +153,17 @@ pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
     weighted_sum / total_mass
 }
 
+#[allow(dead_code)]
 pub fn fast_motion_feature_from_mass(mass: f32) -> f32 {
     (mass - FAST_MOTION_MASS_THRESHOLD).max(0.0)
 }
 
+#[allow(dead_code)]
 pub fn fast_motion_feature_for_sample(x_t: &Tensor, sample: usize) -> f32 {
     fast_motion_feature_from_mass(total_mass(x_t, sample))
 }
 
+#[allow(dead_code)]
 pub fn fast_mode_channel_summary(z: &Tensor) -> (usize, usize, f32, f32) {
     assert_eq!(
         z.shape,
