@@ -143,6 +143,37 @@ fn unprojected_temporal_step_reduces_loss_on_random_batch() {
 }
 
 #[test]
+fn unprojected_temporal_step_reported_loss_matches_batch_loss() {
+    let encoder = make_frozen_encoder();
+    let (x_t, x_t1) = make_train_batch(31_001, 0);
+    let mut model = VisionJepa::new(encoder, make_predictor());
+    let lr = 0.015;
+
+    let expected_loss = batch_loss(&model, &x_t, &x_t1);
+    let (step_loss, total_loss) = model.step(&x_t, &x_t1, lr);
+    let actual_loss = batch_loss(&model, &x_t, &x_t1);
+
+    assert!(
+        (step_loss - expected_loss).abs() < 1e-6,
+        "step loss should match batch loss before update: {:.6} vs {:.6}",
+        expected_loss,
+        step_loss
+    );
+    assert!(
+        (total_loss - expected_loss).abs() < 1e-6,
+        "step total should match step loss for unprojected JEPA: {:.6} vs {:.6}",
+        expected_loss,
+        total_loss
+    );
+    assert!(
+        actual_loss < expected_loss,
+        "one step did not decrease loss: {:.6} -> {:.6}",
+        expected_loss,
+        actual_loss
+    );
+}
+
+#[test]
 fn temporal_batch_is_deterministic_for_same_seed_and_changes_for_nearby_seed() {
     let (x_t_a, x_t1_a) = make_temporal_batch(BATCH_SIZE, 7_001);
     let (x_t_b, x_t1_b) = make_temporal_batch(BATCH_SIZE, 7_001);
