@@ -378,6 +378,115 @@ fn projected_step_and_model_step_stable_over_two_steps() {
 }
 
 #[test]
+fn projected_random_temporal_training_trajectory_is_reproducible() {
+    let encoder = make_frozen_encoder();
+    let mut model_a = ProjectedVisionJepa::new(
+        encoder.clone(),
+        make_projector(),
+        make_projector(),
+        make_predictor(),
+    );
+    let mut model_b = ProjectedVisionJepa::new(
+        encoder,
+        make_projector(),
+        make_projector(),
+        make_predictor(),
+    );
+    let steps = 6u64;
+    let (probe_t, probe_t1) = make_train_batch(11_100, 0);
+    let train_seed = 11_100;
+
+    let mut trajectory_a = Vec::<((f32, f32, f32), (f32, f32, f32))>::new();
+    let mut trajectory_b = Vec::<((f32, f32, f32), (f32, f32, f32))>::new();
+
+    for step in 1..=steps {
+        let (x_t, x_t1) = make_train_batch(train_seed, step);
+        let step_a = model_a.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+        let step_b = model_b.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+        assert!(
+            (step_a.0 - step_b.0).abs() < 1e-7,
+            "prediction loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            step_a.0,
+            step_b.0
+        );
+        assert!(
+            (step_a.1 - step_b.1).abs() < 1e-7,
+            "regularizer loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            step_a.1,
+            step_b.1
+        );
+        assert!(
+            (step_a.2 - step_b.2).abs() < 1e-7,
+            "total loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            step_a.2,
+            step_b.2
+        );
+        assert_eq!(
+            model_a, model_b,
+            "models diverged at trajectory batch {}",
+            step
+        );
+
+        let train_loss_a = model_a.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT);
+        let train_loss_b = model_b.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT);
+        assert!(
+            (train_loss_a.0 - train_loss_b.0).abs() < 1e-7,
+            "probe train prediction loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            train_loss_a.0,
+            train_loss_b.0
+        );
+        assert!(
+            (train_loss_a.1 - train_loss_b.1).abs() < 1e-7,
+            "probe train regularizer loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            train_loss_a.1,
+            train_loss_b.1
+        );
+        assert!(
+            (train_loss_a.2 - train_loss_b.2).abs() < 1e-7,
+            "probe train total loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            train_loss_a.2,
+            train_loss_b.2
+        );
+
+        let validation_loss_a = projected_validation_losses_model(&model_a);
+        let validation_loss_b = projected_validation_losses_model(&model_b);
+        assert!(
+            (validation_loss_a.0 - validation_loss_b.0).abs() < 1e-7,
+            "validation prediction loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            validation_loss_a.0,
+            validation_loss_b.0
+        );
+        assert!(
+            (validation_loss_a.1 - validation_loss_b.1).abs() < 1e-7,
+            "validation regularizer loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            validation_loss_a.1,
+            validation_loss_b.1
+        );
+        assert!(
+            (validation_loss_a.2 - validation_loss_b.2).abs() < 1e-7,
+            "validation total loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            validation_loss_a.2,
+            validation_loss_b.2
+        );
+
+        trajectory_a.push((train_loss_a, validation_loss_a));
+        trajectory_b.push((train_loss_b, validation_loss_b));
+    }
+
+    assert_eq!(trajectory_a, trajectory_b);
+}
+
+#[test]
 fn projected_step_reported_losses_match_batch_losses() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();
