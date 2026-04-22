@@ -3,16 +3,12 @@ mod projected_temporal;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use projected_temporal::{
-    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
-    projection_stats,
-};
-use roadjepa_core::{mse_loss, mse_loss_grad, EmbeddingEncoder, Linear, Predictor, Tensor};
+use projected_temporal::{projected_batch_losses, projected_step, projection_stats};
+use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
-    assert_temporal_contract, fast_mode_channel_summary, make_frozen_encoder, make_train_batch,
-    make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
-    MIN_MIXED_MODE_COUNT,
+    MIN_MIXED_MODE_COUNT, assert_temporal_contract, fast_mode_channel_summary, make_frozen_encoder,
+    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
+    motion_mode_counts, print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -48,53 +44,21 @@ fn make_predictor() -> Predictor {
     )
 }
 
-fn projected_target(
-    encoder: &EmbeddingEncoder,
-    target_projector: &Linear,
-    x_t1: &Tensor,
-) -> Tensor {
-    let z_t1 = encoder.forward(x_t1);
-    target_projector.forward(&z_t1)
-}
-
-fn batch_losses(
-    encoder: &EmbeddingEncoder,
-    online_projector: &Linear,
-    target_projector: &Linear,
-    predictor: &Predictor,
-    x_t: &Tensor,
-    x_t1: &Tensor,
-) -> (f32, f32, f32) {
-    let z_t = encoder.forward(x_t);
-    let projection_t = online_projector.forward(&z_t);
-    let pred = predictor.forward(&projection_t);
-    let target = projected_target(encoder, target_projector, x_t1);
-    let prediction_loss = mse_loss(&pred, &target);
-    let regularizer_loss = gaussian_moment_regularizer(&projection_t);
-    let total_loss = prediction_loss + REGULARIZER_WEIGHT * regularizer_loss;
-
-    (prediction_loss, regularizer_loss, total_loss)
-}
-
-fn validation_losses(
-    encoder: &EmbeddingEncoder,
-    online_projector: &Linear,
-    target_projector: &Linear,
-    predictor: &Predictor,
-) -> (f32, f32, f32) {
+fn validation_losses(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
     let mut prediction_total = 0.0;
     let mut regularizer_total = 0.0;
     let mut total = 0.0;
 
     for batch_idx in 0..VALIDATION_BATCHES {
         let (x_t, x_t1) = make_validation_batch(VALIDATION_BASE_SEED, batch_idx as u64);
-        let (prediction_loss, regularizer_loss, total_loss) = batch_losses(
-            encoder,
-            online_projector,
-            target_projector,
-            predictor,
+        let (prediction_loss, regularizer_loss, total_loss) = projected_batch_losses(
+            &model.encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
             &x_t,
             &x_t1,
+            REGULARIZER_WEIGHT,
         );
         prediction_total += prediction_loss;
         regularizer_total += regularizer_loss;
@@ -148,7 +112,8 @@ fn main() {
     assert_ne!(train_probe_t.data, train_probe_next_t.data);
     assert_ne!(train_probe_t.data, val_probe_t.data);
     assert_ne!(val_probe_t.data, mixed_val_probe_t.data);
-    let (mixed_slow_count, mixed_fast_count) = motion_mode_counts(&mixed_val_probe_t, &mixed_val_probe_t1);
+    let (mixed_slow_count, mixed_fast_count) =
+        motion_mode_counts(&mixed_val_probe_t, &mixed_val_probe_t1);
     assert!(
         mixed_slow_count >= MIN_MIXED_MODE_COUNT,
         "mixed validation probe slow count too small: {} < {}",
@@ -175,25 +140,27 @@ fn main() {
     );
 
     let encoder = make_frozen_encoder();
-    let mut online_projector = make_projector();
+    let online_projector = make_projector();
     let target_projector = online_projector.clone();
-    let mut predictor = make_predictor();
+    let predictor = make_predictor();
+    let mut model =
+        ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor);
 
-    let initial_z_t = encoder.forward(&train_probe_t);
-    let initial_mixed_val_z_t = encoder.forward(&mixed_val_probe_t);
-    let initial_projection_t = online_projector.forward(&initial_z_t);
-    let initial_target = projected_target(&encoder, &target_projector, &train_probe_t1);
+    let initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
+    let initial_projection_t = model.project_latent(&train_probe_t);
+    let initial_target = model.target_projection(&train_probe_t1);
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
-        batch_losses(
-            &encoder,
-            &online_projector,
-            &target_projector,
-            &predictor,
+        projected_batch_losses(
+            &model.encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
             &train_probe_t,
             &train_probe_t1,
+            REGULARIZER_WEIGHT,
         );
     let (initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss) =
-        validation_losses(&encoder, &online_projector, &target_projector, &predictor);
+        validation_losses(&model);
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
 
@@ -219,30 +186,30 @@ fn main() {
 
     for step in 1..=NUM_STEPS {
         let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
-        let z_t = encoder.forward(&x_t);
-        let projection_t = online_projector.forward(&z_t);
-        let target = projected_target(&encoder, &target_projector, &x_t1);
-        let pred = predictor.forward(&projection_t);
-        let prediction_loss = mse_loss(&pred, &target);
-        let regularizer_loss = gaussian_moment_regularizer(&projection_t);
-        let total_loss = prediction_loss + REGULARIZER_WEIGHT * regularizer_loss;
-
-        let prediction_grad = mse_loss_grad(&pred, &target);
-        let predictor_grads = predictor.backward(&projection_t, &prediction_grad);
-        let regularizer_grad = gaussian_moment_regularizer_grad(&projection_t);
-        let projection_grad = combine_projection_grads(
-            &predictor_grads.grad_input,
-            &regularizer_grad,
+        let (prediction_loss, regularizer_loss, total_loss) = projected_batch_losses(
+            &model.encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
+            &x_t,
+            &x_t1,
             REGULARIZER_WEIGHT,
         );
-        let projector_grads = online_projector.backward(&z_t, &projection_grad);
-
-        predictor.sgd_step(&predictor_grads, PREDICTOR_LR);
-        online_projector.sgd_step(&projector_grads, PROJECTOR_LR);
+        projected_step(
+            &model.encoder,
+            &mut model.projector,
+            &model.target_projector,
+            &mut model.predictor,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+            PREDICTOR_LR,
+            PROJECTOR_LR,
+        );
 
         if step == 1 || step % LOG_EVERY == 0 {
             let (val_prediction_loss, val_regularizer_loss, val_total_loss) =
-                validation_losses(&encoder, &online_projector, &target_projector, &predictor);
+                validation_losses(&model);
 
             println!(
                 "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | val total {:.6}",
@@ -255,20 +222,21 @@ fn main() {
         }
     }
 
-    let final_projection_t = online_projector.forward(&initial_z_t);
-    let final_pred = predictor.forward(&final_projection_t);
-    let final_target = projected_target(&encoder, &target_projector, &train_probe_t1);
+    let final_projection_t = model.project_latent(&train_probe_t);
+    let final_pred = model.predict_next_projection(&train_probe_t);
+    let final_target = model.target_projection(&train_probe_t1);
     let (final_train_prediction_loss, final_train_regularizer_loss, final_train_total_loss) =
-        batch_losses(
-            &encoder,
-            &online_projector,
-            &target_projector,
-            &predictor,
+        projected_batch_losses(
+            &model.encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
             &train_probe_t,
             &train_probe_t1,
+            REGULARIZER_WEIGHT,
         );
     let (final_val_prediction_loss, final_val_regularizer_loss, final_val_total_loss) =
-        validation_losses(&encoder, &online_projector, &target_projector, &predictor);
+        validation_losses(&model);
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);
 
