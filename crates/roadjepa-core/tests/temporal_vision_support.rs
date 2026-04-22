@@ -179,6 +179,7 @@ fn unprojected_temporal_step_updates_predictor_parameters() {
     let mut model = VisionJepa::new(encoder, make_predictor());
     let (x_t, x_t1) = make_train_batch(31_002, 0);
     let lr = 0.02;
+    let encoder_snapshot = model.encoder.clone();
 
     let predictor_fc1_weight_snapshot = model.predictor.fc1.weight.clone();
     let predictor_fc1_bias_snapshot = model.predictor.fc1.bias.clone();
@@ -187,6 +188,7 @@ fn unprojected_temporal_step_updates_predictor_parameters() {
 
     model.step(&x_t, &x_t1, lr);
 
+    assert_eq!(model.encoder, encoder_snapshot);
     assert_ne!(model.predictor.fc1.weight, predictor_fc1_weight_snapshot);
     assert_ne!(model.predictor.fc1.bias, predictor_fc1_bias_snapshot);
     assert_ne!(model.predictor.fc2.weight, predictor_fc2_weight_snapshot);
