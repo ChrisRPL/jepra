@@ -72,12 +72,10 @@ pub fn motion_dx_for_sample(x_t: &Tensor, sample: usize) -> usize {
     motion_dx_for_intensity(intensity_t)
 }
 
-#[cfg(test)]
 pub fn fast_motion_feature_from_mass(mass: f32) -> f32 {
     (mass - FAST_MOTION_MASS_THRESHOLD).max(0.0)
 }
 
-#[cfg(test)]
 pub fn fast_motion_feature_for_sample(x_t: &Tensor, sample: usize) -> f32 {
     fast_motion_feature_from_mass(total_mass(x_t, sample))
 }

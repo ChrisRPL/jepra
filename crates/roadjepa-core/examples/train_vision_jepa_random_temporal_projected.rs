@@ -3,8 +3,8 @@ mod temporal_vision;
 
 use roadjepa_core::{mse_loss, mse_loss_grad, EmbeddingEncoder, Linear, Predictor, Tensor};
 use temporal_vision::{
-    assert_temporal_contract, make_frozen_encoder, make_train_batch, make_validation_batch,
-    print_batch_summary,
+    assert_temporal_contract, fast_motion_feature_for_sample, make_frozen_encoder,
+    make_train_batch, make_validation_batch, print_batch_summary, BATCH_SIZE,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -231,6 +231,24 @@ fn validation_losses(
     )
 }
 
+fn assert_fast_mode_channel(label: &str, x: &Tensor, z: &Tensor) {
+    assert_eq!(z.shape, vec![BATCH_SIZE, 3]);
+
+    for sample in 0..BATCH_SIZE {
+        let expected = fast_motion_feature_for_sample(x, sample);
+        let actual = z.get(&[sample, 2]);
+
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "{} sample {} fast-mode channel mismatch: {:.6} vs {:.6}",
+            label,
+            sample,
+            actual,
+            expected
+        );
+    }
+}
+
 fn main() {
     let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
@@ -252,6 +270,8 @@ fn main() {
     let mut predictor = make_predictor();
 
     let initial_z_t = encoder.forward(&train_probe_t);
+    let initial_val_z_t = encoder.forward(&val_probe_t);
+    let initial_val_z_t1 = encoder.forward(&val_probe_t1);
     let initial_projection_t = online_projector.forward(&initial_z_t);
     let initial_target = projected_target(&encoder, &target_projector, &train_probe_t1);
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
@@ -267,6 +287,9 @@ fn main() {
         validation_losses(&encoder, &online_projector, &target_projector, &predictor);
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
+
+    assert_fast_mode_channel("validation probe t", &val_probe_t, &initial_val_z_t);
+    assert_fast_mode_channel("validation probe t1", &val_probe_t1, &initial_val_z_t1);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
