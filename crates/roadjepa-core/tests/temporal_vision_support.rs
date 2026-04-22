@@ -124,6 +124,72 @@ fn unprojected_random_temporal_training_reduces_train_and_validation_loss() {
 }
 
 #[test]
+fn unprojected_random_temporal_training_trajectory_is_reproducible() {
+    let encoder = make_frozen_encoder();
+    let mut model_a = VisionJepa::new(encoder.clone(), make_predictor());
+    let mut model_b = VisionJepa::new(encoder, make_predictor());
+    let train_base_seed = 1_100u64;
+    let steps = 6;
+    let lr = 0.02;
+
+    let (probe_t, probe_t1) = make_train_batch(train_base_seed, 0);
+
+    let mut trajectory_a = Vec::<(f32, f32)>::new();
+    let mut trajectory_b = Vec::<(f32, f32)>::new();
+
+    for step in 1..=steps {
+        let (x_t, x_t1) = make_train_batch(train_base_seed, step as u64);
+        let batch_step_a = model_a.step(&x_t, &x_t1, lr);
+        let batch_step_b = model_b.step(&x_t, &x_t1, lr);
+
+        assert!(
+            (batch_step_a.0 - batch_step_b.0).abs() < 1e-7,
+            "step loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            batch_step_a.0,
+            batch_step_b.0
+        );
+        assert!(
+            (batch_step_a.1 - batch_step_b.1).abs() < 1e-7,
+            "total loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            batch_step_a.1,
+            batch_step_b.1
+        );
+        assert_eq!(
+            model_a, model_b,
+            "models diverged at trajectory batch {}",
+            step
+        );
+
+        let train_loss_a = batch_loss(&model_a, &probe_t, &probe_t1);
+        let train_loss_b = batch_loss(&model_b, &probe_t, &probe_t1);
+        assert!(
+            (train_loss_a - train_loss_b).abs() < 1e-7,
+            "probe train loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            train_loss_a,
+            train_loss_b
+        );
+
+        let validation_loss_a = validation_loss(&model_a);
+        let validation_loss_b = validation_loss(&model_b);
+        assert!(
+            (validation_loss_a - validation_loss_b).abs() < 1e-7,
+            "validation loss diverged at trajectory batch {}: {:.6} vs {:.6}",
+            step,
+            validation_loss_a,
+            validation_loss_b
+        );
+
+        trajectory_a.push((train_loss_a, validation_loss_a));
+        trajectory_b.push((train_loss_b, validation_loss_b));
+    }
+
+    assert_eq!(trajectory_a, trajectory_b);
+}
+
+#[test]
 fn unprojected_temporal_step_reduces_loss_on_random_batch() {
     let encoder = make_frozen_encoder();
     let (x_t, x_t1) = make_train_batch(31_000, 2);
