@@ -14,7 +14,7 @@ pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
 pub use predictor::{Predictor, PredictorGrads};
 pub use tensor::Tensor;
-pub use vision_jepa::VisionJepa;
+pub use vision_jepa::{ProjectedVisionJepa, VisionJepa};
 
 #[cfg(test)]
 mod tests {
@@ -607,7 +607,9 @@ mod tests {
         assert_eq!(grads.grad_fc1.grad_weight.shape, vec![3, 4]);
         assert_eq!(
             grads.grad_fc1.grad_weight.data,
-            vec![1.0, -4.0, 3.0, 0.0, -2.0, 8.0, -6.0, 0.0, 3.0, -12.0, 9.0, 0.0,]
+            vec![
+                1.0, -4.0, 3.0, 0.0, -2.0, 8.0, -6.0, 0.0, 3.0, -12.0, 9.0, 0.0,
+            ]
         );
         assert_eq!(grads.grad_fc1.grad_bias.data, vec![1.0, 4.0, 3.0, 0.0]);
 
@@ -1031,5 +1033,67 @@ mod tests {
 
         assert_eq!(pred.shape, vec![2, 1]);
         assert_eq!(pred.data, vec![4.0, 5.0]);
+    }
+
+    #[test]
+    fn projected_vision_jepa_forward_projection_pair_works() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0
+                    2.0, // out channel 1
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let encoder = EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2));
+
+        let projector = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let target_projector = Linear::new(
+            Tensor::new(vec![0.0, 1.0, 1.0, 0.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let predictor = Predictor::new(
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::new(vec![0.0, 0.0], vec![2]),
+            ),
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::new(vec![0.0, 0.0], vec![2]),
+            ),
+        );
+
+        let model = ProjectedVisionJepa::new(encoder, projector, target_projector, predictor);
+
+        let x_t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+        let x_t1 = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![1, 1, 2, 2]);
+
+        let (prediction, target) = model.forward_projection_pair(&x_t, &x_t1);
+
+        let expected_projection = model.project_latent(&x_t);
+        let expected_prediction = model.predictor.forward(&expected_projection);
+        let expected_target = model.target_projection(&x_t1);
+
+        assert_eq!(prediction.shape, vec![1, 2]);
+        assert_eq!(target.shape, vec![1, 2]);
+        assert_eq!(prediction, expected_prediction);
+        assert_eq!(target, expected_target);
     }
 }
