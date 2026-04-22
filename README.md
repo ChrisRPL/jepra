@@ -28,5 +28,11 @@ cargo clippy --all-targets --all-features
 cargo fmt --manifest-path crates/roadjepa-core/Cargo.toml
 cargo test --manifest-path crates/roadjepa-core/Cargo.toml --all-targets
 cargo run --manifest-path crates/roadjepa-core/Cargo.toml --example train_vision_jepa_random_temporal
+cargo run --manifest-path crates/roadjepa-core/Cargo.toml --example train_vision_jepa
 cargo run --manifest-path crates/roadjepa-core/Cargo.toml --example train_vision_jepa_random_temporal_projected
 ```
+
+### Example Entrypoints
+
+- `train_vision_jepa_random_temporal.rs` is the canonical hardening path for the current JEPA temporal proof.
+- `train_vision_jepa.rs` remains as a legacy entrypoint and now delegates to the same random-temporal training flow.
