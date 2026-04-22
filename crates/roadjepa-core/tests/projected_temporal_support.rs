@@ -154,18 +154,24 @@ fn combine_projection_grads_applies_regularizer_weight() {
 #[test]
 fn projected_training_step_reduces_total_loss_on_fixed_batch() {
     let encoder = make_frozen_encoder();
-    let mut online_projector = make_projector();
+    let online_projector = make_projector();
     let target_projector = online_projector.clone();
     let target_projector_weight_snapshot = target_projector.weight.clone();
     let target_projector_bias_snapshot = target_projector.bias.clone();
-    let mut predictor = make_predictor();
+    let predictor = make_predictor();
+    let mut model = ProjectedVisionJepa::new(
+        encoder.clone(),
+        online_projector,
+        target_projector.clone(),
+        predictor,
+    );
     let (x_t, x_t1) = make_train_batch(11_000, 0);
 
     let initial_total = projected_batch_losses(
         &encoder,
-        &online_projector,
-        &target_projector,
-        &predictor,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
         &x_t,
         &x_t1,
         REGULARIZER_WEIGHT,
@@ -173,10 +179,7 @@ fn projected_training_step_reduces_total_loss_on_fixed_batch() {
     .2;
 
     projected_step(
-        &encoder,
-        &mut online_projector,
-        &target_projector,
-        &mut predictor,
+        &mut model,
         &x_t,
         &x_t1,
         REGULARIZER_WEIGHT,
@@ -185,19 +188,19 @@ fn projected_training_step_reduces_total_loss_on_fixed_batch() {
     );
 
     assert_eq!(
-        target_projector.weight, target_projector_weight_snapshot,
+        model.target_projector.weight, target_projector_weight_snapshot,
         "target projector weight mutated during projected step"
     );
     assert_eq!(
-        target_projector.bias, target_projector_bias_snapshot,
+        model.target_projector.bias, target_projector_bias_snapshot,
         "target projector bias mutated during projected step"
     );
 
     let final_total = projected_batch_losses(
         &encoder,
-        &online_projector,
-        &target_projector,
-        &predictor,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
         &x_t,
         &x_t1,
         REGULARIZER_WEIGHT,
@@ -254,19 +257,22 @@ fn projected_vision_jepa_step_reduces_total_loss_on_fixed_batch() {
 #[test]
 fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
     let encoder = make_frozen_encoder();
-    let mut online_projector = make_projector();
+    let online_projector = make_projector();
     let target_projector = online_projector.clone();
     let target_projector_weight_snapshot = target_projector.weight.clone();
     let target_projector_bias_snapshot = target_projector.bias.clone();
-    let mut predictor = make_predictor();
+    let predictor = make_predictor();
+    let mut model = ProjectedVisionJepa::new(
+        encoder.clone(),
+        online_projector,
+        target_projector.clone(),
+        predictor,
+    );
     let (x_t_step0, x_t1_step0) = make_train_batch(11_000, 0);
     let (x_t_step1, x_t1_step1) = make_train_batch(11_000, 1);
 
     projected_step(
-        &encoder,
-        &mut online_projector,
-        &target_projector,
-        &mut predictor,
+        &mut model,
         &x_t_step0,
         &x_t1_step0,
         REGULARIZER_WEIGHT,
@@ -275,10 +281,7 @@ fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
     );
 
     projected_step(
-        &encoder,
-        &mut online_projector,
-        &target_projector,
-        &mut predictor,
+        &mut model,
         &x_t_step1,
         &x_t1_step1,
         REGULARIZER_WEIGHT,
@@ -287,11 +290,11 @@ fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
     );
 
     assert_eq!(
-        target_projector.weight, target_projector_weight_snapshot,
+        model.target_projector.weight, target_projector_weight_snapshot,
         "target projector weight mutated during multi-step projected training"
     );
     assert_eq!(
-        target_projector.bias, target_projector_bias_snapshot,
+        model.target_projector.bias, target_projector_bias_snapshot,
         "target projector bias mutated during multi-step projected training"
     );
 }

@@ -1,4 +1,4 @@
-use roadjepa_core::{EmbeddingEncoder, Linear, Predictor, Tensor, mse_loss, mse_loss_grad};
+use roadjepa_core::{EmbeddingEncoder, Linear, Predictor, ProjectedVisionJepa, Tensor, mse_loss};
 
 pub fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
     assert!(
@@ -35,6 +35,7 @@ pub fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
     loss / dim_scale
 }
 
+#[allow(dead_code)]
 pub fn gaussian_moment_regularizer_grad(latents: &Tensor) -> Tensor {
     assert!(
         latents.shape.len() == 2,
@@ -113,6 +114,7 @@ pub fn projection_stats(latents: &Tensor) -> (f32, f32) {
     (mean_abs_acc / dim_scale, variance_acc / dim_scale)
 }
 
+#[allow(dead_code)]
 pub fn combine_projection_grads(
     prediction_grad: &Tensor,
     regularizer_grad: &Tensor,
@@ -167,28 +169,12 @@ pub fn projected_batch_losses(
 
 #[allow(dead_code)]
 pub fn projected_step(
-    encoder: &EmbeddingEncoder,
-    online_projector: &mut Linear,
-    target_projector: &Linear,
-    predictor: &mut Predictor,
+    model: &mut ProjectedVisionJepa,
     x_t: &Tensor,
     x_t1: &Tensor,
     regularizer_weight: f32,
     predictor_lr: f32,
     projector_lr: f32,
 ) {
-    let z_t = encoder.forward(x_t);
-    let projection_t = online_projector.forward(&z_t);
-    let target = projected_target(encoder, target_projector, x_t1);
-    let pred = predictor.forward(&projection_t);
-    let prediction_grad = mse_loss_grad(&pred, &target);
-    let reg_grad = gaussian_moment_regularizer_grad(&projection_t);
-    let pred_grads = predictor.backward(&projection_t, &prediction_grad);
-    let projection_grad =
-        combine_projection_grads(&pred_grads.grad_input, &reg_grad, regularizer_weight);
-
-    let projector_grads = online_projector.backward(&z_t, &projection_grad);
-
-    predictor.sgd_step(&pred_grads, predictor_lr);
-    online_projector.sgd_step(&projector_grads, projector_lr);
+    model.step(x_t, x_t1, regularizer_weight, predictor_lr, projector_lr);
 }
