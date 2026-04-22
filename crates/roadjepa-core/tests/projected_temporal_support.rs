@@ -287,6 +287,59 @@ fn projected_step_and_model_step_are_equivalent() {
 }
 
 #[test]
+fn projected_step_reported_losses_match_batch_losses() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let (x_t, x_t1) = make_train_batch(11_000, 2);
+    let mut model = ProjectedVisionJepa::new(
+        encoder.clone(),
+        projector.clone(),
+        target_projector,
+        make_predictor(),
+    );
+    let (expected_prediction_loss, expected_regularizer_loss, expected_total_loss) =
+        projected_batch_losses(
+            &encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+        );
+    let (step_prediction_loss, step_regularizer_loss, step_total_loss) =
+        model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+    let (_, _, actual_total_loss) =
+        model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
+
+    assert!(
+        (step_prediction_loss - expected_prediction_loss).abs() < 1e-6,
+        "reported prediction loss mismatch: {:.6} vs {:.6}",
+        step_prediction_loss,
+        expected_prediction_loss
+    );
+    assert!(
+        (step_regularizer_loss - expected_regularizer_loss).abs() < 1e-6,
+        "reported regularizer loss mismatch: {:.6} vs {:.6}",
+        step_regularizer_loss,
+        expected_regularizer_loss
+    );
+    assert!(
+        (step_total_loss - expected_total_loss).abs() < 1e-6,
+        "reported total loss mismatch: {:.6} vs {:.6}",
+        step_total_loss,
+        expected_total_loss
+    );
+    assert!(
+        actual_total_loss < expected_total_loss,
+        "step did not reduce total loss: {:.6} -> {:.6}",
+        expected_total_loss,
+        actual_total_loss
+    );
+}
+
+#[test]
 fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
     let encoder = make_frozen_encoder();
     let online_projector = make_projector();
