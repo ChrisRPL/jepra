@@ -396,6 +396,45 @@ fn unprojected_temporal_step_reduces_loss_over_two_steps_on_same_batch() {
 }
 
 #[test]
+fn unprojected_step_reduces_total_loss_over_two_steps_on_same_batch() {
+    let encoder = make_frozen_encoder();
+    let mut model = VisionJepa::new(encoder, make_predictor());
+    let (x_t, x_t1) = make_train_batch(31_201, 1);
+    let lr = 0.01;
+    let mut prev_total = batch_loss(&model, &x_t, &x_t1);
+
+    for step_idx in 0..2 {
+        let expected = batch_loss(&model, &x_t, &x_t1);
+        let (step_loss, total_loss) = model.step(&x_t, &x_t1, lr);
+        let (_, post_total) = model.losses(&x_t, &x_t1);
+
+        assert!(
+            (step_loss - expected).abs() < 1e-6,
+            "unprojected step total mismatch at step {}: {:.6} vs {:.6}",
+            step_idx,
+            step_loss,
+            expected
+        );
+        assert!(
+            (total_loss - expected).abs() < 1e-6,
+            "unprojected total loss mismatch at step {}: {:.6} vs {:.6}",
+            step_idx,
+            total_loss,
+            expected
+        );
+        assert!(
+            post_total + 1e-6 < prev_total,
+            "unprojected same-batch total loss did not decrease at step {}: {:.6} -> {:.6}",
+            step_idx,
+            prev_total,
+            post_total
+        );
+
+        prev_total = post_total;
+    }
+}
+
+#[test]
 fn unprojected_temporal_step_updates_predictor_parameters() {
     let encoder = make_frozen_encoder();
     let mut model = VisionJepa::new(encoder, make_predictor());
