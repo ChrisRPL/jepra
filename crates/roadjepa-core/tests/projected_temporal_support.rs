@@ -255,6 +255,38 @@ fn projected_vision_jepa_step_reduces_total_loss_on_fixed_batch() {
 }
 
 #[test]
+fn projected_step_and_model_step_are_equivalent() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let predictor = make_predictor();
+    let (x_t, x_t1) = make_train_batch(11_000, 0);
+
+    let mut step_free = ProjectedVisionJepa::new(
+        encoder.clone(),
+        projector.clone(),
+        target_projector.clone(),
+        predictor.clone(),
+    );
+    let mut step_method = ProjectedVisionJepa::new(encoder, projector, target_projector, predictor);
+
+    projected_step(
+        &mut step_free,
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+    );
+    step_method.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+    assert_eq!(
+        step_free, step_method,
+        "projected helper and model API step diverged after same input and hyperparams"
+    );
+}
+
+#[test]
 fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
     let encoder = make_frozen_encoder();
     let online_projector = make_projector();
