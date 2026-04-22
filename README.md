@@ -18,9 +18,10 @@ cargo clippy --all-targets --all-features
 
 ## Current Tracked Scope
 
-- 67 unit/integration tests pass locally
+- 102 tests pass via `cargo test --manifest-path crates/roadjepa-core/Cargo.toml --all-targets`
 - `cargo test --test temporal_vision_support` and `--test projected_temporal_support` should both pass with deterministic loss reductions and reproducible trajectories
 - `train_vision_jepa_random_temporal.rs` and `train_vision_jepa_random_temporal_projected.rs` are the hardening examples for the JEPA proof path
+- `train_vision_jepa.rs` remains legacy and delegates to `train_vision_jepa_random_temporal.rs` via `train_vision_jepa_random_temporal::main()`.
 
 ## Useful Check Commands
 
