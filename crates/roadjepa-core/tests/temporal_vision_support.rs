@@ -174,6 +174,26 @@ fn unprojected_temporal_step_reported_loss_matches_batch_loss() {
 }
 
 #[test]
+fn unprojected_temporal_step_updates_predictor_parameters() {
+    let encoder = make_frozen_encoder();
+    let mut model = VisionJepa::new(encoder, make_predictor());
+    let (x_t, x_t1) = make_train_batch(31_002, 0);
+    let lr = 0.02;
+
+    let predictor_fc1_weight_snapshot = model.predictor.fc1.weight.clone();
+    let predictor_fc1_bias_snapshot = model.predictor.fc1.bias.clone();
+    let predictor_fc2_weight_snapshot = model.predictor.fc2.weight.clone();
+    let predictor_fc2_bias_snapshot = model.predictor.fc2.bias.clone();
+
+    model.step(&x_t, &x_t1, lr);
+
+    assert_ne!(model.predictor.fc1.weight, predictor_fc1_weight_snapshot);
+    assert_ne!(model.predictor.fc1.bias, predictor_fc1_bias_snapshot);
+    assert_ne!(model.predictor.fc2.weight, predictor_fc2_weight_snapshot);
+    assert_ne!(model.predictor.fc2.bias, predictor_fc2_bias_snapshot);
+}
+
+#[test]
 fn temporal_batch_is_deterministic_for_same_seed_and_changes_for_nearby_seed() {
     let (x_t_a, x_t1_a) = make_temporal_batch(BATCH_SIZE, 7_001);
     let (x_t_b, x_t1_b) = make_temporal_batch(BATCH_SIZE, 7_001);
