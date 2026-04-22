@@ -2,14 +2,14 @@
 #[path = "../examples/support/temporal_vision.rs"]
 mod temporal_vision;
 
-use roadjepa_core::Tensor;
-use roadjepa_core::{Linear, Predictor, mse_loss, mse_loss_grad};
+use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa, mse_loss, mse_loss_grad};
 use temporal_vision::{
+    BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
     assert_temporal_contract, batch_has_both_motion_modes, batch_has_min_motion_mode_counts,
     fast_mode_channel_summary, fast_motion_feature_for_sample, make_frozen_encoder,
-    make_temporal_batch, make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_dx_for_sample, motion_mode_counts,
-    square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
+    make_temporal_batch, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
+    square_center_x,
 };
 
 fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
@@ -22,6 +22,25 @@ fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
     }
 
     total
+}
+
+fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
+    let pred = model.predict_next_latent(x_t);
+    let target = model.target_latent(x_t1);
+    mse_loss(&pred, &target)
+}
+
+fn validation_loss(model: &VisionJepa) -> f32 {
+    let mut total = 0.0;
+    let validation_base_seed = 99_001u64;
+    let validation_batches = 8usize;
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_validation_batch(validation_base_seed, batch_idx as u64);
+        total += batch_loss(model, &x_t, &x_t1);
+    }
+
+    total / validation_batches as f32
 }
 
 fn make_predictor() -> Predictor {
@@ -49,6 +68,66 @@ fn make_predictor() -> Predictor {
             Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
         ),
     )
+}
+
+#[test]
+fn unprojected_random_temporal_training_reduces_train_and_validation_loss() {
+    let encoder = make_frozen_encoder();
+    let mut model = VisionJepa::new(encoder, make_predictor());
+    let train_base_seed = 1_000u64;
+    let steps = 120;
+    let lr = 0.02;
+
+    let (probe_t, probe_t1) = make_train_batch(train_base_seed, 0);
+    let initial_train_loss = batch_loss(&model, &probe_t, &probe_t1);
+    let initial_val_loss = validation_loss(&model);
+
+    for step in 1..=steps {
+        let (x_t, x_t1) = make_train_batch(train_base_seed, step as u64);
+        let z_t = model.encode(&x_t);
+        let z_t1 = model.target_latent(&x_t1);
+        let pred = model.predict_next_latent(&x_t);
+        let grad_out = mse_loss_grad(&pred, &z_t1);
+        let grads = model.predictor.backward(&z_t, &grad_out);
+        model.predictor.sgd_step(&grads, lr);
+
+        if step == 1 || step == steps {
+            println!(
+                "unprojected random temporal step {:03} | train {:.6} | val {:.6}",
+                step,
+                mse_loss(&pred, &z_t1),
+                validation_loss(&model)
+            );
+        }
+    }
+
+    let final_train_loss = batch_loss(&model, &probe_t, &probe_t1);
+    let final_val_loss = validation_loss(&model);
+
+    assert!(
+        final_train_loss < initial_train_loss,
+        "train loss did not improve: {:.6} -> {:.6}",
+        initial_train_loss,
+        final_train_loss
+    );
+    assert!(
+        final_val_loss < initial_val_loss,
+        "validation loss did not improve: {:.6} -> {:.6}",
+        initial_val_loss,
+        final_val_loss
+    );
+    assert!(
+        final_train_loss < 0.1,
+        "train loss too high after {} steps: {:.6}",
+        steps,
+        final_train_loss
+    );
+    assert!(
+        final_val_loss < 0.08,
+        "validation loss too high after {} steps: {:.6}",
+        steps,
+        final_val_loss
+    );
 }
 
 #[test]
