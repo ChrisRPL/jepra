@@ -174,6 +174,65 @@ fn unprojected_temporal_step_reported_loss_matches_batch_loss() {
 }
 
 #[test]
+fn unprojected_temporal_step_stable_over_two_steps() {
+    let encoder = make_frozen_encoder();
+    let mut model = VisionJepa::new(encoder.clone(), make_predictor());
+    let lr = 0.02;
+    let encoder_snapshot = model.encoder.clone();
+    let mut prev_predictor_fc1_weight = model.predictor.fc1.weight.clone();
+    let mut prev_predictor_fc1_bias = model.predictor.fc1.bias.clone();
+    let mut prev_predictor_fc2_weight = model.predictor.fc2.weight.clone();
+    let mut prev_predictor_fc2_bias = model.predictor.fc2.bias.clone();
+
+    for batch_idx in 0..2 {
+        let (x_t, x_t1) = make_train_batch(31_100, batch_idx as u64);
+        let expected = batch_loss(&model, &x_t, &x_t1);
+        let (step_loss, total_loss) = model.step(&x_t, &x_t1, lr);
+
+        assert!(
+            (step_loss - expected).abs() < 1e-6,
+            "step loss mismatch at batch {}: {:.6} vs {:.6}",
+            batch_idx,
+            step_loss,
+            expected
+        );
+        assert!(
+            (total_loss - expected).abs() < 1e-6,
+            "total loss mismatch at batch {}: {:.6} vs {:.6}",
+            batch_idx,
+            total_loss,
+            expected
+        );
+        assert_eq!(model.encoder, encoder_snapshot);
+        assert_ne!(
+            model.predictor.fc1.weight, prev_predictor_fc1_weight,
+            "fc1.weight did not change at batch {}",
+            batch_idx
+        );
+        assert_ne!(
+            model.predictor.fc1.bias, prev_predictor_fc1_bias,
+            "fc1.bias did not change at batch {}",
+            batch_idx
+        );
+        assert_ne!(
+            model.predictor.fc2.weight, prev_predictor_fc2_weight,
+            "fc2.weight did not change at batch {}",
+            batch_idx
+        );
+        assert_ne!(
+            model.predictor.fc2.bias, prev_predictor_fc2_bias,
+            "fc2.bias did not change at batch {}",
+            batch_idx
+        );
+
+        prev_predictor_fc1_weight = model.predictor.fc1.weight.clone();
+        prev_predictor_fc1_bias = model.predictor.fc1.bias.clone();
+        prev_predictor_fc2_weight = model.predictor.fc2.weight.clone();
+        prev_predictor_fc2_bias = model.predictor.fc2.bias.clone();
+    }
+}
+
+#[test]
 fn unprojected_temporal_step_updates_predictor_parameters() {
     let encoder = make_frozen_encoder();
     let mut model = VisionJepa::new(encoder, make_predictor());
