@@ -24,9 +24,10 @@ fn make_projector() -> Linear {
         Tensor::new(
             vec![
                 1.0, 0.0, 1.0, 0.0, //
-                0.0, 1.0, 0.0, 1.0,
+                0.0, 1.0, 0.0, 1.0, //
+                0.0, 0.0, 1.0, 1.0,
             ],
-            vec![2, PROJECTION_DIM],
+            vec![3, PROJECTION_DIM],
         ),
         Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![PROJECTION_DIM]),
     )

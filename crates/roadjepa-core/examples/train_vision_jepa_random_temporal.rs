@@ -20,17 +20,18 @@ fn make_predictor() -> Predictor {
     let fc1 = Linear::new(
         Tensor::new(
             vec![
-                1.0, 0.0, 1.0, 0.0, //
-                0.0, 1.0, 0.0, 1.0,
+                1.0, 0.0, 0.0, 1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, 0.0, 1.0, 0.0, //
+                0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
             ],
-            vec![2, 4],
+            vec![3, 6],
         ),
-        Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![4]),
+        Tensor::new(vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0], vec![6]),
     );
 
     let fc2 = Linear::new(
-        Tensor::zeros(vec![4, 2]),
-        Tensor::new(vec![0.0, 0.0], vec![2]),
+        Tensor::zeros(vec![6, 3]),
+        Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
     );
 
     Predictor::new(fc1, fc2)
@@ -79,8 +80,8 @@ fn main() {
 
     println!(
         "initial | latent sample0 {:?} -> {:?}",
-        &initial_z_t.data[0..2],
-        &initial_z_t1.data[0..2]
+        &initial_z_t.data[0..3],
+        &initial_z_t1.data[0..3]
     );
     println!(
         "initial | probe train {:.6} | val {:.6}",
@@ -141,9 +142,9 @@ fn main() {
 
     println!(
         "\nfinal | latent sample0 {:?} | pred {:?} | target {:?}",
-        &final_z_t.data[0..2],
-        &final_pred.data[0..2],
-        &final_target.data[0..2]
+        &final_z_t.data[0..3],
+        &final_pred.data[0..3],
+        &final_target.data[0..3]
     );
     println!(
         "final | probe train {:.6} | val {:.6}",

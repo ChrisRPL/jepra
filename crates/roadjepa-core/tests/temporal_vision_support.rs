@@ -4,8 +4,9 @@ mod temporal_vision;
 
 use roadjepa_core::Tensor;
 use temporal_vision::{
-    assert_temporal_contract, make_temporal_batch, make_train_batch, make_validation_batch,
-    motion_dx_for_sample, square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, SLOW_MOTION_DX,
+    assert_temporal_contract, fast_motion_feature_for_sample, make_frozen_encoder,
+    make_temporal_batch, make_train_batch, make_validation_batch, motion_dx_for_sample,
+    square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, SLOW_MOTION_DX,
 };
 
 fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
@@ -97,6 +98,35 @@ fn generator_exposes_both_motion_modes_across_seed_range() {
 
     assert!(saw_slow_motion, "never observed slow motion");
     assert!(saw_fast_motion, "never observed fast motion");
+}
+
+#[test]
+fn frozen_encoder_exposes_fast_motion_mode_feature() {
+    let encoder = make_frozen_encoder();
+    let mut checked_samples = 0;
+
+    for seed in 0..64 {
+        let (x_t, _) = make_temporal_batch(BATCH_SIZE, seed);
+        let z_t = encoder.forward(&x_t);
+
+        assert_eq!(z_t.shape, vec![BATCH_SIZE, 3]);
+
+        for sample in 0..BATCH_SIZE {
+            let expected = fast_motion_feature_for_sample(&x_t, sample);
+            let actual = z_t.get(&[sample, 2]);
+
+            assert!(
+                (actual - expected).abs() < 1e-6,
+                "sample {} feature mismatch: {:.6} vs {:.6}",
+                sample,
+                actual,
+                expected
+            );
+            checked_samples += 1;
+        }
+    }
+
+    assert!(checked_samples > 0);
 }
 
 #[test]

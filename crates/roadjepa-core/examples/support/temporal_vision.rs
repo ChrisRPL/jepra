@@ -9,6 +9,8 @@ pub const SQUARE_SIZE: usize = 2;
 pub const SLOW_MOTION_DX: usize = 1;
 pub const FAST_MOTION_DX: usize = 2;
 pub const FAST_MOTION_INTENSITY_THRESHOLD: f32 = 0.8;
+pub const FAST_MOTION_MASS_THRESHOLD: f32 =
+    FAST_MOTION_INTENSITY_THRESHOLD * (SQUARE_SIZE * SQUARE_SIZE) as f32;
 
 pub fn motion_dx_for_intensity(intensity_t: f32) -> usize {
     if intensity_t >= FAST_MOTION_INTENSITY_THRESHOLD {
@@ -70,6 +72,16 @@ pub fn motion_dx_for_sample(x_t: &Tensor, sample: usize) -> usize {
     motion_dx_for_intensity(intensity_t)
 }
 
+#[cfg(test)]
+pub fn fast_motion_feature_from_mass(mass: f32) -> f32 {
+    (mass - FAST_MOTION_MASS_THRESHOLD).max(0.0)
+}
+
+#[cfg(test)]
+pub fn fast_motion_feature_for_sample(x_t: &Tensor, sample: usize) -> f32 {
+    fast_motion_feature_from_mass(total_mass(x_t, sample))
+}
+
 pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
     assert_eq!(
         x_t.shape,
@@ -119,7 +131,7 @@ pub fn print_batch_summary(name: &str, x_t: &Tensor, x_t1: &Tensor) {
 }
 
 pub fn make_frozen_encoder() -> EmbeddingEncoder {
-    let mut conv1_weights = Vec::with_capacity(2 * IMAGE_SIZE * IMAGE_SIZE);
+    let mut conv1_weights = Vec::with_capacity(3 * IMAGE_SIZE * IMAGE_SIZE);
 
     for _row in 0..IMAGE_SIZE {
         for _col in 0..IMAGE_SIZE {
@@ -133,16 +145,29 @@ pub fn make_frozen_encoder() -> EmbeddingEncoder {
         }
     }
 
+    for _row in 0..IMAGE_SIZE {
+        for _col in 0..IMAGE_SIZE {
+            conv1_weights.push(1.0);
+        }
+    }
+
     let conv1 = Conv2d::new(
-        Tensor::new(conv1_weights, vec![2, 1, IMAGE_SIZE, IMAGE_SIZE]),
-        Tensor::new(vec![0.0, 0.0], vec![2]),
+        Tensor::new(conv1_weights, vec![3, 1, IMAGE_SIZE, IMAGE_SIZE]),
+        Tensor::new(vec![0.0, 0.0, -FAST_MOTION_MASS_THRESHOLD], vec![3]),
         1,
         0,
     );
 
     let conv2 = Conv2d::new(
-        Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
-        Tensor::new(vec![0.0, 0.0], vec![2]),
+        Tensor::new(
+            vec![
+                1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, //
+                0.0, 0.0, 1.0,
+            ],
+            vec![3, 3, 1, 1],
+        ),
+        Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
         1,
         0,
     );
