@@ -233,6 +233,65 @@ fn unprojected_temporal_step_stable_over_two_steps() {
 }
 
 #[test]
+fn unprojected_temporal_step_reproducible_over_fixed_batch_schedule() {
+    let encoder = make_frozen_encoder();
+    let mut model_a = VisionJepa::new(encoder.clone(), make_predictor());
+    let mut model_b = VisionJepa::new(encoder, make_predictor());
+    let lr = 0.02;
+
+    for step_idx in 0..3 {
+        let (x_t, x_t1) = make_train_batch(31_200, step_idx as u64);
+        let expected_a = batch_loss(&model_a, &x_t, &x_t1);
+        let expected_b = batch_loss(&model_b, &x_t, &x_t1);
+
+        assert!(
+            (expected_a - expected_b).abs() < 1e-7,
+            "pre-step loss mismatch at batch {}: {:.6} vs {:.6}",
+            step_idx,
+            expected_a,
+            expected_b
+        );
+
+        let result_a = model_a.step(&x_t, &x_t1, lr);
+        let result_b = model_b.step(&x_t, &x_t1, lr);
+
+        assert!(
+            (result_a.0 - result_b.0).abs() < 1e-7,
+            "step loss mismatch at batch {}: {:.6} vs {:.6}",
+            step_idx,
+            result_a.0,
+            result_b.0
+        );
+        assert!(
+            (result_a.1 - result_b.1).abs() < 1e-7,
+            "total loss mismatch at batch {}: {:.6} vs {:.6}",
+            step_idx,
+            result_a.1,
+            result_b.1
+        );
+        assert_eq!(model_a, model_b, "models diverged at batch {}", step_idx);
+
+        let actual_a = batch_loss(&model_a, &x_t, &x_t1);
+        let actual_b = batch_loss(&model_b, &x_t, &x_t1);
+
+        assert!(
+            (actual_a - actual_b).abs() < 1e-7,
+            "post-step loss mismatch at batch {}: {:.6} vs {:.6}",
+            step_idx,
+            actual_a,
+            actual_b
+        );
+        assert!(
+            (result_a.0 - expected_a).abs() < 1e-6,
+            "step loss mismatch vs pre-step expectation at batch {}: {:.6} vs {:.6}",
+            step_idx,
+            result_a.0,
+            expected_a
+        );
+    }
+}
+
+#[test]
 fn unprojected_temporal_step_reduces_loss_over_two_steps_on_same_batch() {
     let encoder = make_frozen_encoder();
     let mut model = VisionJepa::new(encoder, make_predictor());
