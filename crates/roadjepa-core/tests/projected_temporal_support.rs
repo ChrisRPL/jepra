@@ -310,8 +310,7 @@ fn projected_step_reported_losses_match_batch_losses() {
         );
     let (step_prediction_loss, step_regularizer_loss, step_total_loss) =
         model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
-    let (_, _, actual_total_loss) =
-        model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
+    let (_, _, actual_total_loss) = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
 
     assert!(
         (step_prediction_loss - expected_prediction_loss).abs() < 1e-6,
@@ -337,6 +336,37 @@ fn projected_step_reported_losses_match_batch_losses() {
         expected_total_loss,
         actual_total_loss
     );
+}
+
+#[test]
+fn projected_step_updates_trainable_parameters() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let predictor = make_predictor();
+    let mut model = ProjectedVisionJepa::new(encoder, projector, target_projector, predictor);
+    let (x_t, x_t1) = make_train_batch(11_000, 0);
+    let target_weight_snapshot = model.target_projector.weight.clone();
+    let target_bias_snapshot = model.target_projector.bias.clone();
+
+    let projector_weight_snapshot = model.projector.weight.clone();
+    let projector_bias_snapshot = model.projector.bias.clone();
+    let predictor_fc1_weight_snapshot = model.predictor.fc1.weight.clone();
+    let predictor_fc1_bias_snapshot = model.predictor.fc1.bias.clone();
+    let predictor_fc2_weight_snapshot = model.predictor.fc2.weight.clone();
+    let predictor_fc2_bias_snapshot = model.predictor.fc2.bias.clone();
+
+    model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+    assert_eq!(model.target_projector.weight, target_weight_snapshot);
+    assert_eq!(model.target_projector.bias, target_bias_snapshot);
+
+    assert_ne!(model.projector.weight, projector_weight_snapshot);
+    assert_ne!(model.projector.bias, projector_bias_snapshot);
+    assert_ne!(model.predictor.fc1.weight, predictor_fc1_weight_snapshot);
+    assert_ne!(model.predictor.fc1.bias, predictor_fc1_bias_snapshot);
+    assert_ne!(model.predictor.fc2.weight, predictor_fc2_weight_snapshot);
+    assert_ne!(model.predictor.fc2.bias, predictor_fc2_bias_snapshot);
 }
 
 #[test]
