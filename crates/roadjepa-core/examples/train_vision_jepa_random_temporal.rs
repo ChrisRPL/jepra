@@ -1,8 +1,10 @@
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
+
 use roadjepa_core::{mse_loss, mse_loss_grad, Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
-    assert_temporal_contract, make_frozen_encoder, print_batch_summary, BATCH_SIZE,
+    assert_temporal_contract, make_frozen_encoder, make_train_batch, make_validation_batch,
+    print_batch_summary,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -11,14 +13,6 @@ const VALIDATION_BATCHES: usize = 8;
 const NUM_STEPS: usize = 300;
 const LOG_EVERY: usize = 25;
 const LR: f32 = 0.02;
-
-fn make_train_batch(step: u64) -> (Tensor, Tensor) {
-    temporal_vision::make_temporal_batch(BATCH_SIZE, TRAIN_BASE_SEED + step)
-}
-
-fn make_validation_batch(batch_idx: u64) -> (Tensor, Tensor) {
-    temporal_vision::make_temporal_batch(BATCH_SIZE, VALIDATION_BASE_SEED + batch_idx)
-}
 
 fn make_predictor() -> Predictor {
     let fc1 = Linear::new(
@@ -50,7 +44,7 @@ fn validation_loss(model: &VisionJepa) -> f32 {
     let mut total = 0.0;
 
     for batch_idx in 0..VALIDATION_BATCHES {
-        let (x_t, x_t1) = make_validation_batch(batch_idx as u64);
+        let (x_t, x_t1) = make_validation_batch(VALIDATION_BASE_SEED, batch_idx as u64);
         total += batch_loss(model, &x_t, &x_t1);
     }
 
@@ -58,9 +52,9 @@ fn validation_loss(model: &VisionJepa) -> f32 {
 }
 
 fn main() {
-    let (train_probe_t, train_probe_t1) = make_train_batch(0);
-    let (train_probe_next_t, train_probe_next_t1) = make_train_batch(1);
-    let (val_probe_t, val_probe_t1) = make_validation_batch(0);
+    let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
+    let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
+    let (val_probe_t, val_probe_t1) = make_validation_batch(VALIDATION_BASE_SEED, 0);
 
     assert_temporal_contract(&train_probe_t, &train_probe_t1);
     assert_temporal_contract(&train_probe_next_t, &train_probe_next_t1);
@@ -92,7 +86,7 @@ fn main() {
     );
 
     for step in 1..=NUM_STEPS {
-        let (x_t, x_t1) = make_train_batch(step as u64);
+        let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
         let z_t = model.encode(&x_t);
         let z_t1 = model.target_latent(&x_t1);
         let pred = model.predictor.forward(&z_t);

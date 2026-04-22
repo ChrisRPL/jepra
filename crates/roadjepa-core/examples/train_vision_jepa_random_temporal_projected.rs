@@ -1,8 +1,10 @@
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
+
 use roadjepa_core::{mse_loss, mse_loss_grad, EmbeddingEncoder, Linear, Predictor, Tensor};
 use temporal_vision::{
-    assert_temporal_contract, make_frozen_encoder, print_batch_summary, BATCH_SIZE,
+    assert_temporal_contract, make_frozen_encoder, make_train_batch, make_validation_batch,
+    print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -14,14 +16,6 @@ const LOG_EVERY: usize = 25;
 const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
-
-fn make_train_batch(step: u64) -> (Tensor, Tensor) {
-    temporal_vision::make_temporal_batch(BATCH_SIZE, TRAIN_BASE_SEED + step)
-}
-
-fn make_validation_batch(batch_idx: u64) -> (Tensor, Tensor) {
-    temporal_vision::make_temporal_batch(BATCH_SIZE, VALIDATION_BASE_SEED + batch_idx)
-}
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -63,7 +57,6 @@ fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
     let dim = latents.shape[1];
     let batch_scale = batch_size as f32;
     let dim_scale = dim as f32;
-
     let mut loss = 0.0;
 
     for feature in 0..dim {
@@ -71,15 +64,13 @@ fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
         let mut variance = 0.0;
 
         for sample in 0..batch_size {
-            let value = latents.get(&[sample, feature]);
-            mean += value;
+            mean += latents.get(&[sample, feature]);
         }
 
         mean /= batch_scale;
 
         for sample in 0..batch_size {
-            let value = latents.get(&[sample, feature]);
-            let centered = value - mean;
+            let centered = latents.get(&[sample, feature]) - mean;
             variance += centered * centered;
         }
 
@@ -108,23 +99,20 @@ fn gaussian_moment_regularizer_grad(latents: &Tensor) -> Tensor {
         let mut variance = 0.0;
 
         for sample in 0..batch_size {
-            let value = latents.get(&[sample, feature]);
-            mean += value;
+            mean += latents.get(&[sample, feature]);
         }
 
         mean /= batch_scale;
 
         for sample in 0..batch_size {
-            let value = latents.get(&[sample, feature]);
-            let centered = value - mean;
+            let centered = latents.get(&[sample, feature]) - mean;
             variance += centered * centered;
         }
 
         variance /= batch_scale;
 
         for sample in 0..batch_size {
-            let value = latents.get(&[sample, feature]);
-            let centered = value - mean;
+            let centered = latents.get(&[sample, feature]) - mean;
             let grad_value =
                 (2.0 / (batch_scale * dim_scale)) * (mean + 2.0 * centered * (variance - 1.0));
             grad.set(&[sample, feature], grad_value);
@@ -153,15 +141,13 @@ fn projection_stats(latents: &Tensor) -> (f32, f32) {
         let mut variance = 0.0;
 
         for sample in 0..batch_size {
-            let value = latents.get(&[sample, feature]);
-            mean += value;
+            mean += latents.get(&[sample, feature]);
         }
 
         mean /= batch_scale;
 
         for sample in 0..batch_size {
-            let value = latents.get(&[sample, feature]);
-            let centered = value - mean;
+            let centered = latents.get(&[sample, feature]) - mean;
             variance += centered * centered;
         }
 
@@ -220,7 +206,7 @@ fn validation_losses(
     let mut total = 0.0;
 
     for batch_idx in 0..VALIDATION_BATCHES {
-        let (x_t, x_t1) = make_validation_batch(batch_idx as u64);
+        let (x_t, x_t1) = make_validation_batch(VALIDATION_BASE_SEED, batch_idx as u64);
         let (prediction_loss, regularizer_loss, total_loss) = batch_losses(
             encoder,
             online_projector,
@@ -243,9 +229,9 @@ fn validation_losses(
 }
 
 fn main() {
-    let (train_probe_t, train_probe_t1) = make_train_batch(0);
-    let (train_probe_next_t, train_probe_next_t1) = make_train_batch(1);
-    let (val_probe_t, val_probe_t1) = make_validation_batch(0);
+    let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
+    let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
+    let (val_probe_t, val_probe_t1) = make_validation_batch(VALIDATION_BASE_SEED, 0);
 
     assert_temporal_contract(&train_probe_t, &train_probe_t1);
     assert_temporal_contract(&train_probe_next_t, &train_probe_next_t1);
@@ -298,7 +284,7 @@ fn main() {
     );
 
     for step in 1..=NUM_STEPS {
-        let (x_t, x_t1) = make_train_batch(step as u64);
+        let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
         let z_t = encoder.forward(&x_t);
         let projection_t = online_projector.forward(&z_t);
         let target = projected_target(&encoder, &target_projector, &x_t1);

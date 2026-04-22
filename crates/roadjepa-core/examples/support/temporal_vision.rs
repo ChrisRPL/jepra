@@ -30,6 +30,29 @@ pub fn make_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
     (x_t, x_t1)
 }
 
+pub fn make_train_batch(train_base_seed: u64, step: u64) -> (Tensor, Tensor) {
+    make_temporal_batch(BATCH_SIZE, train_base_seed + step)
+}
+
+pub fn make_validation_batch(validation_base_seed: u64, batch_idx: u64) -> (Tensor, Tensor) {
+    make_temporal_batch(BATCH_SIZE, validation_base_seed + batch_idx)
+}
+
+pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
+    let mut weighted_sum = 0.0;
+    let mut total_mass = 0.0;
+
+    for row in 0..IMAGE_SIZE {
+        for col in 0..IMAGE_SIZE {
+            let value = tensor.get(&[sample, 0, row, col]);
+            weighted_sum += value * col as f32;
+            total_mass += value;
+        }
+    }
+
+    weighted_sum / total_mass
+}
+
 pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
     assert_eq!(
         x_t.shape,
@@ -125,19 +148,4 @@ fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
     }
 
     total
-}
-
-fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
-    let mut weighted_sum = 0.0;
-    let mut total_mass = 0.0;
-
-    for row in 0..IMAGE_SIZE {
-        for col in 0..IMAGE_SIZE {
-            let value = tensor.get(&[sample, 0, row, col]);
-            weighted_sum += value * col as f32;
-            total_mass += value;
-        }
-    }
-
-    weighted_sum / total_mass
 }
