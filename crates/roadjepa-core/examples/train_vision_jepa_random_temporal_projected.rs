@@ -3,9 +3,9 @@ mod temporal_vision;
 
 use roadjepa_core::{mse_loss, mse_loss_grad, EmbeddingEncoder, Linear, Predictor, Tensor};
 use temporal_vision::{
-    assert_temporal_contract, batch_has_both_motion_modes, fast_motion_feature_for_sample,
-    make_frozen_encoder, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, print_batch_summary, BATCH_SIZE,
+    assert_temporal_contract, fast_motion_feature_for_sample, make_frozen_encoder,
+    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
+    motion_mode_counts, print_batch_summary, BATCH_SIZE, MIN_MIXED_MODE_COUNT,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -265,9 +265,18 @@ fn main() {
     assert_ne!(train_probe_t.data, train_probe_next_t.data);
     assert_ne!(train_probe_t.data, val_probe_t.data);
     assert_ne!(val_probe_t.data, mixed_val_probe_t.data);
+    let (mixed_slow_count, mixed_fast_count) = motion_mode_counts(&mixed_val_probe_t);
     assert!(
-        batch_has_both_motion_modes(&mixed_val_probe_t),
-        "mixed validation probe lost one motion mode"
+        mixed_slow_count >= MIN_MIXED_MODE_COUNT,
+        "mixed validation probe slow count too small: {} < {}",
+        mixed_slow_count,
+        MIN_MIXED_MODE_COUNT
+    );
+    assert!(
+        mixed_fast_count >= MIN_MIXED_MODE_COUNT,
+        "mixed validation probe fast count too small: {} < {}",
+        mixed_fast_count,
+        MIN_MIXED_MODE_COUNT
     );
 
     print_batch_summary("train probe", &train_probe_t, &train_probe_t1);
@@ -277,7 +286,10 @@ fn main() {
         &mixed_val_probe_t,
         &mixed_val_probe_t1,
     );
-    println!("validation mixed probe seed {}", mixed_val_probe_seed);
+    println!(
+        "validation mixed probe seed {} | slow {} | fast {}",
+        mixed_val_probe_seed, mixed_slow_count, mixed_fast_count
+    );
 
     let encoder = make_frozen_encoder();
     let mut online_projector = make_projector();

@@ -12,6 +12,7 @@ pub const FAST_MOTION_INTENSITY_THRESHOLD: f32 = 0.8;
 pub const FAST_MOTION_MASS_THRESHOLD: f32 =
     FAST_MOTION_INTENSITY_THRESHOLD * (SQUARE_SIZE * SQUARE_SIZE) as f32;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
+pub const MIN_MIXED_MODE_COUNT: usize = 2;
 
 pub fn motion_dx_for_intensity(intensity_t: f32) -> usize {
     if intensity_t >= FAST_MOTION_INTENSITY_THRESHOLD {
@@ -52,18 +53,44 @@ pub fn make_validation_batch(validation_base_seed: u64, batch_idx: u64) -> (Tens
     make_temporal_batch(BATCH_SIZE, validation_base_seed + batch_idx)
 }
 
-pub fn batch_has_motion_mode(x_t: &Tensor, motion_dx: usize) -> bool {
+pub fn motion_mode_counts(x_t: &Tensor) -> (usize, usize) {
+    let mut slow_count = 0;
+    let mut fast_count = 0;
+
     for sample in 0..BATCH_SIZE {
-        if motion_dx_for_sample(x_t, sample) == motion_dx {
-            return true;
+        match motion_dx_for_sample(x_t, sample) {
+            SLOW_MOTION_DX => slow_count += 1,
+            FAST_MOTION_DX => fast_count += 1,
+            dx => panic!("unexpected motion dx {}", dx),
         }
     }
 
-    false
+    (slow_count, fast_count)
 }
 
+#[cfg(test)]
+pub fn batch_has_motion_mode(x_t: &Tensor, motion_dx: usize) -> bool {
+    let (slow_count, fast_count) = motion_mode_counts(x_t);
+
+    match motion_dx {
+        SLOW_MOTION_DX => slow_count > 0,
+        FAST_MOTION_DX => fast_count > 0,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
 pub fn batch_has_both_motion_modes(x_t: &Tensor) -> bool {
     batch_has_motion_mode(x_t, SLOW_MOTION_DX) && batch_has_motion_mode(x_t, FAST_MOTION_DX)
+}
+
+pub fn batch_has_min_motion_mode_counts(
+    x_t: &Tensor,
+    min_slow_count: usize,
+    min_fast_count: usize,
+) -> bool {
+    let (slow_count, fast_count) = motion_mode_counts(x_t);
+    slow_count >= min_slow_count && fast_count >= min_fast_count
 }
 
 pub fn make_validation_batch_with_both_motion_modes(
@@ -75,13 +102,15 @@ pub fn make_validation_batch_with_both_motion_modes(
         let seed = validation_base_seed + batch_idx;
         let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
 
-        if batch_has_both_motion_modes(&x_t) {
+        if batch_has_min_motion_mode_counts(&x_t, MIN_MIXED_MODE_COUNT, MIN_MIXED_MODE_COUNT) {
             return (x_t, x_t1, seed);
         }
     }
 
     panic!(
-        "did not find a mixed-mode validation batch within {} seeds from base {} and start batch {}",
+        "did not find a mixed-mode validation batch with at least {} slow and {} fast samples within {} seeds from base {} and start batch {}",
+        MIN_MIXED_MODE_COUNT,
+        MIN_MIXED_MODE_COUNT,
         MIXED_MODE_SEARCH_LIMIT,
         validation_base_seed,
         start_batch_idx
@@ -153,11 +182,15 @@ pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
 }
 
 pub fn print_batch_summary(name: &str, x_t: &Tensor, x_t1: &Tensor) {
+    let (slow_count, fast_count) = motion_mode_counts(x_t);
+
     println!(
-        "{} | shape {:?} | sample0 dx {} | center_x {:.3} -> {:.3} | mass {:.3} -> {:.3}",
+        "{} | shape {:?} | sample0 dx {} | slow {} | fast {} | center_x {:.3} -> {:.3} | mass {:.3} -> {:.3}",
         name,
         x_t.shape,
         motion_dx_for_sample(x_t, 0),
+        slow_count,
+        fast_count,
         square_center_x(x_t, 0),
         square_center_x(x_t1, 0),
         total_mass(x_t, 0),
