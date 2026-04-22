@@ -1,23 +1,13 @@
-use roadjepa_core::{
-    mse_loss, mse_loss_grad, Conv2d, ConvEncoder, EmbeddingEncoder, Linear, Tensor, Predictor,
-    VisionJepa,
-};
+use roadjepa_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Linear, Predictor, Tensor, VisionJepa};
 
 fn make_toy_temporal_batch() -> (Tensor, Tensor) {
     let x_t = Tensor::new(
         vec![
             // sample 1
-            1.0, 2.0,
-            3.0, 4.0,
-            // sample 2
-            2.0, 1.0,
-            0.0, 3.0,
-            // sample 3
-            4.0, 2.0,
-            1.0, 5.0,
-            // sample 4
-            3.0, 3.0,
-            2.0, 1.0,
+            1.0, 2.0, 3.0, 4.0, // sample 2
+            2.0, 1.0, 0.0, 3.0, // sample 3
+            4.0, 2.0, 1.0, 5.0, // sample 4
+            3.0, 3.0, 2.0, 1.0,
         ],
         vec![4, 1, 2, 2],
     );
@@ -46,13 +36,7 @@ fn main() {
     );
 
     let conv2 = Conv2d::new(
-        Tensor::new(
-            vec![
-                1.0, 0.0,
-                0.0, 1.0,
-            ],
-            vec![2, 2, 1, 1],
-        ),
+        Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
         Tensor::new(vec![0.0, 0.0], vec![2]),
         1,
         0,
@@ -62,24 +46,12 @@ fn main() {
 
     // Trainable predictor: start simple so learning is stable
     let fc1 = Linear::new(
-        Tensor::new(
-            vec![
-                1.0, 0.0,
-                0.0, 1.0,
-            ],
-            vec![2, 2],
-        ),
+        Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
         Tensor::new(vec![0.0, 0.0], vec![2]),
     );
 
     let fc2 = Linear::new(
-        Tensor::new(
-            vec![
-                0.0, 0.0,
-                0.0, 0.0,
-            ],
-            vec![2, 2],
-        ),
+        Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![2, 2]),
         Tensor::new(vec![0.0, 0.0], vec![2]),
     );
 
@@ -92,27 +64,17 @@ fn main() {
     let lr = 0.05;
 
     for step in 1..=num_steps {
-        let z_t = model.encode(&x_t);
-        let z_t1 = model.target_latent(&x_t1);
-
-        let z_t1_pred = model.predictor.forward(&z_t);
-        let loss = mse_loss(&z_t1_pred, &z_t1);
-
-        let grad_out = mse_loss_grad(&z_t1_pred, &z_t1);
-        let grads = model.predictor.backward(&z_t, &grad_out);
-        model.predictor.sgd_step(&grads, lr);
+        let (loss, _) = model.step(&x_t, &x_t1, lr);
 
         if step == 1 || step % 20 == 0 {
             println!("step {:03} | loss {:.6}", step, loss);
         }
     }
 
-    let z_t = model.encode(&x_t);
-    let z_t1 = model.target_latent(&x_t1);
-    let z_t1_pred = model.predictor.forward(&z_t);
-    let final_loss = mse_loss(&z_t1_pred, &z_t1);
+    let (pred, target) = model.forward_pair(&x_t, &x_t1);
+    let final_loss = model.losses(&x_t, &x_t1).0;
 
     println!("\nFinal loss: {:.6}", final_loss);
-    println!("Predicted next latents: {:?}", z_t1_pred.data);
-    println!("Target next latents:    {:?}", z_t1.data);
+    println!("Predicted next latents: {:?}", pred.data);
+    println!("Target next latents:    {:?}", target.data);
 }
