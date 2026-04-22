@@ -15,6 +15,10 @@ fn legacy_vision_jepa_example_delegates_to_random_temporal_entrypoint() {
         "legacy example should delegate to random-temporal main entrypoint"
     );
     assert!(
+        legacy_src.contains("DEPRECATED: train_vision_jepa is legacy"),
+        "legacy example should keep deprecation messaging"
+    );
+    assert!(
         !legacy_src.contains("Conv2d::new("),
         "legacy example should not contain duplicated Conv2d setup"
     );
