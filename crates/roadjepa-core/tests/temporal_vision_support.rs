@@ -3,6 +3,7 @@
 mod temporal_vision;
 
 use roadjepa_core::Tensor;
+use roadjepa_core::{Linear, Predictor, mse_loss, mse_loss_grad};
 use temporal_vision::{
     assert_temporal_contract, batch_has_both_motion_modes, batch_has_min_motion_mode_counts,
     fast_mode_channel_summary, fast_motion_feature_for_sample, make_frozen_encoder,
@@ -21,6 +22,59 @@ fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
     }
 
     total
+}
+
+fn make_predictor() -> Predictor {
+    Predictor::new(
+        Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0, 0.0, //
+                    0.0, 1.0, 0.0, //
+                    0.0, 0.0, 1.0,
+                ],
+                vec![3, 3],
+            ),
+            Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
+        ),
+        Linear::new(
+            Tensor::new(
+                vec![
+                    1.0, 0.0, 0.0, //
+                    0.0, 1.0, 0.0, //
+                    0.0, 0.0, 1.0,
+                ],
+                vec![3, 3],
+            ),
+            Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
+        ),
+    )
+}
+
+#[test]
+fn unprojected_temporal_step_reduces_loss_on_random_batch() {
+    let encoder = make_frozen_encoder();
+    let (x_t, x_t1) = make_train_batch(31_000, 2);
+    let mut predictor = make_predictor();
+
+    let z_t = encoder.forward(&x_t);
+    let target = encoder.forward(&x_t1);
+    let lr = 0.02;
+
+    let pred = predictor.forward(&z_t);
+    let initial_loss = mse_loss(&pred, &target);
+    let grad_out = mse_loss_grad(&pred, &target);
+    let grads = predictor.backward(&z_t, &grad_out);
+    predictor.sgd_step(&grads, lr);
+    let final_pred = predictor.forward(&z_t);
+    let final_loss = mse_loss(&final_pred, &target);
+
+    assert!(
+        final_loss + 1e-6 < initial_loss,
+        "one step did not reduce prediction loss: {:.6} -> {:.6}",
+        initial_loss,
+        final_loss
+    );
 }
 
 #[test]
