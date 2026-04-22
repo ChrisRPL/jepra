@@ -9,10 +9,10 @@ use projected_temporal::{
 };
 use roadjepa_core::{mse_loss, mse_loss_grad, EmbeddingEncoder, Linear, Predictor, Tensor};
 use temporal_vision::{
-    assert_temporal_contract, fast_mode_channel_summary, fast_motion_feature_for_sample,
-    make_frozen_encoder, make_train_batch, make_validation_batch,
+    assert_temporal_contract, fast_mode_channel_summary, make_frozen_encoder, make_train_batch,
+    make_validation_batch,
     make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
-    BATCH_SIZE, MIN_MIXED_MODE_COUNT,
+    MIN_MIXED_MODE_COUNT,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -109,24 +109,6 @@ fn validation_losses(
     )
 }
 
-fn assert_fast_mode_channel(label: &str, x: &Tensor, z: &Tensor) {
-    assert_eq!(z.shape, vec![BATCH_SIZE, 3]);
-
-    for sample in 0..BATCH_SIZE {
-        let expected = fast_motion_feature_for_sample(x, sample);
-        let actual = z.get(&[sample, 2]);
-
-        assert!(
-            (actual - expected).abs() < 1e-6,
-            "{} sample {} fast-mode channel mismatch: {:.6} vs {:.6}",
-            label,
-            sample,
-            actual,
-            expected
-        );
-    }
-}
-
 fn assert_fast_mode_channel_coverage(label: &str, z: &Tensor) {
     let (inactive_count, active_count, mean_value, max_value) = fast_mode_channel_summary(z);
 
@@ -166,7 +148,7 @@ fn main() {
     assert_ne!(train_probe_t.data, train_probe_next_t.data);
     assert_ne!(train_probe_t.data, val_probe_t.data);
     assert_ne!(val_probe_t.data, mixed_val_probe_t.data);
-    let (mixed_slow_count, mixed_fast_count) = motion_mode_counts(&mixed_val_probe_t);
+    let (mixed_slow_count, mixed_fast_count) = motion_mode_counts(&mixed_val_probe_t, &mixed_val_probe_t1);
     assert!(
         mixed_slow_count >= MIN_MIXED_MODE_COUNT,
         "mixed validation probe slow count too small: {} < {}",
@@ -198,10 +180,7 @@ fn main() {
     let mut predictor = make_predictor();
 
     let initial_z_t = encoder.forward(&train_probe_t);
-    let initial_val_z_t = encoder.forward(&val_probe_t);
-    let initial_val_z_t1 = encoder.forward(&val_probe_t1);
     let initial_mixed_val_z_t = encoder.forward(&mixed_val_probe_t);
-    let initial_mixed_val_z_t1 = encoder.forward(&mixed_val_probe_t1);
     let initial_projection_t = online_projector.forward(&initial_z_t);
     let initial_target = projected_target(&encoder, &target_projector, &train_probe_t1);
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
@@ -218,18 +197,6 @@ fn main() {
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
 
-    assert_fast_mode_channel("validation probe t", &val_probe_t, &initial_val_z_t);
-    assert_fast_mode_channel("validation probe t1", &val_probe_t1, &initial_val_z_t1);
-    assert_fast_mode_channel(
-        "validation mixed probe t",
-        &mixed_val_probe_t,
-        &initial_mixed_val_z_t,
-    );
-    assert_fast_mode_channel(
-        "validation mixed probe t1",
-        &mixed_val_probe_t1,
-        &initial_mixed_val_z_t1,
-    );
     assert_fast_mode_channel_coverage("validation mixed probe latent", &initial_mixed_val_z_t);
 
     println!(

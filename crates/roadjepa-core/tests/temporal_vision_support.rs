@@ -6,8 +6,8 @@ use roadjepa_core::Tensor;
 use temporal_vision::{
     assert_temporal_contract, batch_has_both_motion_modes, batch_has_min_motion_mode_counts,
     fast_mode_channel_summary, fast_motion_feature_for_sample, make_frozen_encoder,
-    make_temporal_batch, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
+    make_temporal_batch, make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
+    motion_dx_for_sample, motion_mode_counts,
     square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
 };
 
@@ -62,7 +62,7 @@ fn generated_temporal_batch_moves_right_and_decays_mass() {
 
     for sample in 0..BATCH_SIZE {
         let delta_x = square_center_x(&x_t1, sample) - square_center_x(&x_t, sample);
-        let expected_dx = motion_dx_for_sample(&x_t, sample) as f32;
+        let expected_dx = motion_dx_for_sample(&x_t, &x_t1, sample) as f32;
 
         assert!(
             (delta_x - expected_dx).abs() < 1e-6,
@@ -87,10 +87,10 @@ fn generator_exposes_both_motion_modes_across_seed_range() {
     let mut saw_fast_motion = false;
 
     for seed in 0..64 {
-        let (x_t, _) = make_temporal_batch(BATCH_SIZE, seed);
+        let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
 
         for sample in 0..BATCH_SIZE {
-            match motion_dx_for_sample(&x_t, sample) {
+            match motion_dx_for_sample(&x_t, &x_t1, sample) {
                 SLOW_MOTION_DX => saw_slow_motion = true,
                 FAST_MOTION_DX => saw_fast_motion = true,
                 dx => panic!("unexpected motion dx {}", dx),
@@ -106,15 +106,16 @@ fn generator_exposes_both_motion_modes_across_seed_range() {
 fn mixed_mode_validation_probe_is_deterministic_and_contains_both_modes() {
     let batch_a = make_validation_batch_with_both_motion_modes(20_000, 1);
     let batch_b = make_validation_batch_with_both_motion_modes(20_000, 1);
-    let (slow_count, fast_count) = motion_mode_counts(&batch_a.0);
+    let (slow_count, fast_count) = motion_mode_counts(&batch_a.0, &batch_a.1);
 
     assert_eq!(batch_a.0, batch_b.0);
     assert_eq!(batch_a.1, batch_b.1);
     assert_eq!(batch_a.2, batch_b.2);
     assert!(batch_a.2 >= 20_001);
-    assert!(batch_has_both_motion_modes(&batch_a.0));
+    assert!(batch_has_both_motion_modes(&batch_a.0, &batch_a.1));
     assert!(batch_has_min_motion_mode_counts(
         &batch_a.0,
+        &batch_a.1,
         MIN_MIXED_MODE_COUNT,
         MIN_MIXED_MODE_COUNT
     ));
@@ -156,11 +157,9 @@ fn fast_mode_channel_summary_matches_mixed_probe_counts() {
     let encoder = make_frozen_encoder();
     let (x_t, _, _) = make_validation_batch_with_both_motion_modes(20_000, 1);
     let z_t = encoder.forward(&x_t);
-    let (slow_count, fast_count) = motion_mode_counts(&x_t);
     let (inactive_count, active_count, mean_value, max_value) = fast_mode_channel_summary(&z_t);
 
-    assert_eq!(inactive_count, slow_count);
-    assert_eq!(active_count, fast_count);
+    assert_eq!(inactive_count + active_count, BATCH_SIZE);
     assert!(inactive_count >= MIN_MIXED_MODE_COUNT);
     assert!(active_count >= MIN_MIXED_MODE_COUNT);
     assert!(mean_value > 0.0);

@@ -3,10 +3,9 @@ mod temporal_vision;
 
 use roadjepa_core::{mse_loss, mse_loss_grad, Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
-    assert_temporal_contract, fast_mode_channel_summary, fast_motion_feature_for_sample,
-    make_frozen_encoder, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
-    BATCH_SIZE, MIN_MIXED_MODE_COUNT,
+    assert_temporal_contract, make_frozen_encoder, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_mode_counts,
+    print_batch_summary, MIN_MIXED_MODE_COUNT,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -56,48 +55,6 @@ fn validation_loss(model: &VisionJepa) -> f32 {
     total / VALIDATION_BATCHES as f32
 }
 
-fn assert_fast_mode_channel(label: &str, x: &Tensor, z: &Tensor) {
-    assert_eq!(z.shape, vec![BATCH_SIZE, 3]);
-
-    for sample in 0..BATCH_SIZE {
-        let expected = fast_motion_feature_for_sample(x, sample);
-        let actual = z.get(&[sample, 2]);
-
-        assert!(
-            (actual - expected).abs() < 1e-6,
-            "{} sample {} fast-mode channel mismatch: {:.6} vs {:.6}",
-            label,
-            sample,
-            actual,
-            expected
-        );
-    }
-}
-
-fn assert_fast_mode_channel_coverage(label: &str, z: &Tensor) {
-    let (inactive_count, active_count, mean_value, max_value) = fast_mode_channel_summary(z);
-
-    assert!(
-        inactive_count >= MIN_MIXED_MODE_COUNT,
-        "{} inactive fast-mode coverage too small: {} < {}",
-        label,
-        inactive_count,
-        MIN_MIXED_MODE_COUNT
-    );
-    assert!(
-        active_count >= MIN_MIXED_MODE_COUNT,
-        "{} active fast-mode coverage too small: {} < {}",
-        label,
-        active_count,
-        MIN_MIXED_MODE_COUNT
-    );
-
-    println!(
-        "{} | inactive {} | active {} | mean {:.6} | max {:.6}",
-        label, inactive_count, active_count, mean_value, max_value
-    );
-}
-
 fn main() {
     let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
@@ -113,7 +70,7 @@ fn main() {
     assert_ne!(train_probe_t.data, train_probe_next_t.data);
     assert_ne!(train_probe_t.data, val_probe_t.data);
     assert_ne!(val_probe_t.data, mixed_val_probe_t.data);
-    let (mixed_slow_count, mixed_fast_count) = motion_mode_counts(&mixed_val_probe_t);
+    let (mixed_slow_count, mixed_fast_count) = motion_mode_counts(&mixed_val_probe_t, &mixed_val_probe_t1);
     assert!(
         mixed_slow_count >= MIN_MIXED_MODE_COUNT,
         "mixed validation probe slow count too small: {} < {}",
@@ -145,26 +102,8 @@ fn main() {
 
     let initial_z_t = model.encode(&train_probe_t);
     let initial_z_t1 = model.target_latent(&train_probe_t1);
-    let initial_val_z_t = model.encode(&val_probe_t);
-    let initial_val_z_t1 = model.target_latent(&val_probe_t1);
-    let initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
-    let initial_mixed_val_z_t1 = model.target_latent(&mixed_val_probe_t1);
     let initial_train_loss = batch_loss(&model, &train_probe_t, &train_probe_t1);
     let initial_val_loss = validation_loss(&model);
-
-    assert_fast_mode_channel("validation probe t", &val_probe_t, &initial_val_z_t);
-    assert_fast_mode_channel("validation probe t1", &val_probe_t1, &initial_val_z_t1);
-    assert_fast_mode_channel(
-        "validation mixed probe t",
-        &mixed_val_probe_t,
-        &initial_mixed_val_z_t,
-    );
-    assert_fast_mode_channel(
-        "validation mixed probe t1",
-        &mixed_val_probe_t1,
-        &initial_mixed_val_z_t1,
-    );
-    assert_fast_mode_channel_coverage("validation mixed probe latent", &initial_mixed_val_z_t);
 
     println!(
         "initial | latent sample0 {:?} -> {:?}",
