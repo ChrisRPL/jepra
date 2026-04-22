@@ -603,6 +603,63 @@ fn projected_step_reported_losses_match_batch_losses() {
 }
 
 #[test]
+fn projected_step_reduces_total_loss_over_two_steps_on_same_batch() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let mut model =
+        ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+    let (x_t, x_t1) = make_train_batch(11_000, 4);
+    let mut prev_total = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT).2;
+
+    for step_idx in 0..2 {
+        let expected = projected_batch_losses(
+            &model.encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+        );
+        let (step_prediction_loss, step_regularizer_loss, step_total_loss) =
+            model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+        let (_, _, actual_total_loss) = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
+
+        assert!(
+            (step_prediction_loss - expected.0).abs() < 1e-6,
+            "projected step prediction mismatch at step {}: {:.6} vs {:.6}",
+            step_idx,
+            step_prediction_loss,
+            expected.0
+        );
+        assert!(
+            (step_regularizer_loss - expected.1).abs() < 1e-6,
+            "projected step regularizer mismatch at step {}: {:.6} vs {:.6}",
+            step_idx,
+            step_regularizer_loss,
+            expected.1
+        );
+        assert!(
+            (step_total_loss - expected.2).abs() < 1e-6,
+            "projected step total mismatch at step {}: {:.6} vs {:.6}",
+            step_idx,
+            step_total_loss,
+            expected.2
+        );
+
+        assert!(
+            actual_total_loss + 1e-6 < prev_total,
+            "same-batch projected total loss did not decrease at step {}: {:.6} -> {:.6}",
+            step_idx,
+            prev_total,
+            actual_total_loss
+        );
+        prev_total = actual_total_loss;
+    }
+}
+
+#[test]
 fn projected_step_updates_trainable_parameters() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();
