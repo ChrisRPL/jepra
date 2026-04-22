@@ -6,7 +6,17 @@ pub const BATCH_SIZE: usize = 8;
 pub const IMAGE_SIZE: usize = 8;
 pub const CHANNELS: usize = 1;
 pub const SQUARE_SIZE: usize = 2;
-pub const MOTION_DX: usize = 1;
+pub const SLOW_MOTION_DX: usize = 1;
+pub const FAST_MOTION_DX: usize = 2;
+pub const FAST_MOTION_INTENSITY_THRESHOLD: f32 = 0.8;
+
+pub fn motion_dx_for_intensity(intensity_t: f32) -> usize {
+    if intensity_t >= FAST_MOTION_INTENSITY_THRESHOLD {
+        FAST_MOTION_DX
+    } else {
+        SLOW_MOTION_DX
+    }
+}
 
 pub fn make_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
     let mut rng = StdRng::seed_from_u64(seed);
@@ -14,13 +24,14 @@ pub fn make_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
     let mut x_t1 = Tensor::zeros(vec![batch_size, CHANNELS, IMAGE_SIZE, IMAGE_SIZE]);
 
     let max_row = IMAGE_SIZE - SQUARE_SIZE;
-    let max_col_t = IMAGE_SIZE - SQUARE_SIZE - MOTION_DX;
+    let max_col_t = IMAGE_SIZE - SQUARE_SIZE - FAST_MOTION_DX;
 
     for sample in 0..batch_size {
         let row = rng.gen_range(0..=max_row);
         let col_t = rng.gen_range(0..=max_col_t);
-        let col_t1 = col_t + MOTION_DX;
         let intensity_t = rng.gen_range(0.65f32..0.95f32);
+        let motion_dx = motion_dx_for_intensity(intensity_t);
+        let col_t1 = col_t + motion_dx;
         let intensity_t1 = (0.9f32 * intensity_t + 0.05f32).clamp(0.5f32, 1.0f32);
 
         draw_square(&mut x_t, sample, row, col_t, intensity_t);
@@ -53,6 +64,12 @@ pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
     weighted_sum / total_mass
 }
 
+pub fn motion_dx_for_sample(x_t: &Tensor, sample: usize) -> usize {
+    let square_area = (SQUARE_SIZE * SQUARE_SIZE) as f32;
+    let intensity_t = total_mass(x_t, sample) / square_area;
+    motion_dx_for_intensity(intensity_t)
+}
+
 pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
     assert_eq!(
         x_t.shape,
@@ -66,15 +83,17 @@ pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
     for sample in 0..BATCH_SIZE {
         let center_x_t = square_center_x(x_t, sample);
         let center_x_t1 = square_center_x(x_t1, sample);
+        let delta_x = center_x_t1 - center_x_t;
+        let expected_motion_dx = motion_dx_for_sample(x_t, sample) as f32;
         let mass_t = total_mass(x_t, sample);
         let mass_t1 = total_mass(x_t1, sample);
 
         assert!(
-            center_x_t1 > center_x_t,
-            "sample {} did not move right: {:.3} -> {:.3}",
+            (delta_x - expected_motion_dx).abs() < 1e-6,
+            "sample {} moved by {:.3}, expected {:.3}",
             sample,
-            center_x_t,
-            center_x_t1
+            delta_x,
+            expected_motion_dx
         );
         assert!(
             mass_t1 < mass_t,
@@ -88,9 +107,10 @@ pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
 
 pub fn print_batch_summary(name: &str, x_t: &Tensor, x_t1: &Tensor) {
     println!(
-        "{} | shape {:?} | sample0 center_x {:.3} -> {:.3} | mass {:.3} -> {:.3}",
+        "{} | shape {:?} | sample0 dx {} | center_x {:.3} -> {:.3} | mass {:.3} -> {:.3}",
         name,
         x_t.shape,
+        motion_dx_for_sample(x_t, 0),
         square_center_x(x_t, 0),
         square_center_x(x_t1, 0),
         total_mass(x_t, 0),

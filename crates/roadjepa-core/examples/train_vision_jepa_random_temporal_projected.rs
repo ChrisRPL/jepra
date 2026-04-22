@@ -16,6 +16,8 @@ const LOG_EVERY: usize = 25;
 const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
+const TARGET_FINAL_TRAIN_TOTAL_LOSS: f32 = 0.15;
+const TARGET_FINAL_VAL_TOTAL_LOSS: f32 = 0.15;
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -346,6 +348,18 @@ fn main() {
         "validation total loss did not improve: {:.6} -> {:.6}",
         initial_val_total_loss,
         final_val_total_loss
+    );
+    assert!(
+        final_train_total_loss < TARGET_FINAL_TRAIN_TOTAL_LOSS,
+        "probe total loss stayed too high: {:.6} >= {:.6}",
+        final_train_total_loss,
+        TARGET_FINAL_TRAIN_TOTAL_LOSS
+    );
+    assert!(
+        final_val_total_loss < TARGET_FINAL_VAL_TOTAL_LOSS,
+        "validation total loss stayed too high: {:.6} >= {:.6}",
+        final_val_total_loss,
+        TARGET_FINAL_VAL_TOTAL_LOSS
     );
 
     println!(

@@ -5,7 +5,7 @@ mod temporal_vision;
 use roadjepa_core::Tensor;
 use temporal_vision::{
     assert_temporal_contract, make_temporal_batch, make_train_batch, make_validation_batch,
-    square_center_x, BATCH_SIZE, IMAGE_SIZE, MOTION_DX,
+    motion_dx_for_sample, square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, SLOW_MOTION_DX,
 };
 
 fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
@@ -59,13 +59,14 @@ fn generated_temporal_batch_moves_right_and_decays_mass() {
 
     for sample in 0..BATCH_SIZE {
         let delta_x = square_center_x(&x_t1, sample) - square_center_x(&x_t, sample);
+        let expected_dx = motion_dx_for_sample(&x_t, sample) as f32;
 
         assert!(
-            (delta_x - MOTION_DX as f32).abs() < 1e-6,
-            "sample {} moved by {:.6}, expected {}",
+            (delta_x - expected_dx).abs() < 1e-6,
+            "sample {} moved by {:.6}, expected {:.6}",
             sample,
             delta_x,
-            MOTION_DX
+            expected_dx
         );
         assert!(
             total_mass(&x_t1, sample) < total_mass(&x_t, sample),
@@ -75,6 +76,27 @@ fn generated_temporal_batch_moves_right_and_decays_mass() {
             total_mass(&x_t1, sample)
         );
     }
+}
+
+#[test]
+fn generator_exposes_both_motion_modes_across_seed_range() {
+    let mut saw_slow_motion = false;
+    let mut saw_fast_motion = false;
+
+    for seed in 0..64 {
+        let (x_t, _) = make_temporal_batch(BATCH_SIZE, seed);
+
+        for sample in 0..BATCH_SIZE {
+            match motion_dx_for_sample(&x_t, sample) {
+                SLOW_MOTION_DX => saw_slow_motion = true,
+                FAST_MOTION_DX => saw_fast_motion = true,
+                dx => panic!("unexpected motion dx {}", dx),
+            }
+        }
+    }
+
+    assert!(saw_slow_motion, "never observed slow motion");
+    assert!(saw_fast_motion, "never observed fast motion");
 }
 
 #[test]

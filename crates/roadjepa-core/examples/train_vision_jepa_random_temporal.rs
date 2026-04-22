@@ -13,6 +13,8 @@ const VALIDATION_BATCHES: usize = 8;
 const NUM_STEPS: usize = 300;
 const LOG_EVERY: usize = 25;
 const LR: f32 = 0.02;
+const TARGET_FINAL_TRAIN_LOSS: f32 = 0.05;
+const TARGET_FINAL_VAL_LOSS: f32 = 0.05;
 
 fn make_predictor() -> Predictor {
     let fc1 = Linear::new(
@@ -123,6 +125,18 @@ fn main() {
         "validation loss did not improve: {:.6} -> {:.6}",
         initial_val_loss,
         final_val_loss
+    );
+    assert!(
+        final_train_loss < TARGET_FINAL_TRAIN_LOSS,
+        "probe train loss stayed too high: {:.6} >= {:.6}",
+        final_train_loss,
+        TARGET_FINAL_TRAIN_LOSS
+    );
+    assert!(
+        final_val_loss < TARGET_FINAL_VAL_LOSS,
+        "validation loss stayed too high: {:.6} >= {:.6}",
+        final_val_loss,
+        TARGET_FINAL_VAL_LOSS
     );
 
     println!(
