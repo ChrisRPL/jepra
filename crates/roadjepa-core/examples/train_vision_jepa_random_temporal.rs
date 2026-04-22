@@ -53,7 +53,7 @@ fn validation_loss(model: &VisionJepa) -> f32 {
     total / VALIDATION_BATCHES as f32
 }
 
-pub fn run() {
+pub fn main() {
     let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
     let (val_probe_t, val_probe_t1) = make_validation_batch(VALIDATION_BASE_SEED, 0);
@@ -169,9 +169,4 @@ pub fn run() {
         "final | probe train {:.6} | val {:.6}",
         final_train_loss, final_val_loss
     );
-}
-
-#[allow(dead_code)]
-pub fn main() {
-    run();
 }
