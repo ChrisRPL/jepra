@@ -378,6 +378,70 @@ fn projected_step_and_model_step_stable_over_two_steps() {
 }
 
 #[test]
+fn projected_step_helper_matches_model_api_over_short_trajectory() {
+    let encoder = make_frozen_encoder();
+
+    let mut helper_model = ProjectedVisionJepa::new(
+        encoder.clone(),
+        make_projector(),
+        make_projector(),
+        make_predictor(),
+    );
+    let mut api_model = ProjectedVisionJepa::new(
+        encoder,
+        make_projector(),
+        make_projector(),
+        make_predictor(),
+    );
+
+    for batch_idx in 0..4 {
+        let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, batch_idx as u64);
+        let expected = projected_batch_losses(
+            &helper_model.encoder,
+            &helper_model.projector,
+            &helper_model.target_projector,
+            &helper_model.predictor,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+        );
+        let api_step = api_model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+        projected_step(
+            &mut helper_model,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+            PREDICTOR_LR,
+            PROJECTOR_LR,
+        );
+
+        assert_eq!(helper_model, api_model);
+        assert!(
+            (api_step.0 - expected.0).abs() < 1e-6,
+            "api prediction loss mismatch at batch {}: {:.6} vs {:.6}",
+            batch_idx,
+            api_step.0,
+            expected.0
+        );
+        assert!(
+            (api_step.1 - expected.1).abs() < 1e-6,
+            "api regularizer loss mismatch at batch {}: {:.6} vs {:.6}",
+            batch_idx,
+            api_step.1,
+            expected.1
+        );
+        assert!(
+            (api_step.2 - expected.2).abs() < 1e-6,
+            "api total loss mismatch at batch {}: {:.6} vs {:.6}",
+            batch_idx,
+            api_step.2,
+            expected.2
+        );
+    }
+}
+
+#[test]
 fn projected_random_temporal_training_trajectory_is_reproducible() {
     let encoder = make_frozen_encoder();
     let mut model_a = ProjectedVisionJepa::new(
