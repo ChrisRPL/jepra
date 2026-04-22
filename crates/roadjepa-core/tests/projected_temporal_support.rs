@@ -346,6 +346,7 @@ fn projected_step_updates_trainable_parameters() {
     let predictor = make_predictor();
     let mut model = ProjectedVisionJepa::new(encoder, projector, target_projector, predictor);
     let (x_t, x_t1) = make_train_batch(11_000, 0);
+    let encoder_snapshot = model.encoder.clone();
     let target_weight_snapshot = model.target_projector.weight.clone();
     let target_bias_snapshot = model.target_projector.bias.clone();
 
@@ -360,6 +361,7 @@ fn projected_step_updates_trainable_parameters() {
 
     assert_eq!(model.target_projector.weight, target_weight_snapshot);
     assert_eq!(model.target_projector.bias, target_bias_snapshot);
+    assert_eq!(model.encoder, encoder_snapshot);
 
     assert_ne!(model.projector.weight, projector_weight_snapshot);
     assert_ne!(model.projector.bias, projector_bias_snapshot);
