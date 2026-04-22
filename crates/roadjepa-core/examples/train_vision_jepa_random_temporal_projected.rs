@@ -3,8 +3,9 @@ mod temporal_vision;
 
 use roadjepa_core::{mse_loss, mse_loss_grad, EmbeddingEncoder, Linear, Predictor, Tensor};
 use temporal_vision::{
-    assert_temporal_contract, fast_motion_feature_for_sample, make_frozen_encoder,
-    make_train_batch, make_validation_batch, print_batch_summary, BATCH_SIZE,
+    assert_temporal_contract, batch_has_both_motion_modes, fast_motion_feature_for_sample,
+    make_frozen_encoder, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, print_batch_summary, BATCH_SIZE,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -253,16 +254,30 @@ fn main() {
     let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
     let (val_probe_t, val_probe_t1) = make_validation_batch(VALIDATION_BASE_SEED, 0);
+    let (mixed_val_probe_t, mixed_val_probe_t1, mixed_val_probe_seed) =
+        make_validation_batch_with_both_motion_modes(VALIDATION_BASE_SEED, 1);
 
     assert_temporal_contract(&train_probe_t, &train_probe_t1);
     assert_temporal_contract(&train_probe_next_t, &train_probe_next_t1);
     assert_temporal_contract(&val_probe_t, &val_probe_t1);
+    assert_temporal_contract(&mixed_val_probe_t, &mixed_val_probe_t1);
 
     assert_ne!(train_probe_t.data, train_probe_next_t.data);
     assert_ne!(train_probe_t.data, val_probe_t.data);
+    assert_ne!(val_probe_t.data, mixed_val_probe_t.data);
+    assert!(
+        batch_has_both_motion_modes(&mixed_val_probe_t),
+        "mixed validation probe lost one motion mode"
+    );
 
     print_batch_summary("train probe", &train_probe_t, &train_probe_t1);
     print_batch_summary("validation probe", &val_probe_t, &val_probe_t1);
+    print_batch_summary(
+        "validation mixed probe",
+        &mixed_val_probe_t,
+        &mixed_val_probe_t1,
+    );
+    println!("validation mixed probe seed {}", mixed_val_probe_seed);
 
     let encoder = make_frozen_encoder();
     let mut online_projector = make_projector();
@@ -272,6 +287,8 @@ fn main() {
     let initial_z_t = encoder.forward(&train_probe_t);
     let initial_val_z_t = encoder.forward(&val_probe_t);
     let initial_val_z_t1 = encoder.forward(&val_probe_t1);
+    let initial_mixed_val_z_t = encoder.forward(&mixed_val_probe_t);
+    let initial_mixed_val_z_t1 = encoder.forward(&mixed_val_probe_t1);
     let initial_projection_t = online_projector.forward(&initial_z_t);
     let initial_target = projected_target(&encoder, &target_projector, &train_probe_t1);
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
@@ -290,6 +307,16 @@ fn main() {
 
     assert_fast_mode_channel("validation probe t", &val_probe_t, &initial_val_z_t);
     assert_fast_mode_channel("validation probe t1", &val_probe_t1, &initial_val_z_t1);
+    assert_fast_mode_channel(
+        "validation mixed probe t",
+        &mixed_val_probe_t,
+        &initial_mixed_val_z_t,
+    );
+    assert_fast_mode_channel(
+        "validation mixed probe t1",
+        &mixed_val_probe_t1,
+        &initial_mixed_val_z_t1,
+    );
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",

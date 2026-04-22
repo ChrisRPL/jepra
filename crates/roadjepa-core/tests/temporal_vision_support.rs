@@ -4,9 +4,10 @@ mod temporal_vision;
 
 use roadjepa_core::Tensor;
 use temporal_vision::{
-    assert_temporal_contract, fast_motion_feature_for_sample, make_frozen_encoder,
-    make_temporal_batch, make_train_batch, make_validation_batch, motion_dx_for_sample,
-    square_center_x, BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, SLOW_MOTION_DX,
+    assert_temporal_contract, batch_has_both_motion_modes, fast_motion_feature_for_sample,
+    make_frozen_encoder, make_temporal_batch, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, square_center_x,
+    BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, SLOW_MOTION_DX,
 };
 
 fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
@@ -98,6 +99,18 @@ fn generator_exposes_both_motion_modes_across_seed_range() {
 
     assert!(saw_slow_motion, "never observed slow motion");
     assert!(saw_fast_motion, "never observed fast motion");
+}
+
+#[test]
+fn mixed_mode_validation_probe_is_deterministic_and_contains_both_modes() {
+    let batch_a = make_validation_batch_with_both_motion_modes(20_000, 1);
+    let batch_b = make_validation_batch_with_both_motion_modes(20_000, 1);
+
+    assert_eq!(batch_a.0, batch_b.0);
+    assert_eq!(batch_a.1, batch_b.1);
+    assert_eq!(batch_a.2, batch_b.2);
+    assert!(batch_a.2 >= 20_001);
+    assert!(batch_has_both_motion_modes(&batch_a.0));
 }
 
 #[test]

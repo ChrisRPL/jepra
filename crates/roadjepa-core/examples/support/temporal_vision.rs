@@ -11,6 +11,7 @@ pub const FAST_MOTION_DX: usize = 2;
 pub const FAST_MOTION_INTENSITY_THRESHOLD: f32 = 0.8;
 pub const FAST_MOTION_MASS_THRESHOLD: f32 =
     FAST_MOTION_INTENSITY_THRESHOLD * (SQUARE_SIZE * SQUARE_SIZE) as f32;
+pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 
 pub fn motion_dx_for_intensity(intensity_t: f32) -> usize {
     if intensity_t >= FAST_MOTION_INTENSITY_THRESHOLD {
@@ -49,6 +50,42 @@ pub fn make_train_batch(train_base_seed: u64, step: u64) -> (Tensor, Tensor) {
 
 pub fn make_validation_batch(validation_base_seed: u64, batch_idx: u64) -> (Tensor, Tensor) {
     make_temporal_batch(BATCH_SIZE, validation_base_seed + batch_idx)
+}
+
+pub fn batch_has_motion_mode(x_t: &Tensor, motion_dx: usize) -> bool {
+    for sample in 0..BATCH_SIZE {
+        if motion_dx_for_sample(x_t, sample) == motion_dx {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn batch_has_both_motion_modes(x_t: &Tensor) -> bool {
+    batch_has_motion_mode(x_t, SLOW_MOTION_DX) && batch_has_motion_mode(x_t, FAST_MOTION_DX)
+}
+
+pub fn make_validation_batch_with_both_motion_modes(
+    validation_base_seed: u64,
+    start_batch_idx: u64,
+) -> (Tensor, Tensor, u64) {
+    for offset in 0..MIXED_MODE_SEARCH_LIMIT {
+        let batch_idx = start_batch_idx + offset;
+        let seed = validation_base_seed + batch_idx;
+        let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
+
+        if batch_has_both_motion_modes(&x_t) {
+            return (x_t, x_t1, seed);
+        }
+    }
+
+    panic!(
+        "did not find a mixed-mode validation batch within {} seeds from base {} and start batch {}",
+        MIXED_MODE_SEARCH_LIMIT,
+        validation_base_seed,
+        start_batch_idx
+    );
 }
 
 pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
