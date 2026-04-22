@@ -994,6 +994,103 @@ mod tests {
     }
 
     #[test]
+    fn vision_jepa_losses_matches_forward_pair_mse() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0
+                    2.0, // out channel 1
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let encoder = EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2));
+
+        let fc1 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+        let model = VisionJepa::new(encoder, predictor);
+
+        let x_t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+
+        let x_t1 = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![1, 1, 2, 2]);
+
+        let (prediction, target) = model.forward_pair(&x_t, &x_t1);
+        let (prediction_loss, total_loss) = model.losses(&x_t, &x_t1);
+        let expected_prediction_loss = mse_loss(&prediction, &target);
+
+        assert_eq!(prediction_loss, expected_prediction_loss);
+        assert_eq!(total_loss, expected_prediction_loss);
+    }
+
+    #[test]
+    fn vision_jepa_step_reduces_unprojected_loss() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0
+                    2.0, // out channel 1
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let encoder = EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2));
+
+        let fc1 = Linear::new(
+            Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+        let mut model = VisionJepa::new(encoder, predictor);
+
+        let x_t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+        let x_t1 = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![1, 1, 2, 2]);
+
+        let (initial_loss, _) = model.losses(&x_t, &x_t1);
+        let (step_loss, _) = model.step(&x_t, &x_t1, 0.2);
+        let (final_loss, _) = model.losses(&x_t, &x_t1);
+
+        assert_eq!(step_loss, initial_loss);
+        assert!(final_loss + 1e-6 < initial_loss);
+    }
+
+    #[test]
     fn vision_jepa_predict_next_latent_outputs_batched_embeddings() {
         let conv1 = Conv2d::new(
             Tensor::new(vec![1.0], vec![1, 1, 1, 1]),
