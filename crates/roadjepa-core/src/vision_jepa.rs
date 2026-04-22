@@ -209,4 +209,14 @@ impl ProjectedVisionJepa {
 
         (prediction_loss, regularizer_loss, total_loss)
     }
+
+    pub fn losses(&self, x_t: &Tensor, x_t1: &Tensor, regularizer_weight: f32) -> (f32, f32, f32) {
+        let prediction = self.predict_next_projection(x_t);
+        let target = self.target_projection(x_t1);
+        let prediction_loss = mse_loss(&prediction, &target);
+        let regularizer_loss = gaussian_moment_regularizer(&self.project_latent(x_t));
+        let total_loss = prediction_loss + regularizer_weight * regularizer_loss;
+
+        (prediction_loss, regularizer_loss, total_loss)
+    }
 }

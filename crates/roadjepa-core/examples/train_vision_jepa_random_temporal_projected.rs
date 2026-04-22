@@ -3,7 +3,7 @@ mod projected_temporal;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use projected_temporal::{projected_batch_losses, projection_stats};
+use projected_temporal::projection_stats;
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, assert_temporal_contract, fast_mode_channel_summary, make_frozen_encoder,
@@ -51,15 +51,8 @@ fn validation_losses(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
 
     for batch_idx in 0..VALIDATION_BATCHES {
         let (x_t, x_t1) = make_validation_batch(VALIDATION_BASE_SEED, batch_idx as u64);
-        let (prediction_loss, regularizer_loss, total_loss) = projected_batch_losses(
-            &model.encoder,
-            &model.projector,
-            &model.target_projector,
-            &model.predictor,
-            &x_t,
-            &x_t1,
-            REGULARIZER_WEIGHT,
-        );
+        let (prediction_loss, regularizer_loss, total_loss) =
+            model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
         prediction_total += prediction_loss;
         regularizer_total += regularizer_loss;
         total += total_loss;
@@ -150,15 +143,7 @@ fn main() {
     let initial_projection_t = model.project_latent(&train_probe_t);
     let initial_target = model.target_projection(&train_probe_t1);
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
-        projected_batch_losses(
-            &model.encoder,
-            &model.projector,
-            &model.target_projector,
-            &model.predictor,
-            &train_probe_t,
-            &train_probe_t1,
-            REGULARIZER_WEIGHT,
-        );
+        model.losses(&train_probe_t, &train_probe_t1, REGULARIZER_WEIGHT);
     let (initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss) =
         validation_losses(&model);
     let (initial_projection_mean_abs, initial_projection_var_mean) =
@@ -208,15 +193,7 @@ fn main() {
     let final_pred = model.predict_next_projection(&train_probe_t);
     let final_target = model.target_projection(&train_probe_t1);
     let (final_train_prediction_loss, final_train_regularizer_loss, final_train_total_loss) =
-        projected_batch_losses(
-            &model.encoder,
-            &model.projector,
-            &model.target_projector,
-            &model.predictor,
-            &train_probe_t,
-            &train_probe_t1,
-            REGULARIZER_WEIGHT,
-        );
+        model.losses(&train_probe_t, &train_probe_t1, REGULARIZER_WEIGHT);
     let (final_val_prediction_loss, final_val_regularizer_loss, final_val_total_loss) =
         validation_losses(&model);
     let (final_projection_mean_abs, final_projection_var_mean) =

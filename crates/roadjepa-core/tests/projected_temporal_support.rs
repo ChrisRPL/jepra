@@ -85,6 +85,28 @@ fn projected_validation_losses(
     )
 }
 
+fn projected_validation_losses_model(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
+    let mut prediction_total = 0.0;
+    let mut regularizer_total = 0.0;
+    let mut total = 0.0;
+
+    for batch_idx in 0..VALIDATION_BATCHES {
+        let (x_t, x_t1) = make_train_batch(VALIDATION_BASE_SEED, batch_idx as u64);
+        let (prediction_loss, regularizer_loss, total_loss) =
+            model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
+        prediction_total += prediction_loss;
+        regularizer_total += regularizer_loss;
+        total += total_loss;
+    }
+
+    let batches = VALIDATION_BATCHES as f32;
+    (
+        prediction_total / batches,
+        regularizer_total / batches,
+        total / batches,
+    )
+}
+
 #[test]
 fn gaussian_moment_regularizer_is_zero_for_zero_mean_unit_variance_latents() {
     let latents = Tensor::new(vec![-1.0, 1.0, 1.0, -1.0], vec![2, 2]);
@@ -206,16 +228,7 @@ fn projected_vision_jepa_step_reduces_total_loss_on_fixed_batch() {
         target_projector.clone(),
         predictor,
     );
-    let initial_total = projected_batch_losses(
-        &encoder,
-        &model.projector,
-        &target_projector,
-        &model.predictor,
-        &x_t,
-        &x_t1,
-        REGULARIZER_WEIGHT,
-    )
-    .2;
+    let initial_total = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT).2;
 
     model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
 
@@ -228,16 +241,7 @@ fn projected_vision_jepa_step_reduces_total_loss_on_fixed_batch() {
         "target projector bias mutated during projected step"
     );
 
-    let final_total = projected_batch_losses(
-        &encoder,
-        &model.projector,
-        &model.target_projector,
-        &model.predictor,
-        &x_t,
-        &x_t1,
-        REGULARIZER_WEIGHT,
-    )
-    .2;
+    let final_total = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT).2;
 
     assert!(
         final_total + 1e-6 < initial_total,
@@ -293,75 +297,112 @@ fn projected_training_steps_preserve_target_projector_after_multiple_batches() {
 }
 
 #[test]
-fn projected_random_temporal_loop_reduces_train_and_validation_loss() {
+fn projected_vision_jepa_losses_matches_projection_support() {
     let encoder = make_frozen_encoder();
-    let mut online_projector = make_projector();
-    let target_projector = online_projector.clone();
-    let mut predictor = make_predictor();
-    let (probe_t, probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
-    let steps = 120;
-    let initial_losses = projected_batch_losses(
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let predictor = make_predictor();
+    let (x_t, x_t1) = make_train_batch(11_000, 0);
+    let model = ProjectedVisionJepa::new(encoder.clone(), projector, target_projector, predictor);
+    let support = projected_batch_losses(
         &encoder,
-        &online_projector,
-        &target_projector,
-        &predictor,
-        &probe_t,
-        &probe_t1,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
+        &x_t,
+        &x_t1,
         REGULARIZER_WEIGHT,
     );
-    let initial_validation =
-        projected_validation_losses(&encoder, &online_projector, &target_projector, &predictor);
+    let model_losses = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
+
+    assert!(
+        (support.0 - model_losses.0).abs() < 1e-6,
+        "prediction loss mismatch between core and support: {:.6} vs {:.6}",
+        support.0,
+        model_losses.0
+    );
+    assert!(
+        (support.1 - model_losses.1).abs() < 1e-6,
+        "regularizer loss mismatch between core and support: {:.6} vs {:.6}",
+        support.1,
+        model_losses.1
+    );
+    assert!(
+        (support.2 - model_losses.2).abs() < 1e-6,
+        "total loss mismatch between core and support: {:.6} vs {:.6}",
+        support.2,
+        model_losses.2
+    );
+}
+
+#[test]
+fn projected_validation_losses_matches_projection_support() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let predictor = make_predictor();
+    let model = ProjectedVisionJepa::new(encoder.clone(), projector, target_projector, predictor);
+
+    let support = projected_validation_losses(
+        &encoder,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
+    );
+    let model_losses = projected_validation_losses_model(&model);
+
+    assert!(
+        (support.0 - model_losses.0).abs() < 1e-6,
+        "validation prediction loss mismatch between core and support: {:.6} vs {:.6}",
+        support.0,
+        model_losses.0
+    );
+    assert!(
+        (support.1 - model_losses.1).abs() < 1e-6,
+        "validation regularizer loss mismatch between core and support: {:.6} vs {:.6}",
+        support.1,
+        model_losses.1
+    );
+    assert!(
+        (support.2 - model_losses.2).abs() < 1e-6,
+        "validation total loss mismatch between core and support: {:.6} vs {:.6}",
+        support.2,
+        model_losses.2
+    );
+}
+
+#[test]
+fn projected_random_temporal_loop_reduces_train_and_validation_loss() {
+    let encoder = make_frozen_encoder();
+    let online_projector = make_projector();
+    let target_projector = online_projector.clone();
+    let mut model = ProjectedVisionJepa::new(
+        encoder,
+        online_projector,
+        target_projector,
+        make_predictor(),
+    );
+    let (probe_t, probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
+    let steps = 120;
+    let initial_losses = model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT);
+    let initial_validation = projected_validation_losses_model(&model);
 
     for step in 1..=steps {
         let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
-        projected_step(
-            &encoder,
-            &mut online_projector,
-            &target_projector,
-            &mut predictor,
-            &x_t,
-            &x_t1,
-            REGULARIZER_WEIGHT,
-            PREDICTOR_LR,
-            PROJECTOR_LR,
-        );
+        model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
 
         if step == 1 || step == steps {
             println!(
                 "projected temporal step {:03} | train total {:.6} | val total {:.6}",
                 step,
-                projected_batch_losses(
-                    &encoder,
-                    &online_projector,
-                    &target_projector,
-                    &predictor,
-                    &probe_t,
-                    &probe_t1,
-                    REGULARIZER_WEIGHT,
-                )
-                .2,
-                projected_validation_losses(
-                    &encoder,
-                    &online_projector,
-                    &target_projector,
-                    &predictor,
-                )
-                .2
+                model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT).2,
+                projected_validation_losses_model(&model).2
             );
         }
     }
 
-    let final_losses = projected_batch_losses(
-        &encoder,
-        &online_projector,
-        &target_projector,
-        &predictor,
-        &probe_t,
-        &probe_t1,
-        REGULARIZER_WEIGHT,
-    );
-    let final_validation =
-        projected_validation_losses(&encoder, &online_projector, &target_projector, &predictor);
+    let final_losses = model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT);
+    let final_validation = projected_validation_losses_model(&model);
 
     assert!(
         final_losses.2 < initial_losses.2,
