@@ -287,6 +287,97 @@ fn projected_step_and_model_step_are_equivalent() {
 }
 
 #[test]
+fn projected_step_and_model_step_stable_over_two_steps() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let predictor = make_predictor();
+
+    let mut step_free = ProjectedVisionJepa::new(
+        encoder.clone(),
+        projector.clone(),
+        target_projector.clone(),
+        predictor.clone(),
+    );
+    let mut step_method = ProjectedVisionJepa::new(encoder, projector, target_projector, predictor);
+
+    let encoder_snapshot = step_method.encoder.clone();
+    let target_weight_snapshot = step_method.target_projector.weight.clone();
+    let target_bias_snapshot = step_method.target_projector.bias.clone();
+    let mut prev_projector_weight = step_method.projector.weight.clone();
+    let mut prev_projector_bias = step_method.projector.bias.clone();
+    let mut prev_predictor_fc1_weight = step_method.predictor.fc1.weight.clone();
+    let mut prev_predictor_fc1_bias = step_method.predictor.fc1.bias.clone();
+    let mut prev_predictor_fc2_weight = step_method.predictor.fc2.weight.clone();
+    let mut prev_predictor_fc2_bias = step_method.predictor.fc2.bias.clone();
+
+    for batch_idx in 0..2 {
+        let (x_t, x_t1) = make_train_batch(11_000, batch_idx as u64);
+        let expected = projected_batch_losses(
+            &step_free.encoder,
+            &step_free.projector,
+            &step_free.target_projector,
+            &step_free.predictor,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+        );
+
+        projected_step(
+            &mut step_free,
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+            PREDICTOR_LR,
+            PROJECTOR_LR,
+        );
+        let method_step =
+            step_method.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+        assert!(
+            (method_step.0 - expected.0).abs() < 1e-6,
+            "projected API step mismatch at batch {} (pred): {:.6} vs {:.6}",
+            batch_idx,
+            method_step.0,
+            expected.0
+        );
+        assert!(
+            (method_step.1 - expected.1).abs() < 1e-6,
+            "projected API step mismatch at batch {} (reg): {:.6} vs {:.6}",
+            batch_idx,
+            method_step.1,
+            expected.1
+        );
+        assert!(
+            (method_step.2 - expected.2).abs() < 1e-6,
+            "projected API step mismatch at batch {} (total): {:.6} vs {:.6}",
+            batch_idx,
+            method_step.2,
+            expected.2
+        );
+
+        assert_eq!(step_free, step_method);
+        assert_eq!(step_method.encoder, encoder_snapshot);
+        assert_eq!(step_method.target_projector.weight, target_weight_snapshot);
+        assert_eq!(step_method.target_projector.bias, target_bias_snapshot);
+
+        assert_ne!(step_method.projector.weight, prev_projector_weight);
+        assert_ne!(step_method.projector.bias, prev_projector_bias);
+        assert_ne!(step_method.predictor.fc1.weight, prev_predictor_fc1_weight);
+        assert_ne!(step_method.predictor.fc1.bias, prev_predictor_fc1_bias);
+        assert_ne!(step_method.predictor.fc2.weight, prev_predictor_fc2_weight);
+        assert_ne!(step_method.predictor.fc2.bias, prev_predictor_fc2_bias);
+
+        prev_projector_weight = step_method.projector.weight.clone();
+        prev_projector_bias = step_method.projector.bias.clone();
+        prev_predictor_fc1_weight = step_method.predictor.fc1.weight.clone();
+        prev_predictor_fc1_bias = step_method.predictor.fc1.bias.clone();
+        prev_predictor_fc2_weight = step_method.predictor.fc2.weight.clone();
+        prev_predictor_fc2_bias = step_method.predictor.fc2.bias.clone();
+    }
+}
+
+#[test]
 fn projected_step_reported_losses_match_batch_losses() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();
