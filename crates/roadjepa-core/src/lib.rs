@@ -5,6 +5,7 @@ pub mod linear;
 pub mod losses;
 pub mod predictor;
 pub mod tensor;
+pub mod vision_jepa;
 
 pub use conv::Conv2d;
 pub use encoder::{ConvEncoder, EmbeddingEncoder};
@@ -13,6 +14,7 @@ pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
 pub use predictor::{Predictor, PredictorGrads};
 pub use tensor::Tensor;
+pub use vision_jepa::VisionJepa;
 
 #[cfg(test)]
 mod tests {
@@ -937,5 +939,97 @@ mod tests {
 
         assert_eq!(y.shape, vec![2, 1]);
         assert_eq!(y.data, vec![4.0, 5.0]);
+    }
+
+    #[test]
+    fn vision_jepa_forward_pair_works() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0
+                    2.0, // out channel 1
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let encoder = EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2));
+
+        let fc1 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+        let model = VisionJepa::new(encoder, predictor);
+
+        let x_t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+
+        let x_t1 = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![1, 1, 2, 2]);
+
+        let (pred, target) = model.forward_pair(&x_t, &x_t1);
+
+        assert_eq!(pred.shape, vec![1, 2]);
+        assert_eq!(target.shape, vec![1, 2]);
+
+        assert_eq!(pred.data, vec![2.5, 5.0]);
+        assert_eq!(target.data, vec![5.0, 10.0]);
+    }
+
+    #[test]
+    fn vision_jepa_predict_next_latent_outputs_batched_embeddings() {
+        let conv1 = Conv2d::new(
+            Tensor::new(vec![1.0], vec![1, 1, 1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0], vec![1, 1, 1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+            1,
+            0,
+        );
+
+        let encoder = EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2));
+
+        let fc1 = Linear::new(
+            Tensor::new(vec![1.0], vec![1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0], vec![1, 1]),
+            Tensor::new(vec![0.0], vec![1]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+        let model = VisionJepa::new(encoder, predictor);
+
+        let x_t = Tensor::new(
+            vec![1.0, 3.0, 5.0, 7.0, 2.0, 4.0, 6.0, 8.0],
+            vec![2, 1, 2, 2],
+        );
+
+        let pred = model.predict_next_latent(&x_t);
+
+        assert_eq!(pred.shape, vec![2, 1]);
+        assert_eq!(pred.data, vec![4.0, 5.0]);
     }
 }
