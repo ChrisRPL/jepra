@@ -9,7 +9,7 @@ Read with `VISION.md`.
 - Projected path: `ProjectedVisionJepa` now has:
   - target-projector momentum (`target_projection_momentum`), builder API, and EMA update in `step_with_trainable_encoder`.
   - optional encoder update mode (`step_with_trainable_encoder(..., encoder_lr)`).
-  - CLI/env control via `--target-momentum` / `--target-projection-momentum` and `JEPRA_TARGET_MOMENTUM`.
+  - CLI/env control via `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, `--target-momentum-warmup-steps`, optional projection aliases (`--target-projection-momentum`, `--target-projection-momentum-end`), and `JEPRA_TARGET_MOMENTUM`.
 - Current defaults preserve hard target-projector behavior (`momentum = 1.0`) unless explicit tuning is passed.
 - Regression posture:
   - one-step projected loss reduction,
@@ -19,10 +19,26 @@ Read with `VISION.md`.
   - fixed + multi-seed convergence gates.
 
 ## Next Action
-- Run a projected-path encoder-learning hardening sweep and lock it in:
-  - fixed seed schedule comparison for `momentum ∈ {1.0, 0.5, 0.0}` and a small non-zero `encoder_lr`.
-  - keep default path frozen for examples; make non-default configs explicit and documented.
-  - add/maintain protocol checks only if validation behavior improves or stays stable.
+## Next 3-Step Plan (Current Phase)
+
+1. Current phase focus: projected hardening freeze
+   - Keep default training conservative: `--encoder-lr=0.0`, `target_projection_momentum=1.0`.
+   - Require explicit opt-in for non-default momentum behavior in the projected example.
+   - Checkpoint: existing targeted assertions remain green after each change and `target_projection_drift` stays bounded in defaults.
+
+2. Momentum warmup
+   - Add/normalize projected momentum scheduling in `TemporalRunConfig` (`target_projection_momentum`) before broadening defaults.
+   - Scope: schedule is linear from configured `--target-momentum-start` to `--target-momentum-end` over a warmup window, then hold steady.
+   - Checkpoint: a regression test documents warmup + final momentum values and validates monotonic drift under schedule.
+
+3. Projected protocol evidence package
+   - Run fixed-seed protocol checks for momentum values `{1.0, 0.5, 0.0}` in projected suite.
+   - Record results in docs and keep gates at:
+     - one-step total-loss reduction,
+     - EMA edge validity,
+     - drift monotonicity trend under scheduler,
+     - trainable-encoder parity checks vs frozen baseline.
+   - Stop condition: promote non-default momentum/encoder-learning behavior only if all checkpoints pass in local fixed-seed runs.
 
 ## Anti-Goals
 - no new abstractions for their own sake

@@ -8,8 +8,10 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Hardening evidence is in `crates/jepra-core/tests/projected_temporal_support.rs` (EMA edges, momentum bounds, trainable encoder behavior).
 
 ## Next Action
-- Run one projected hardening sweep set for `target_projection_momentum in {1.0, 0.5, 0.0}` and fixed-seed trajectories.
-- Keep defaults conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) until sweep outcomes are stable and documented.
+- Current phase focus is projected warmup + protocol evidence:
+  - keep default path conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) while adding warmup controls,
+  - schedule target momentum from `--target-momentum-start` toward `--target-momentum-end` and verify target drift trend,
+  - close the next protocol evidence loop with fixed-seed projected sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
 
 ## Anti-Goals
 - no implicit trainable projected encoder defaults
@@ -59,7 +61,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - `train_vision_jepa.rs` is intentionally a compatibility wrapper that delegates to the canonical random-temporal training flow.
 - A dedicated example entrypoint regression test now enforces that delegation in `crates/jepra-core/tests/example_entrypoint_guard.rs`.
 - Temporal data uses mixed-speed synthetic motion, with deterministic mixed-mode validation probes and held-out schedules.
-- CLI/env config for runs lives in `examples/support/temporal_vision.rs` and now includes `--target-momentum`/`JEPRA_TARGET_MOMENTUM`.
+- CLI/env config for runs lives in `examples/support/temporal_vision.rs` and now includes `--target-momentum`/`--target-momentum-start`/`--target-momentum-end` plus `--target-momentum-warmup-steps` and `JEPRA_TARGET_MOMENTUM`.
 - `Conv2d` has backprop support and optimizer updates; encoder-level backward/grad plumbing is now in place.
 - There is no real evaluation harness, no benchmark runner, and no model checkpointing or serialization path.
 
