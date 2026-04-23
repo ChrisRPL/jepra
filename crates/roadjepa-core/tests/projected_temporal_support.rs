@@ -10,7 +10,33 @@ use projected_temporal::{
     projected_batch_losses, projected_step, projection_stats,
 };
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
-use temporal_vision::{make_frozen_encoder, make_train_batch};
+use temporal_vision::{BATCH_SIZE, IMAGE_SIZE, make_frozen_encoder, make_train_batch};
+
+fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
+    let mut total = 0.0;
+
+    for row in 0..IMAGE_SIZE {
+        for col in 0..IMAGE_SIZE {
+            total += tensor.get(&[sample, 0, row, col]);
+        }
+    }
+
+    total
+}
+
+fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
+    let mut count = 0usize;
+
+    for row in 0..IMAGE_SIZE {
+        for col in 0..IMAGE_SIZE {
+            if tensor.get(&[sample, 0, row, col]).abs() > 1e-6 {
+                count += 1;
+            }
+        }
+    }
+
+    count
+}
 
 const PROJECTION_DIM: usize = 4;
 const PROJECTOR_LR: f32 = 0.005;
@@ -149,6 +175,50 @@ fn combine_projection_grads_applies_regularizer_weight() {
     let combined = combine_projection_grads(&prediction_grad, &regularizer_grad, 0.5);
 
     assert_eq!(combined, Tensor::new(vec![1.1, -1.8, 0.0, 4.0], vec![2, 2]));
+}
+
+#[test]
+fn projected_temporal_batch_contains_expected_square_counts_and_decays_mass() {
+    let mut saw_single_square = false;
+    let mut saw_double_square = false;
+
+    for seed in 0..128u64 {
+        let (x_t, x_t1) = make_train_batch(seed, 0);
+
+        for sample in 0..BATCH_SIZE {
+            let cells_t = active_cell_count(&x_t, sample);
+            let cells_t1 = active_cell_count(&x_t1, sample);
+
+            match cells_t {
+                4 => saw_single_square = true,
+                8 => saw_double_square = true,
+                cells => panic!(
+                    "unexpected non-zero footprint at seed {} sample {}: {}",
+                    seed, sample, cells
+                ),
+            }
+
+            assert!(
+                cells_t == cells_t1,
+                "non-zero footprint changed across temporal step at seed {} sample {}: {} -> {}",
+                seed,
+                sample,
+                cells_t,
+                cells_t1
+            );
+            assert!(
+                total_mass(&x_t1, sample) < total_mass(&x_t, sample),
+                "sample {} mass did not decay at seed {}: {:.6} -> {:.6}",
+                sample,
+                seed,
+                total_mass(&x_t, sample),
+                total_mass(&x_t1, sample)
+            );
+        }
+    }
+
+    assert!(saw_single_square, "never saw single-square sample");
+    assert!(saw_double_square, "never saw double-square sample");
 }
 
 #[test]
