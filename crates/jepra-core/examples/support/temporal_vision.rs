@@ -13,12 +13,79 @@ pub const EXTRA_SQUARE_CHANCE: f64 = 0.5;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TemporalRunConfig {
+    pub train_base_seed: u64,
+    pub total_steps: usize,
+    pub log_every: usize,
+}
+
+impl TemporalRunConfig {
+    pub fn from_args(
+        default_train_base_seed: u64,
+        default_total_steps: usize,
+        default_log_every: usize,
+    ) -> Self {
+        let args: Vec<String> = std::env::args().collect();
+
+        let train_base_seed = parse_u64_arg(&args, "--train-base-seed")
+            .or_else(|| parse_u64_arg(&args, "--seed"))
+            .unwrap_or(default_train_base_seed);
+
+        let total_steps = parse_usize_arg(&args, "--train-steps")
+            .or_else(|| parse_usize_arg(&args, "--steps"))
+            .or_else(|| Some(training_steps(default_total_steps)))
+            .unwrap_or(default_total_steps);
+
+        let log_every = parse_usize_arg(&args, "--log-every")
+            .or_else(|| parse_usize_arg(&args, "--log"))
+            .unwrap_or(default_log_every);
+
+        assert!(
+            total_steps > 0,
+            "train steps must be greater than 0, got {}",
+            total_steps
+        );
+        assert!(
+            log_every > 0,
+            "log_every must be greater than 0, got {}",
+            log_every
+        );
+
+        Self {
+            train_base_seed,
+            total_steps,
+            log_every,
+        }
+    }
+}
+
 pub fn training_steps(default_steps: usize) -> usize {
     std::env::var("JEPRA_TRAIN_STEPS")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&steps| steps > 0)
         .unwrap_or(default_steps)
+}
+
+fn parse_arg_value<'a>(args: &'a [String], flag: &'a str) -> Option<&'a str> {
+    args.windows(2).find_map(|window| {
+        if window[0] == flag {
+            Some(window[1].as_str())
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_u64_arg(args: &[String], flag: &str) -> Option<u64> {
+    parse_arg_value(args, flag).and_then(|value| value.parse::<u64>().ok())
+}
+
+fn parse_usize_arg(args: &[String], flag: &str) -> Option<usize> {
+    parse_arg_value(args, flag)
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
 }
 
 pub fn motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {

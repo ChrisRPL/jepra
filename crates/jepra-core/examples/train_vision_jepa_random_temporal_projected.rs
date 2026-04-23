@@ -12,7 +12,7 @@ use projected_temporal::{
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
     make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary, training_steps,
+    print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -45,8 +45,16 @@ fn make_predictor() -> Predictor {
 }
 
 fn main() {
-    let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
-    let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
+    let run_config =
+        temporal_vision::TemporalRunConfig::from_args(TRAIN_BASE_SEED, NUM_STEPS, LOG_EVERY);
+
+    println!(
+        "temporal run config | train_base_seed {} | steps {} | log_every {}",
+        run_config.train_base_seed, run_config.total_steps, run_config.log_every
+    );
+
+    let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
+    let (train_probe_next_t, train_probe_next_t1) = make_train_batch(run_config.train_base_seed, 1);
     let (val_probe_t, val_probe_t1) = make_validation_batch(PROJECTED_VALIDATION_BASE_SEED, 0);
     let (mixed_val_probe_t, mixed_val_probe_t1, mixed_val_probe_seed) =
         make_validation_batch_with_both_motion_modes(PROJECTED_VALIDATION_BASE_SEED, 1);
@@ -127,10 +135,10 @@ fn main() {
     );
 
     temporal_vision::run_temporal_training_loop(
-        training_steps(NUM_STEPS),
-        LOG_EVERY,
+        run_config.total_steps,
+        run_config.log_every,
         |step, should_log| {
-            let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
+            let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
             let (prediction_loss, regularizer_loss, total_loss) =
                 model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
 
