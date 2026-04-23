@@ -11,7 +11,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Current phase focus is projected warmup + protocol evidence:
   - keep default path conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) while adding warmup controls,
   - schedule target momentum from `--target-momentum-start` toward `--target-momentum-end` and verify target drift trend,
-  - protocol evidence loop with fixed-seed projected sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}` is now complete and clean under the current defaults.
+  - protocol evidence loop with fixed-seed projected sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}` is active and must remain clean before any default change.
 
 ## Anti-Goals
 - no implicit trainable projected encoder defaults
@@ -46,7 +46,8 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Projected suite (`tests/projected_temporal_support.rs`) now covers:
   - target projector EMA edge cases (`momentum = 0.0`, `1.0`, and interior values),
   - invalid momentum rejection,
-  - projected encoder-training step coverage.
+  - projected encoder-training step coverage,
+- projected compact-mode frozen vs trainable parity (`CompactEncoderMode::Base`) and stronger compact-mode coverage in protocol checks.
 
 ## What Is Already JEPA-Capable
 
@@ -93,3 +94,4 @@ Snapshot from local files only. Internal working note for the repo state today.
   - lock down momentum schedules (`0.0`, `0.5`, `1.0`) against fixed-batch/probe train/val trajectories,
   - keep defaults conservative (`--encoder-lr=0.0`, `--target-momentum=1.0`) and require explicit intent for departures,
   - only expand trainable projected defaults if trajectory checks are stable.
+  - capture sweep rows in wiki-facing evidence table before altering defaults.

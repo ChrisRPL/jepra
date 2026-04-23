@@ -70,16 +70,7 @@ Read with `VISION.md`.
   - script modes (`all|warmup|frozen|trainable|zero`),
   - profile momentum set (`1.0`, `0.5`, `0.0`),
   - output format (`seed`, `momentum`, `profile`, `status`, `projected run summary`).
-- `VISION.md` is stale on immediate-step framing:
-  - section 7 still frames unprojected compact-encoder work as active next-step work,
-  - it does not name warmup-protocol hardening with fixed-seed momentum sweep as the immediate phase.
-
-Exact VISION-only patch proposal (if applied):
-1. In section 7, replace the current “Immediate status / Next small step / Next short step” block with:
-   - “Projected-path warmup contract and momentum evidence is the immediate hardening phase.”
-   - “Run warmup+frozen+trainable+zero fixed-seed checks under `run-projected-momentum-sweep.sh`, then promote defaults only after step-1 and step-2 stop conditions close.”
-2. In section 7 stop language, add the hard rule:
-   - “Do not shift defaults to non-`1.0` momentum or opt-in projected encoder learning until all three step gates are closed.”
+- `VISION.md` now explicitly names this phase and stop rules in section 7.
 
 ## Anti-Goals
 - no new abstractions for their own sake
@@ -90,11 +81,7 @@ Exact VISION-only patch proposal (if applied):
 - no hidden target-projector training bypass (all projected encoder updates stay explicit)
 
 ## Stale Guidance Audit
-- README and wiki guidance are currently aligned on current projected-mode behavior:
-  - defaults remain conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) unless explicitly configured,
-  - warmup and fixed-momentum CLI paths are documented,
-  - trainable encoder updates are explicit via `--encoder-lr`.
-- `VISION.md` needs a one-point alignment update for immediate-step framing (section 7 currently advertises earlier compact-encoder sequencing).
+- `VISION.md` alignment is now up to date for the active projected-hardening phase; no immediate-step framing patch is pending.
 
 ## Approved Implementation Sequence
 
