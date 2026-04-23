@@ -4,7 +4,7 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
-use projected_temporal::projection_stats;
+use projected_temporal::{projected_validation_batch_losses, projection_stats};
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
     PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
@@ -40,28 +40,6 @@ fn make_predictor() -> Predictor {
     Predictor::new(
         Linear::randn(PROJECTION_DIM, 8, 0.1, 21_000),
         Linear::randn(8, PROJECTION_DIM, 0.1, 21_001),
-    )
-}
-
-fn validation_losses(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
-    let mut prediction_total = 0.0;
-    let mut regularizer_total = 0.0;
-    let mut total = 0.0;
-
-    for batch_idx in 0..VALIDATION_BATCHES {
-        let (x_t, x_t1) = make_validation_batch(VALIDATION_BASE_SEED, batch_idx as u64);
-        let (prediction_loss, regularizer_loss, total_loss) =
-            model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
-        prediction_total += prediction_loss;
-        regularizer_total += regularizer_loss;
-        total += total_loss;
-    }
-
-    let batches = VALIDATION_BATCHES as f32;
-    (
-        prediction_total / batches,
-        regularizer_total / batches,
-        total / batches,
     )
 }
 
@@ -120,7 +98,16 @@ fn main() {
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
         model.losses(&train_probe_t, &train_probe_t1, REGULARIZER_WEIGHT);
     let (initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss) =
-        validation_losses(&model);
+        projected_validation_batch_losses(
+            &model.encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
+            REGULARIZER_WEIGHT,
+            VALIDATION_BASE_SEED,
+            VALIDATION_BATCHES,
+            make_validation_batch,
+        );
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
 
@@ -149,7 +136,16 @@ fn main() {
 
         if step == 1 || step % LOG_EVERY == 0 {
             let (val_prediction_loss, val_regularizer_loss, val_total_loss) =
-                validation_losses(&model);
+                projected_validation_batch_losses(
+                    &model.encoder,
+                    &model.projector,
+                    &model.target_projector,
+                    &model.predictor,
+                    REGULARIZER_WEIGHT,
+                    VALIDATION_BASE_SEED,
+                    VALIDATION_BATCHES,
+                    make_validation_batch,
+                );
 
             println!(
                 "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | val total {:.6}",
@@ -168,7 +164,16 @@ fn main() {
     let (final_train_prediction_loss, final_train_regularizer_loss, final_train_total_loss) =
         model.losses(&train_probe_t, &train_probe_t1, REGULARIZER_WEIGHT);
     let (final_val_prediction_loss, final_val_regularizer_loss, final_val_total_loss) =
-        validation_losses(&model);
+        projected_validation_batch_losses(
+            &model.encoder,
+            &model.projector,
+            &model.target_projector,
+            &model.predictor,
+            REGULARIZER_WEIGHT,
+            VALIDATION_BASE_SEED,
+            VALIDATION_BATCHES,
+            make_validation_batch,
+        );
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);
 

@@ -178,3 +178,44 @@ pub fn projected_step(
 ) {
     model.step(x_t, x_t1, regularizer_weight, predictor_lr, projector_lr);
 }
+
+pub fn projected_validation_batch_losses<F>(
+    encoder: &EmbeddingEncoder,
+    online_projector: &Linear,
+    target_projector: &Linear,
+    predictor: &Predictor,
+    regularizer_weight: f32,
+    base_seed: u64,
+    validation_batches: usize,
+    make_batch: F,
+) -> (f32, f32, f32)
+where
+    F: Fn(u64) -> (Tensor, Tensor),
+{
+    let mut prediction_total = 0.0;
+    let mut regularizer_total = 0.0;
+    let mut total = 0.0;
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_batch(base_seed + batch_idx as u64);
+        let (prediction_loss, regularizer_loss, total_loss) = projected_batch_losses(
+            encoder,
+            online_projector,
+            target_projector,
+            predictor,
+            &x_t,
+            &x_t1,
+            regularizer_weight,
+        );
+        prediction_total += prediction_loss;
+        regularizer_total += regularizer_loss;
+        total += total_loss;
+    }
+
+    let batches = validation_batches as f32;
+    (
+        prediction_total / batches,
+        regularizer_total / batches,
+        total / batches,
+    )
+}
