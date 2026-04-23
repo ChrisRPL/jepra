@@ -10,6 +10,7 @@ The crate is published as `jepra-core`.
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - temporal data now supports one or two moving squares per sample in the synthetic generator
 - unprojected validation helpers and reduction thresholds are centralized in `crates/jepra-core/examples/support/temporal_validation.rs`
+- temporal validation helpers now explicitly panic when validation batches is configured as zero
 
 ## Core Verification Commands
 
@@ -44,6 +45,8 @@ For quick iteration:
 - `cargo fmt --manifest-path crates/jepra-core/Cargo.toml --all -- --check`
 - `cargo test --manifest-path crates/jepra-core/Cargo.toml --test example_entrypoint_guard`
 - `cargo test --manifest-path crates/jepra-core/Cargo.toml --test temporal_vision_support`
+- `cargo test --manifest-path crates/jepra-core/Cargo.toml --test temporal_vision_support unprojected_validation_batch_losses_zero_batch_count_panics`
+- `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support projected_validation_batch_losses_zero_batch_count_panics`
 
 Use these first; run the full `--all-targets`/clippy suite before PR handoff or CI-sensitive changes.
 
