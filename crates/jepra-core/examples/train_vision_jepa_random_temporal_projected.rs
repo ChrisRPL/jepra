@@ -6,9 +6,10 @@ mod temporal_vision;
 use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use projected_temporal::projection_stats;
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary,
+    MIN_MIXED_MODE_COUNT, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
+    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
+    motion_mode_counts, print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -20,8 +21,6 @@ const LOG_EVERY: usize = 25;
 const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
-const TARGET_FINAL_TRAIN_TOTAL_LOSS: f32 = 0.15;
-const TARGET_FINAL_VAL_TOTAL_LOSS: f32 = 0.15;
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -186,16 +185,18 @@ fn main() {
         final_val_total_loss
     );
     assert!(
-        final_train_total_loss < TARGET_FINAL_TRAIN_TOTAL_LOSS,
+        final_train_total_loss
+            < initial_train_total_loss * PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
         "probe total loss stayed too high: {:.6} >= {:.6}",
         final_train_total_loss,
-        TARGET_FINAL_TRAIN_TOTAL_LOSS
+        initial_train_total_loss * PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
     );
     assert!(
-        final_val_total_loss < TARGET_FINAL_VAL_TOTAL_LOSS,
+        final_val_total_loss
+            < initial_val_total_loss * PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
         "validation total loss stayed too high: {:.6} >= {:.6}",
         final_val_total_loss,
-        TARGET_FINAL_VAL_TOTAL_LOSS
+        initial_val_total_loss * PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
     );
 
     println!(

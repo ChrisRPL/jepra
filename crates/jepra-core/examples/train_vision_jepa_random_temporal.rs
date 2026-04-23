@@ -3,9 +3,10 @@ mod temporal_vision;
 
 use jepra_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary,
+    MIN_MIXED_MODE_COUNT, UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
+    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
+    motion_mode_counts, print_batch_summary,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -14,9 +15,6 @@ const VALIDATION_BATCHES: usize = 8;
 const NUM_STEPS: usize = 300;
 const LOG_EVERY: usize = 25;
 const LR: f32 = 0.02;
-const TARGET_FINAL_TRAIN_LOSS: f32 = 0.05;
-const TARGET_FINAL_VAL_LOSS: f32 = 0.05;
-
 fn make_predictor() -> Predictor {
     let fc1 = Linear::new(
         Tensor::new(
@@ -147,16 +145,16 @@ pub fn main() {
         final_val_loss
     );
     assert!(
-        final_train_loss < TARGET_FINAL_TRAIN_LOSS,
+        final_train_loss < initial_train_loss * UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
         "probe train loss stayed too high: {:.6} >= {:.6}",
         final_train_loss,
-        TARGET_FINAL_TRAIN_LOSS
+        initial_train_loss * UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
     );
     assert!(
-        final_val_loss < TARGET_FINAL_VAL_LOSS,
+        final_val_loss < initial_val_loss * UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
         "validation loss stayed too high: {:.6} >= {:.6}",
         final_val_loss,
-        TARGET_FINAL_VAL_LOSS
+        initial_val_loss * UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
     );
 
     println!(
