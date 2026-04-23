@@ -9,6 +9,7 @@ pub const SQUARE_SIZE: usize = 2;
 pub const SLOW_MOTION_DX: usize = 1;
 pub const FAST_MOTION_DX: usize = 2;
 pub const FAST_MOTION_MASS_THRESHOLD: f32 = 0.8f32 * (SQUARE_SIZE * SQUARE_SIZE) as f32;
+pub const EXTRA_SQUARE_CHANCE: f64 = 0.5;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
 
@@ -56,6 +57,37 @@ pub fn make_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
 
         draw_square(&mut x_t, sample, row, col_t, intensity_t);
         draw_square(&mut x_t1, sample, row, col_t1, intensity_t1);
+
+        if rng.gen_bool(EXTRA_SQUARE_CHANCE) {
+            let mut secondary_row = rng.gen_range(0..=max_row);
+            let mut secondary_col_t = rng.gen_range(0..=max_col_t);
+            let mut attempts = 0usize;
+
+            while squares_overlap(row, col_t, secondary_row, secondary_col_t) && attempts < 16 {
+                secondary_row = rng.gen_range(0..=max_row);
+                secondary_col_t = rng.gen_range(0..=max_col_t);
+                attempts += 1;
+            }
+
+            let secondary_intensity_t = intensity_t;
+            let secondary_intensity_t1 =
+                (0.9f32 * secondary_intensity_t + 0.05f32).clamp(0.5f32, 1.0f32);
+
+            draw_square(
+                &mut x_t,
+                sample,
+                secondary_row,
+                secondary_col_t,
+                secondary_intensity_t,
+            );
+            draw_square(
+                &mut x_t1,
+                sample,
+                secondary_row,
+                secondary_col_t + motion_dx,
+                secondary_intensity_t1,
+            );
+        }
     }
 
     (x_t, x_t1)
@@ -300,6 +332,15 @@ fn draw_square(tensor: &mut Tensor, sample: usize, row: usize, col: usize, inten
             tensor.set(&[sample, 0, row + dy, col + dx], intensity);
         }
     }
+}
+
+fn squares_overlap(row_a: usize, col_a: usize, row_b: usize, col_b: usize) -> bool {
+    let row_a_end = row_a + SQUARE_SIZE;
+    let col_a_end = col_a + SQUARE_SIZE;
+    let row_b_end = row_b + SQUARE_SIZE;
+    let col_b_end = col_b + SQUARE_SIZE;
+
+    row_a < row_b_end && row_b < row_a_end && col_a < col_b_end && col_b < col_a_end
 }
 
 fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
