@@ -4,18 +4,19 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
-use projected_temporal::{projected_validation_batch_losses, projection_stats};
+use projected_temporal::{
+    PROJECTED_VALIDATION_BASE_SEED, PROJECTED_VALIDATION_BATCHES,
+    projected_validation_batch_losses, projection_stats,
+};
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
     PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
-    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_mode_counts, print_batch_summary,
+    make_temporal_batch, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
 const TRAIN_BASE_SEED: u64 = 11_000;
-const VALIDATION_BASE_SEED: u64 = 111_000;
-const VALIDATION_BATCHES: usize = 8;
 const NUM_STEPS: usize = 300;
 const LOG_EVERY: usize = 25;
 const PROJECTOR_LR: f32 = 0.005;
@@ -46,9 +47,9 @@ fn make_predictor() -> Predictor {
 fn main() {
     let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
-    let (val_probe_t, val_probe_t1) = make_validation_batch(VALIDATION_BASE_SEED, 0);
+    let (val_probe_t, val_probe_t1) = make_validation_batch(PROJECTED_VALIDATION_BASE_SEED, 0);
     let (mixed_val_probe_t, mixed_val_probe_t1, mixed_val_probe_seed) =
-        make_validation_batch_with_both_motion_modes(VALIDATION_BASE_SEED, 1);
+        make_validation_batch_with_both_motion_modes(PROJECTED_VALIDATION_BASE_SEED, 1);
 
     assert_temporal_contract(&train_probe_t, &train_probe_t1);
     assert_temporal_contract(&train_probe_next_t, &train_probe_next_t1);
@@ -104,9 +105,9 @@ fn main() {
             &model.target_projector,
             &model.predictor,
             REGULARIZER_WEIGHT,
-            VALIDATION_BASE_SEED,
-            VALIDATION_BATCHES,
-            make_validation_batch,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            |seed| make_temporal_batch(temporal_vision::BATCH_SIZE, seed),
         );
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
@@ -142,9 +143,9 @@ fn main() {
                     &model.target_projector,
                     &model.predictor,
                     REGULARIZER_WEIGHT,
-                    VALIDATION_BASE_SEED,
-                    VALIDATION_BATCHES,
-                    make_validation_batch,
+                    PROJECTED_VALIDATION_BASE_SEED,
+                    PROJECTED_VALIDATION_BATCHES,
+                    |seed| make_temporal_batch(temporal_vision::BATCH_SIZE, seed),
                 );
 
             println!(
@@ -170,9 +171,9 @@ fn main() {
             &model.target_projector,
             &model.predictor,
             REGULARIZER_WEIGHT,
-            VALIDATION_BASE_SEED,
-            VALIDATION_BATCHES,
-            make_validation_batch,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            |seed| make_temporal_batch(temporal_vision::BATCH_SIZE, seed),
         );
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);

@@ -7,14 +7,15 @@ mod temporal_vision;
 
 use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use projected_temporal::{
-    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
-    projected_batch_losses, projected_step, projection_stats,
+    PROJECTED_VALIDATION_BASE_SEED, PROJECTED_VALIDATION_BATCHES, combine_projection_grads,
+    gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projected_batch_losses,
+    projected_step, projected_validation_batch_losses, projection_stats,
 };
 use temporal_vision::{
-    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    assert_seed_range_has_both_motion_modes,
+    BATCH_SIZE, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, make_frozen_encoder,
-    make_train_batch,
+    make_temporal_batch, make_train_batch,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -22,8 +23,6 @@ const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
 const TRAIN_BASE_SEED: u64 = 11_000;
-const VALIDATION_BASE_SEED: u64 = 111_000;
-const VALIDATION_BATCHES: usize = 8;
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -62,53 +61,28 @@ fn projected_validation_losses(
     target_projector: &Linear,
     predictor: &Predictor,
 ) -> (f32, f32, f32) {
-    let mut prediction_total = 0.0;
-    let mut regularizer_total = 0.0;
-    let mut total = 0.0;
-
-    for batch_idx in 0..VALIDATION_BATCHES {
-        let (x_t, x_t1) = make_train_batch(VALIDATION_BASE_SEED, batch_idx as u64);
-        let (prediction_loss, regularizer_loss, total_loss) = projected_batch_losses(
-            encoder,
-            online_projector,
-            target_projector,
-            predictor,
-            &x_t,
-            &x_t1,
-            REGULARIZER_WEIGHT,
-        );
-        prediction_total += prediction_loss;
-        regularizer_total += regularizer_loss;
-        total += total_loss;
-    }
-
-    let batches = VALIDATION_BATCHES as f32;
-    (
-        prediction_total / batches,
-        regularizer_total / batches,
-        total / batches,
+    projected_validation_batch_losses(
+        encoder,
+        online_projector,
+        target_projector,
+        predictor,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+        |seed| make_temporal_batch(BATCH_SIZE, seed),
     )
 }
 
 fn projected_validation_losses_model(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
-    let mut prediction_total = 0.0;
-    let mut regularizer_total = 0.0;
-    let mut total = 0.0;
-
-    for batch_idx in 0..VALIDATION_BATCHES {
-        let (x_t, x_t1) = make_train_batch(VALIDATION_BASE_SEED, batch_idx as u64);
-        let (prediction_loss, regularizer_loss, total_loss) =
-            model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT);
-        prediction_total += prediction_loss;
-        regularizer_total += regularizer_loss;
-        total += total_loss;
-    }
-
-    let batches = VALIDATION_BATCHES as f32;
-    (
-        prediction_total / batches,
-        regularizer_total / batches,
-        total / batches,
+    projected_validation_batch_losses(
+        &model.encoder,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+        |seed| make_temporal_batch(BATCH_SIZE, seed),
     )
 }
 

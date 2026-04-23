@@ -1,5 +1,8 @@
 use jepra_core::{EmbeddingEncoder, Linear, Predictor, ProjectedVisionJepa, Tensor, mse_loss};
 
+pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
+pub const PROJECTED_VALIDATION_BATCHES: usize = 8;
+
 pub fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
     assert!(
         latents.shape.len() == 2,
