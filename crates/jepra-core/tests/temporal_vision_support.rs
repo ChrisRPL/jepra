@@ -79,6 +79,85 @@ fn make_predictor() -> Predictor {
     )
 }
 
+fn make_predictor_with_seed(seed_offset: u64) -> Predictor {
+    Predictor::new(
+        Linear::randn(3, 3, 0.1, 21_000 + seed_offset),
+        Linear::randn(3, 3, 0.1, 21_001 + seed_offset),
+    )
+}
+
+fn unprojected_short_run_convergence(train_base_seed: u64, predictor_seed: u64) -> (f32, f32) {
+    let encoder = make_frozen_encoder();
+    let mut model = VisionJepa::new(encoder, make_predictor_with_seed(predictor_seed));
+    let steps = 60;
+    let lr = 0.02;
+
+    let (probe_t, probe_t1) = make_train_batch(train_base_seed, 0);
+    let initial_train_loss = batch_loss(&model, &probe_t, &probe_t1);
+    let initial_val_loss = validation_loss(&model);
+
+    for step in 1..=steps {
+        let (x_t, x_t1) = make_train_batch(train_base_seed, step as u64);
+        model.step(&x_t, &x_t1, lr);
+    }
+
+    let final_train_loss = batch_loss(&model, &probe_t, &probe_t1);
+    let final_val_loss = validation_loss(&model);
+
+    assert!(
+        final_train_loss < initial_train_loss * UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        "short unprojected run did not shrink train loss enough: {:.6} -> {:.6}",
+        initial_train_loss,
+        final_train_loss
+    );
+    assert!(
+        final_val_loss < initial_val_loss * UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        "short unprojected run did not shrink val loss enough: {:.6} -> {:.6}",
+        initial_val_loss,
+        final_val_loss
+    );
+
+    (
+        final_train_loss / initial_train_loss,
+        final_val_loss / initial_val_loss,
+    )
+}
+
+#[test]
+fn unprojected_short_runs_have_stable_convergence_ratios() {
+    let train_base_seed = 12_000;
+    let runs = [21_010u64, 21_011u64, 21_012u64];
+    let mut train_ratios = Vec::<f32>::new();
+    let mut val_ratios = Vec::<f32>::new();
+
+    for seed in runs {
+        let (train_ratio, val_ratio) = unprojected_short_run_convergence(train_base_seed, seed);
+        train_ratios.push(train_ratio);
+        val_ratios.push(val_ratio);
+    }
+
+    let train_min = train_ratios.iter().copied().fold(f32::INFINITY, f32::min);
+    let train_max = train_ratios
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let val_min = val_ratios.iter().copied().fold(f32::INFINITY, f32::min);
+    let val_max = val_ratios.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    assert!(
+        train_max - train_min < 0.35,
+        "unprojected train convergence spread too large: [{:.6}, {:.6}]",
+        train_min,
+        train_max
+    );
+    assert!(
+        val_max - val_min < 0.35,
+        "unprojected validation convergence spread too large: [{:.6}, {:.6}]",
+        val_min,
+        val_max
+    );
+}
+
 #[test]
 fn unprojected_random_temporal_training_reduces_train_and_validation_loss() {
     let encoder = make_frozen_encoder();
