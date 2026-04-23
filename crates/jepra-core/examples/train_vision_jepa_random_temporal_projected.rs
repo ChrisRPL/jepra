@@ -10,8 +10,10 @@ use projected_temporal::{
     projected_validation_batch_losses_from_base_seed, projection_stats,
 };
 use temporal_vision::{
+    CompactEncoderMode,
     MIN_MIXED_MODE_COUNT, assert_temporal_contract, assert_temporal_experiment_improved,
-    make_frozen_encoder, make_train_batch, make_validation_batch,
+    make_compact_frozen_encoder, make_compact_frozen_encoder_stronger, make_frozen_encoder,
+    make_train_batch, make_validation_batch,
     make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
 };
 
@@ -58,6 +60,10 @@ fn main() {
         run_config.target_projection_momentum_end,
         run_config.target_projection_momentum_warmup_steps
     );
+    println!(
+        "temporal run config | encoder variant {}",
+        run_config.compact_encoder_mode.as_str()
+    );
 
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(run_config.train_base_seed, 1);
@@ -100,7 +106,11 @@ fn main() {
         mixed_val_probe_seed, mixed_slow_count, mixed_fast_count
     );
 
-    let encoder = make_frozen_encoder();
+    let encoder = match run_config.compact_encoder_mode {
+        CompactEncoderMode::Disabled => make_frozen_encoder(),
+        CompactEncoderMode::Base => make_compact_frozen_encoder(),
+        CompactEncoderMode::Stronger => make_compact_frozen_encoder_stronger(),
+    };
     let online_projector = make_projector();
     let target_projector = online_projector.clone();
     let predictor = make_predictor();

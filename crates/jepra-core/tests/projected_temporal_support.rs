@@ -17,8 +17,9 @@ use temporal_vision::{
     BATCH_SIZE, TemporalExperimentSummary, run_temporal_experiment_with_summary,
     assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples,
-    assert_temporal_experiment_improved, make_frozen_encoder, make_temporal_batch,
-    make_train_batch, CompactEncoderMode, TemporalRunConfig,
+    assert_temporal_experiment_improved, make_compact_frozen_encoder, make_frozen_encoder,
+    make_temporal_batch, make_train_batch,
+    CompactEncoderMode, TemporalRunConfig,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -201,8 +202,10 @@ fn projected_run_with_encoder(
     predictor_seed: u64,
     predictor_lr: f32,
     encoder_lr: f32,
+    compact_encoder_mode: CompactEncoderMode,
+    make_encoder: fn() -> jepra_core::EmbeddingEncoder,
 ) -> TemporalExperimentSummary {
-    let encoder = make_frozen_encoder();
+    let encoder = make_encoder();
     let projector = make_projector();
     let target_projector = projector.clone();
     let mut model =
@@ -212,7 +215,7 @@ fn projected_run_with_encoder(
         total_steps: 120,
         log_every: 120,
         encoder_learning_rate: encoder_lr,
-        compact_encoder_mode: CompactEncoderMode::Disabled,
+        compact_encoder_mode,
         target_projection_momentum: 0.5,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.5,
@@ -251,9 +254,25 @@ fn assert_projected_frozen_vs_trainable_protocol(
     predictor_seed: u64,
     predictor_lr: f32,
     encoder_lr: f32,
+    compact_encoder_mode: CompactEncoderMode,
+    make_encoder: fn() -> jepra_core::EmbeddingEncoder,
 ) {
-    let frozen = projected_run_with_encoder(train_base_seed, predictor_seed, predictor_lr, 0.0);
-    let trainable = projected_run_with_encoder(train_base_seed, predictor_seed, predictor_lr, encoder_lr);
+    let frozen = projected_run_with_encoder(
+        train_base_seed,
+        predictor_seed,
+        predictor_lr,
+        0.0,
+        compact_encoder_mode,
+        make_encoder,
+    );
+    let trainable = projected_run_with_encoder(
+        train_base_seed,
+        predictor_seed,
+        predictor_lr,
+        encoder_lr,
+        compact_encoder_mode,
+        make_encoder,
+    );
 
     assert_temporal_experiment_improved(
         &format!("{label} frozen projected"),
@@ -372,6 +391,21 @@ fn projected_frozen_vs_trainable_projection_protocol_has_stable_behavior() {
         22_500u64,
         0.02f32,
         0.004f32,
+        CompactEncoderMode::Disabled,
+        make_frozen_encoder,
+    );
+}
+
+#[test]
+fn projected_compact_frozen_vs_trainable_projection_protocol_has_stable_behavior() {
+    assert_projected_frozen_vs_trainable_protocol(
+        "compact projected encoder",
+        30_010u64,
+        22_520u64,
+        0.02f32,
+        0.004f32,
+        CompactEncoderMode::Base,
+        make_compact_frozen_encoder,
     );
 }
 
