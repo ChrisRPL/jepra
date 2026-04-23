@@ -11,6 +11,7 @@ use projected_temporal::{
 };
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
+    assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, make_frozen_encoder,
     make_train_batch,
 };
@@ -159,6 +160,14 @@ fn projected_temporal_batch_contains_expected_square_counts_and_decays_mass() {
     assert_seed_range_has_single_and_double_square_batch_examples(128, |seed| {
         make_train_batch(seed, 0)
     });
+}
+
+#[test]
+fn projected_generator_exposes_both_motion_modes_across_seed_range() {
+    let (saw_slow_motion, saw_fast_motion) =
+        assert_seed_range_has_both_motion_modes(64, |seed| make_train_batch(seed, 0));
+    assert!(saw_slow_motion);
+    assert!(saw_fast_motion);
 }
 
 #[test]
