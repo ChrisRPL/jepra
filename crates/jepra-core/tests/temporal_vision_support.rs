@@ -10,24 +10,23 @@ use temporal_vision::{
     batch_has_both_motion_modes, batch_has_min_motion_mode_counts, make_frozen_encoder,
     make_temporal_batch, make_train_batch, make_validation_batch,
     make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
-    square_center_x, total_mass,
+    square_center_x, temporal_validation_batch_loss, total_mass,
 };
+
+const VALIDATION_BASE_SEED: u64 = 99_001;
+const VALIDATION_BATCHES: usize = 8;
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
     model.losses(x_t, x_t1).0
 }
 
 fn validation_loss(model: &VisionJepa) -> f32 {
-    let mut total = 0.0;
-    let validation_base_seed = 99_001u64;
-    let validation_batches = 8usize;
-
-    for batch_idx in 0..validation_batches {
-        let (x_t, x_t1) = make_validation_batch(validation_base_seed, batch_idx as u64);
-        total += batch_loss(model, &x_t, &x_t1);
-    }
-
-    total / validation_batches as f32
+    temporal_validation_batch_loss(
+        model,
+        VALIDATION_BASE_SEED,
+        VALIDATION_BATCHES,
+        |batch_idx| make_validation_batch(VALIDATION_BASE_SEED, batch_idx),
+    )
 }
 
 fn make_predictor() -> Predictor {
