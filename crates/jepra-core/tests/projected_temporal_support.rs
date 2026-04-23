@@ -15,8 +15,9 @@ use projected_temporal::{
 };
 use temporal_vision::{
     BATCH_SIZE, assert_seed_range_has_both_motion_modes,
-    assert_seed_range_has_single_and_double_square_batch_examples, make_frozen_encoder,
-    make_temporal_batch, make_train_batch,
+    assert_seed_range_has_single_and_double_square_batch_examples,
+    assert_temporal_experiment_improved, make_frozen_encoder, make_temporal_batch,
+    make_train_batch,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -169,12 +170,7 @@ fn projected_validation_batch_losses_zero_batch_count_panics() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();
     let target_projector = projector.clone();
-    let model = ProjectedVisionJepa::new(
-        encoder,
-        projector,
-        target_projector,
-        make_predictor(),
-    );
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
 
     let _ = projected_validation_batch_losses(
         &model.encoder,
@@ -933,32 +929,13 @@ fn projected_random_temporal_loop_reduces_train_and_validation_loss() {
     let final_losses = model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT);
     let final_validation = projected_validation_losses_model(&model);
 
-    assert!(
-        final_losses.2 < initial_losses.2,
-        "train total loss did not improve: {:.6} -> {:.6}",
+    assert_temporal_experiment_improved(
+        "projected",
         initial_losses.2,
-        final_losses.2
-    );
-    assert!(
-        final_validation.2 < initial_validation.2,
-        "validation total loss did not improve: {:.6} -> {:.6}",
-        initial_validation.2,
-        final_validation.2
-    );
-    assert!(
-        final_losses.2 < initial_losses.2 * PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        "projected train total loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
-        steps,
         final_losses.2,
-        initial_losses.2,
-        PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
-    );
-    assert!(
-        final_validation.2 < initial_validation.2 * PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-        "projected validation total loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
-        steps,
-        final_validation.2,
         initial_validation.2,
-        PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
+        final_validation.2,
+        PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     );
 }

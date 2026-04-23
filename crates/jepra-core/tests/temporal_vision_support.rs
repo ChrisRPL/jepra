@@ -14,10 +14,10 @@ use temporal_validation::{
 use temporal_vision::{
     BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
-    batch_has_both_motion_modes, batch_has_min_motion_mode_counts, make_frozen_encoder,
-    make_temporal_batch, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
-    square_center_x, total_mass,
+    assert_temporal_experiment_improved, batch_has_both_motion_modes,
+    batch_has_min_motion_mode_counts, make_frozen_encoder, make_temporal_batch, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_dx_for_sample,
+    motion_mode_counts, square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -47,12 +47,10 @@ fn unprojected_validation_batch_losses_zero_batch_count_panics() {
     let encoder = make_frozen_encoder();
     let model = VisionJepa::new(encoder, make_predictor());
 
-    let _ = temporal_validation_batch_loss(
-        &model,
-        UNPROJECTED_VALIDATION_BASE_SEED,
-        0,
-        |batch_idx| make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, batch_idx),
-    );
+    let _ =
+        temporal_validation_batch_loss(&model, UNPROJECTED_VALIDATION_BASE_SEED, 0, |batch_idx| {
+            make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, batch_idx)
+        });
 }
 
 #[test]
@@ -206,33 +204,14 @@ fn unprojected_random_temporal_training_reduces_train_and_validation_loss() {
     let final_train_loss = batch_loss(&model, &probe_t, &probe_t1);
     let final_val_loss = validation_loss(&model);
 
-    assert!(
-        final_train_loss < initial_train_loss,
-        "train loss did not improve: {:.6} -> {:.6}",
+    assert_temporal_experiment_improved(
+        "unprojected",
         initial_train_loss,
-        final_train_loss
-    );
-    assert!(
-        final_val_loss < initial_val_loss,
-        "validation loss did not improve: {:.6} -> {:.6}",
-        initial_val_loss,
-        final_val_loss
-    );
-    assert!(
-        final_train_loss < initial_train_loss * UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        "train loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
-        steps,
         final_train_loss,
-        initial_train_loss,
-        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
-    );
-    assert!(
-        final_val_loss < initial_val_loss * UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-        "validation loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
-        steps,
-        final_val_loss,
         initial_val_loss,
-        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
+        final_val_loss,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     );
 }
 
