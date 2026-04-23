@@ -9,6 +9,7 @@ The crate is published as `jepra-core`.
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - temporal data now supports one or two moving squares per sample in the synthetic generator
+- unprojected validation helpers and reduction thresholds are centralized in `crates/jepra-core/examples/support/temporal_validation.rs`
 
 ## Core Verification Commands
 
