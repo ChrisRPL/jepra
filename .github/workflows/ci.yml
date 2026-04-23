@@ -32,9 +32,3 @@ jobs:
 
       - name: Test all targets
         run: cargo test --manifest-path crates/roadjepa-core/Cargo.toml --all-targets
-
-      - name: Temporal integration checks
-        run: cargo test --manifest-path crates/roadjepa-core/Cargo.toml --test temporal_vision_support
-
-      - name: Projected temporal checks
-        run: cargo test --manifest-path crates/roadjepa-core/Cargo.toml --test projected_temporal_support
