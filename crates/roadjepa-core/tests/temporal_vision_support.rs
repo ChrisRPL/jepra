@@ -5,38 +5,12 @@ mod temporal_vision;
 use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
-    assert_temporal_contract, batch_has_both_motion_modes, batch_has_min_motion_mode_counts,
-    fast_mode_channel_summary, fast_motion_feature_for_sample, make_frozen_encoder,
-    make_temporal_batch, make_train_batch, make_validation_batch,
+    active_cell_count, assert_temporal_contract, batch_has_both_motion_modes,
+    batch_has_min_motion_mode_counts, fast_mode_channel_summary, fast_motion_feature_for_sample,
+    make_frozen_encoder, make_temporal_batch, make_train_batch, make_validation_batch,
     make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
-    square_center_x,
+    square_center_x, total_mass,
 };
-
-fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
-    let mut total = 0.0;
-
-    for row in 0..IMAGE_SIZE {
-        for col in 0..IMAGE_SIZE {
-            total += tensor.get(&[sample, 0, row, col]);
-        }
-    }
-
-    total
-}
-
-fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
-    let mut count = 0usize;
-
-    for row in 0..IMAGE_SIZE {
-        for col in 0..IMAGE_SIZE {
-            if tensor.get(&[sample, 0, row, col]).abs() > 1e-6 {
-                count += 1;
-            }
-        }
-    }
-
-    count
-}
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
     model.losses(x_t, x_t1).0

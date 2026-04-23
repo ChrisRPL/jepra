@@ -10,33 +10,9 @@ use projected_temporal::{
     projected_batch_losses, projected_step, projection_stats,
 };
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
-use temporal_vision::{BATCH_SIZE, IMAGE_SIZE, make_frozen_encoder, make_train_batch};
-
-fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
-    let mut total = 0.0;
-
-    for row in 0..IMAGE_SIZE {
-        for col in 0..IMAGE_SIZE {
-            total += tensor.get(&[sample, 0, row, col]);
-        }
-    }
-
-    total
-}
-
-fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
-    let mut count = 0usize;
-
-    for row in 0..IMAGE_SIZE {
-        for col in 0..IMAGE_SIZE {
-            if tensor.get(&[sample, 0, row, col]).abs() > 1e-6 {
-                count += 1;
-            }
-        }
-    }
-
-    count
-}
+use temporal_vision::{
+    BATCH_SIZE, active_cell_count, make_frozen_encoder, make_train_batch, total_mass,
+};
 
 const PROJECTION_DIM: usize = 4;
 const PROJECTOR_LR: f32 = 0.005;

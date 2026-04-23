@@ -343,7 +343,7 @@ fn squares_overlap(row_a: usize, col_a: usize, row_b: usize, col_b: usize) -> bo
     row_a < row_b_end && row_b < row_a_end && col_a < col_b_end && col_b < col_a_end
 }
 
-fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
+pub fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
     let mut total = 0.0;
 
     for row in 0..IMAGE_SIZE {
@@ -353,4 +353,18 @@ fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
     }
 
     total
+}
+
+pub fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
+    let mut count = 0usize;
+
+    for row in 0..IMAGE_SIZE {
+        for col in 0..IMAGE_SIZE {
+            if tensor.get(&[sample, 0, row, col]).abs() > 1e-6 {
+                count += 1;
+            }
+        }
+    }
+
+    count
 }
