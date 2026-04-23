@@ -52,6 +52,10 @@ fn main() {
         "temporal run config | train_base_seed {} | steps {} | log_every {}",
         run_config.train_base_seed, run_config.total_steps, run_config.log_every
     );
+    println!(
+        "temporal run config | target projection momentum {}",
+        run_config.target_projection_momentum
+    );
 
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(run_config.train_base_seed, 1);
@@ -99,7 +103,8 @@ fn main() {
     let target_projector = online_projector.clone();
     let predictor = make_predictor();
     let mut model =
-        ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor);
+        ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor)
+            .with_target_projection_momentum(run_config.target_projection_momentum);
 
     let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
@@ -142,7 +147,18 @@ fn main() {
         |model, step, should_log| {
             let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
             let (prediction_loss, regularizer_loss, total_loss) =
-                model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+                if run_config.encoder_learning_rate > 0.0 {
+                    model.step_with_trainable_encoder(
+                        &x_t,
+                        &x_t1,
+                        REGULARIZER_WEIGHT,
+                        PREDICTOR_LR,
+                        PROJECTOR_LR,
+                        run_config.encoder_learning_rate,
+                    )
+                } else {
+                    model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR)
+                };
 
             if should_log {
                 let (val_prediction_loss, val_regularizer_loss, val_total_loss) =

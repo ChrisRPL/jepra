@@ -37,6 +37,7 @@ pub struct TemporalRunConfig {
     pub log_every: usize,
     pub encoder_learning_rate: f32,
     pub compact_encoder_mode: CompactEncoderMode,
+    pub target_projection_momentum: f32,
 }
 
 impl TemporalRunConfig {
@@ -65,7 +66,12 @@ impl TemporalRunConfig {
             .or_else(|| parse_f32_arg(&args, "--encoder-learning-rate"))
             .or_else(|| parse_f32_arg_env("JEPRA_ENCODER_LR"))
             .unwrap_or(default_encoder_learning_rate);
+        let target_projection_momentum = parse_f32_arg(&args, "--target-momentum")
+            .or_else(|| parse_f32_arg(&args, "--target-projection-momentum"))
+            .or_else(|| parse_f32_arg_env("JEPRA_TARGET_MOMENTUM"))
+            .unwrap_or(1.0);
         let compact_encoder_mode = compact_encoder_mode_from_args(&args);
+        assert_target_projection_momentum(target_projection_momentum);
 
         assert!(
             total_steps > 0,
@@ -84,8 +90,17 @@ impl TemporalRunConfig {
             log_every,
             encoder_learning_rate,
             compact_encoder_mode,
+            target_projection_momentum,
         }
     }
+}
+
+fn assert_target_projection_momentum(target_projection_momentum: f32) {
+    assert!(
+        (0.0..=1.0).contains(&target_projection_momentum),
+        "target projection momentum must be in [0.0, 1.0], got {}",
+        target_projection_momentum
+    );
 }
 
 fn compact_encoder_mode_from_args(args: &[String]) -> CompactEncoderMode {

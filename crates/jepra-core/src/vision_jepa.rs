@@ -173,6 +173,7 @@ pub struct ProjectedVisionJepa {
     pub projector: Linear,
     pub target_projector: Linear,
     pub predictor: Predictor,
+    pub target_projection_momentum: f32,
 }
 
 impl ProjectedVisionJepa {
@@ -187,11 +188,22 @@ impl ProjectedVisionJepa {
             projector,
             target_projector,
             predictor,
+            target_projection_momentum: 1.0,
         }
     }
 
     pub fn encode(&self, x: &Tensor) -> Tensor {
         self.encoder.forward(x)
+    }
+
+    pub fn with_target_projection_momentum(mut self, momentum: f32) -> Self {
+        Self::assert_target_projection_momentum_in_range(momentum);
+        self.target_projection_momentum = momentum;
+        self
+    }
+
+    pub fn target_projection_momentum(&self) -> f32 {
+        self.target_projection_momentum
     }
 
     pub fn project_latent(&self, x_t: &Tensor) -> Tensor {
@@ -223,6 +235,25 @@ impl ProjectedVisionJepa {
         predictor_lr: f32,
         projector_lr: f32,
     ) -> (f32, f32, f32) {
+        self.step_with_trainable_encoder(
+            x_t,
+            x_t1,
+            regularizer_weight,
+            predictor_lr,
+            projector_lr,
+            0.0,
+        )
+    }
+
+    pub fn step_with_trainable_encoder(
+        &mut self,
+        x_t: &Tensor,
+        x_t1: &Tensor,
+        regularizer_weight: f32,
+        predictor_lr: f32,
+        projector_lr: f32,
+        encoder_lr: f32,
+    ) -> (f32, f32, f32) {
         let z_t = self.encoder.forward(x_t);
         let projection_t = self.projector.forward(&z_t);
         let target = self.target_projector.forward(&self.encoder.forward(x_t1));
@@ -238,11 +269,52 @@ impl ProjectedVisionJepa {
         let projection_grad =
             combine_projection_grads(&pred_grads.grad_input, &reg_grad, regularizer_weight);
         let projector_grads = self.projector.backward(&z_t, &projection_grad);
+        let encoder_grads = self.encoder.backward(x_t, &projector_grads.grad_input);
 
         self.predictor.sgd_step(&pred_grads, predictor_lr);
         self.projector.sgd_step(&projector_grads, projector_lr);
+        self.encoder.sgd_step(&encoder_grads, encoder_lr);
+        self.update_target_projector();
 
         (prediction_loss, regularizer_loss, total_loss)
+    }
+
+    fn assert_target_projection_momentum_in_range(momentum: f32) {
+        assert!(
+            (0.0..=1.0).contains(&momentum),
+            "target projection momentum must be in [0.0, 1.0], got {}",
+            momentum
+        );
+    }
+
+    fn update_target_projector(&mut self) {
+        let momentum = self.target_projection_momentum;
+        Self::assert_target_projection_momentum_in_range(momentum);
+
+        if momentum == 1.0 {
+            return;
+        }
+
+        let one_minus_momentum = 1.0 - momentum;
+        for (target_weight, online_weight) in self
+            .target_projector
+            .weight
+            .data
+            .iter_mut()
+            .zip(self.projector.weight.data.iter())
+        {
+            *target_weight = momentum * *target_weight + one_minus_momentum * online_weight;
+        }
+
+        for (target_bias, online_bias) in self
+            .target_projector
+            .bias
+            .data
+            .iter_mut()
+            .zip(self.projector.bias.data.iter())
+        {
+            *target_bias = momentum * *target_bias + one_minus_momentum * online_bias;
+        }
     }
 
     pub fn losses(&self, x_t: &Tensor, x_t1: &Tensor, regularizer_weight: f32) -> (f32, f32, f32) {

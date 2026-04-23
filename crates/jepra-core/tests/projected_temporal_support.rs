@@ -305,6 +305,159 @@ fn projected_training_step_reduces_total_loss_on_fixed_batch() {
 }
 
 #[test]
+fn projected_step_updates_target_projector_when_momentum_is_enabled() {
+    let encoder = make_frozen_encoder();
+    let online_projector = make_projector();
+    let target_projector = make_projector();
+    let predictor = make_predictor();
+    let mut model =
+        ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor)
+            .with_target_projection_momentum(0.5);
+    let (x_t, x_t1) = make_train_batch(11_000, 0);
+
+    let initial_target_weight = model.target_projector.weight.clone();
+    let initial_target_bias = model.target_projector.bias.clone();
+
+    model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+    assert_ne!(model.target_projector.weight, initial_target_weight);
+    assert_ne!(model.target_projector.bias, initial_target_bias);
+    let momentum = model.target_projection_momentum();
+    let one_minus_momentum = 1.0 - momentum;
+    for i in 0..model.projector.weight.len() {
+        let expected = momentum * initial_target_weight.data[i]
+            + one_minus_momentum * model.projector.weight.data[i];
+        let actual = model.target_projector.weight.data[i];
+        assert!(
+            (expected - actual).abs() < 1e-6,
+            "target projector weight did not track EMA at index {}: expected {:.6}, got {:.6}",
+            i,
+            expected,
+            actual
+        );
+    }
+
+    for i in 0..model.projector.bias.len() {
+        let expected = momentum * initial_target_bias.data[i]
+            + one_minus_momentum * model.projector.bias.data[i];
+        let actual = model.target_projector.bias.data[i];
+        assert!(
+            (expected - actual).abs() < 1e-6,
+            "target projector bias did not track EMA at index {}: expected {:.6}, got {:.6}",
+            i,
+            expected,
+            actual
+        );
+    }
+}
+
+#[test]
+#[should_panic(expected = "target projection momentum must be in [0.0, 1.0]")]
+fn projected_model_rejects_invalid_target_projection_momentum() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = make_projector();
+    let predictor = make_predictor();
+    let _ = ProjectedVisionJepa::new(encoder, projector, target_projector, predictor)
+        .with_target_projection_momentum(-0.25);
+}
+
+#[test]
+fn projected_step_with_trainable_encoder_updates_encoder_parameters() {
+    let encoder = make_frozen_encoder();
+    let online_projector = make_projector();
+    let target_projector = make_projector();
+    let predictor = make_predictor();
+    let mut model =
+        ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor);
+    let (x_t, x_t1) = make_train_batch(11_000, 0);
+
+    let initial_encoder = model.encoder.clone();
+    let initial_projector = model.projector.clone();
+    let initial_predictor = model.predictor.clone();
+    let initial_total = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT).2;
+
+    let encoder_lr = 0.004;
+    let _ = model.step_with_trainable_encoder(
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+        encoder_lr,
+    );
+
+    assert_ne!(
+        model.encoder, initial_encoder,
+        "encoder did not change with trainable projected step"
+    );
+    assert_ne!(
+        model.projector, initial_projector,
+        "projector did not change with projected step"
+    );
+    assert_ne!(
+        model.predictor, initial_predictor,
+        "predictor did not change with projected step"
+    );
+
+    let final_total = model.losses(&x_t, &x_t1, REGULARIZER_WEIGHT).2;
+    assert!(
+        final_total + 1e-6 < initial_total,
+        "projected trainable-step did not reduce total loss: {:.6} -> {:.6}",
+        initial_total,
+        final_total
+    );
+}
+
+#[test]
+fn projected_step_with_zero_encoder_lr_matches_frozen_projector_step() {
+    let encoder = make_frozen_encoder();
+    let online_projector = make_projector();
+    let target_projector = make_projector();
+    let predictor = make_predictor();
+    let mut step_trainable = ProjectedVisionJepa::new(
+        encoder.clone(),
+        online_projector.clone(),
+        target_projector.clone(),
+        predictor.clone(),
+    );
+    let mut step_frozen =
+        ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor);
+    let (x_t, x_t1) = make_train_batch(11_000, 0);
+
+    let trainable_losses = step_trainable.step_with_trainable_encoder(
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+        0.0,
+    );
+    let frozen_losses =
+        step_frozen.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+
+    assert!(
+        (trainable_losses.0 - frozen_losses.0).abs() < 1e-6,
+        "trainable projected step prediction loss diverged from frozen step: {:.6} vs {:.6}",
+        trainable_losses.0,
+        frozen_losses.0
+    );
+    assert!(
+        (trainable_losses.1 - frozen_losses.1).abs() < 1e-6,
+        "trainable projected step regularizer loss diverged from frozen step: {:.6} vs {:.6}",
+        trainable_losses.1,
+        frozen_losses.1
+    );
+    assert!(
+        (trainable_losses.2 - frozen_losses.2).abs() < 1e-6,
+        "trainable projected step total loss diverged from frozen step: {:.6} vs {:.6}",
+        trainable_losses.2,
+        frozen_losses.2
+    );
+    assert_eq!(step_trainable, step_frozen);
+}
+
+#[test]
 fn projected_vision_jepa_step_reduces_total_loss_on_fixed_batch() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();

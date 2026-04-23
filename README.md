@@ -40,6 +40,7 @@ JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --ex
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal -- --train-base-seed 1400 --train-steps 40 --log-every 10
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal -- --encoder-lr 0.005 --train-steps 60 --train-base-seed 1400
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --seed 21000 --steps 80 --log 20
+# cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --target-momentum 0.95 --train-steps 120
 ```
 
 ### Temporal Example CLI
@@ -52,8 +53,10 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--encoder-lr` (or `--encoder-learning-rate`) controls unprojected encoder updates; `0.0` keeps frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
+- `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
+- `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ## Fast Feedback Loop
 
