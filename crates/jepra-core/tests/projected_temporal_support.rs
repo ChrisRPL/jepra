@@ -352,6 +352,78 @@ fn projected_step_updates_target_projector_when_momentum_is_enabled() {
 }
 
 #[test]
+fn projected_target_projector_ema_edges_with_trainable_encoder_lr() {
+    let encoder = make_frozen_encoder();
+    let (x_t, x_t1) = make_train_batch(11_100, 3);
+    let projector = make_projector();
+    let predictor = make_predictor();
+    let trainable_lr = 0.004;
+
+    let mut zero_momentum_model = ProjectedVisionJepa::new(
+        encoder.clone(),
+        projector.clone(),
+        projector.clone(),
+        predictor.clone(),
+    )
+    .with_target_projection_momentum(0.0);
+
+    let zero_initial_projector = zero_momentum_model.projector.clone();
+    let zero_initial_target_projector = zero_momentum_model.target_projector.clone();
+    let zero_initial_encoder = zero_momentum_model.encoder.clone();
+
+    zero_momentum_model.step_with_trainable_encoder(
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+        trainable_lr,
+    );
+
+    assert_ne!(
+        zero_momentum_model.projector, zero_initial_projector,
+        "projector should change after optimizer step at momentum 0.0"
+    );
+    assert_eq!(
+        zero_momentum_model.target_projector.weight, zero_momentum_model.projector.weight,
+        "momentum 0.0 should hard-copy target projector weight"
+    );
+    assert_eq!(
+        zero_momentum_model.target_projector.bias, zero_momentum_model.projector.bias,
+        "momentum 0.0 should hard-copy target projector bias"
+    );
+    assert_ne!(
+        zero_momentum_model.encoder, zero_initial_encoder,
+        "encoder should update when encoder_lr is non-zero"
+    );
+
+    let mut full_momentum_model =
+        ProjectedVisionJepa::new(encoder, projector, zero_initial_target_projector, predictor)
+            .with_target_projection_momentum(1.0);
+
+    let one_initial_projector = full_momentum_model.projector.clone();
+    let one_initial_target_projector = full_momentum_model.target_projector.clone();
+
+    full_momentum_model.step_with_trainable_encoder(
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+        trainable_lr,
+    );
+
+    assert_ne!(
+        full_momentum_model.projector, one_initial_projector,
+        "projector should change when running trainable projected step at momentum 1.0"
+    );
+    assert_eq!(
+        full_momentum_model.target_projector, one_initial_target_projector,
+        "momentum 1.0 should keep target projector frozen"
+    );
+}
+
+#[test]
 #[should_panic(expected = "target projection momentum must be in [0.0, 1.0]")]
 fn projected_model_rejects_invalid_target_projection_momentum() {
     let encoder = make_frozen_encoder();
