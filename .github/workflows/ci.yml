@@ -1,0 +1,40 @@
+name: core
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    name: Core checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Restore cargo cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "crates/roadjepa-core"
+
+      - name: Check formatting
+        run: cargo fmt --manifest-path crates/roadjepa-core/Cargo.toml --all -- --check
+
+      - name: Lint
+        run: cargo clippy --manifest-path crates/roadjepa-core/Cargo.toml --all-targets --all-features -- -D warnings
+
+      - name: Test all targets
+        run: cargo test --manifest-path crates/roadjepa-core/Cargo.toml --all-targets
+
+      - name: Temporal integration checks
+        run: cargo test --manifest-path crates/roadjepa-core/Cargo.toml --test temporal_vision_support
+
+      - name: Projected temporal checks
+        run: cargo test --manifest-path crates/roadjepa-core/Cargo.toml --test projected_temporal_support
