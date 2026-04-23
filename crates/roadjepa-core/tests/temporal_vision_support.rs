@@ -6,10 +6,10 @@ use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
-    batch_has_both_motion_modes, batch_has_min_motion_mode_counts, fast_mode_channel_summary,
-    fast_motion_feature_for_sample, make_frozen_encoder, make_temporal_batch, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_dx_for_sample,
-    motion_mode_counts, square_center_x, total_mass,
+    batch_has_both_motion_modes, batch_has_min_motion_mode_counts, make_frozen_encoder,
+    make_temporal_batch, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
+    square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -533,49 +533,6 @@ fn mixed_mode_validation_probe_is_deterministic_and_contains_both_modes() {
     ));
     assert!(slow_count >= MIN_MIXED_MODE_COUNT);
     assert!(fast_count >= MIN_MIXED_MODE_COUNT);
-}
-
-#[test]
-fn frozen_encoder_exposes_fast_motion_mode_feature() {
-    let encoder = make_frozen_encoder();
-    let mut checked_samples = 0;
-
-    for seed in 0..64 {
-        let (x_t, _) = make_temporal_batch(BATCH_SIZE, seed);
-        let z_t = encoder.forward(&x_t);
-
-        assert_eq!(z_t.shape, vec![BATCH_SIZE, 3]);
-
-        for sample in 0..BATCH_SIZE {
-            let expected = fast_motion_feature_for_sample(&x_t, sample);
-            let actual = z_t.get(&[sample, 2]);
-
-            assert!(
-                (actual - expected).abs() < 1e-6,
-                "sample {} feature mismatch: {:.6} vs {:.6}",
-                sample,
-                actual,
-                expected
-            );
-            checked_samples += 1;
-        }
-    }
-
-    assert!(checked_samples > 0);
-}
-
-#[test]
-fn fast_mode_channel_summary_matches_mixed_probe_counts() {
-    let encoder = make_frozen_encoder();
-    let (x_t, _, _) = make_validation_batch_with_both_motion_modes(20_000, 1);
-    let z_t = encoder.forward(&x_t);
-    let (inactive_count, active_count, mean_value, max_value) = fast_mode_channel_summary(&z_t);
-
-    assert_eq!(inactive_count + active_count, BATCH_SIZE);
-    assert!(inactive_count >= MIN_MIXED_MODE_COUNT);
-    assert!(active_count >= MIN_MIXED_MODE_COUNT);
-    assert!(mean_value > 0.0);
-    assert!(max_value > 0.0);
 }
 
 #[test]

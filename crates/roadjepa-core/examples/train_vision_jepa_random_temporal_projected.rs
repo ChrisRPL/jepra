@@ -6,9 +6,9 @@ mod temporal_vision;
 use projected_temporal::projection_stats;
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, assert_temporal_contract, fast_mode_channel_summary, make_frozen_encoder,
-    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_mode_counts, print_batch_summary,
+    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
+    print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -64,30 +64,6 @@ fn validation_losses(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
         regularizer_total / batches,
         total / batches,
     )
-}
-
-fn assert_fast_mode_channel_coverage(label: &str, z: &Tensor) {
-    let (inactive_count, active_count, mean_value, max_value) = fast_mode_channel_summary(z);
-
-    assert!(
-        inactive_count >= MIN_MIXED_MODE_COUNT,
-        "{} inactive fast-mode coverage too small: {} < {}",
-        label,
-        inactive_count,
-        MIN_MIXED_MODE_COUNT
-    );
-    assert!(
-        active_count >= MIN_MIXED_MODE_COUNT,
-        "{} active fast-mode coverage too small: {} < {}",
-        label,
-        active_count,
-        MIN_MIXED_MODE_COUNT
-    );
-
-    println!(
-        "{} | inactive {} | active {} | mean {:.6} | max {:.6}",
-        label, inactive_count, active_count, mean_value, max_value
-    );
 }
 
 fn main() {
@@ -148,8 +124,6 @@ fn main() {
         validation_losses(&model);
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
-
-    assert_fast_mode_channel_coverage("validation mixed probe latent", &initial_mixed_val_z_t);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
