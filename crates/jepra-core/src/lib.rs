@@ -4,6 +4,7 @@ pub mod init;
 pub mod linear;
 pub mod losses;
 pub mod predictor;
+pub mod regularizers;
 pub mod tensor;
 pub mod vision_jepa;
 
@@ -13,6 +14,10 @@ pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
 pub use predictor::{Predictor, PredictorGrads};
+pub use regularizers::{
+    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
+    projection_stats,
+};
 pub use tensor::Tensor;
 pub use vision_jepa::{ProjectedVisionJepa, VisionJepa};
 

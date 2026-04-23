@@ -5,21 +5,22 @@ mod projected_temporal;
 #[path = "../examples/support/temporal_vision.rs"]
 mod temporal_vision;
 
-use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
+use jepra_core::{
+    Linear, Predictor, ProjectedVisionJepa, Tensor, combine_projection_grads,
+    gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projection_stats,
+};
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
     projected_batch_losses, projected_step, projected_validation_batch_losses,
-    projected_validation_batch_losses_from_base_seed, projection_stats,
+    projected_validation_batch_losses_from_base_seed,
 };
 use temporal_vision::{
-    BATCH_SIZE, TemporalExperimentSummary, run_temporal_experiment_with_summary,
+    BATCH_SIZE, CompactEncoderMode, TemporalExperimentSummary, TemporalRunConfig,
     assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples,
     assert_temporal_experiment_improved, make_compact_frozen_encoder, make_frozen_encoder,
-    make_temporal_batch, make_train_batch,
-    CompactEncoderMode, TemporalRunConfig,
+    make_temporal_batch, make_train_batch, run_temporal_experiment_with_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -208,8 +209,12 @@ fn projected_run_with_encoder(
     let encoder = make_encoder();
     let projector = make_projector();
     let target_projector = projector.clone();
-    let mut model =
-        ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor_with_seed(predictor_seed));
+    let mut model = ProjectedVisionJepa::new(
+        encoder,
+        projector,
+        target_projector,
+        make_predictor_with_seed(predictor_seed),
+    );
     let config = TemporalRunConfig {
         train_base_seed,
         total_steps: 120,
@@ -598,7 +603,8 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         frozen.set_target_projection_momentum(scheduled_momentum);
         trainable.set_target_projection_momentum(scheduled_momentum);
 
-        let frozen_losses = frozen.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+        let frozen_losses =
+            frozen.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
         let trainable_losses = trainable.step_with_trainable_encoder(
             &x_t,
             &x_t1,
@@ -656,8 +662,10 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         "target projector weights diverged across frozen/trainable scheduled warmup runs"
     );
     assert!(
-        tensor_symmetric_relative_difference(&frozen.target_projector.bias, &trainable.target_projector.bias)
-            < 1e-6,
+        tensor_symmetric_relative_difference(
+            &frozen.target_projector.bias,
+            &trainable.target_projector.bias
+        ) < 1e-6,
         "target projector biases diverged across frozen/trainable scheduled warmup runs"
     );
 }
@@ -1218,13 +1226,8 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             initial_validation_loss,
             |model, step, _| {
                 let (x_t, x_t1) = make_train_batch(train_base_seed, step as u64);
-                let (_, _, train_loss) = model.step(
-                    &x_t,
-                    &x_t1,
-                    REGULARIZER_WEIGHT,
-                    PREDICTOR_LR,
-                    PROJECTOR_LR,
-                );
+                let (_, _, train_loss) =
+                    model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
                 let validation_loss = projected_validation_losses_model(model).2;
 
                 train_trajectory.push(train_loss);
@@ -1277,11 +1280,7 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
         let (train_a, validation_a, drift_a) = run_protocol(momentum);
         let (train_b, validation_b, drift_b) = run_protocol(momentum);
 
-        assert_trajectory_stability(
-            &format!("train (momentum {momentum})"),
-            &train_a,
-            &train_b,
-        );
+        assert_trajectory_stability(&format!("train (momentum {momentum})"), &train_a, &train_b);
         assert_trajectory_stability(
             &format!("validation (momentum {momentum})"),
             &validation_a,
@@ -1294,11 +1293,7 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
                 &drift_a,
                 &drift_b,
             );
-            for (step, (&lhs_drift, &rhs_drift)) in drift_a
-                .iter()
-                .zip(drift_b.iter())
-                .enumerate()
-            {
+            for (step, (&lhs_drift, &rhs_drift)) in drift_a.iter().zip(drift_b.iter()).enumerate() {
                 assert!(
                     lhs_drift < 1e-6,
                     "target drift should stay near zero for momentum 0 at step {}: {:.6}",

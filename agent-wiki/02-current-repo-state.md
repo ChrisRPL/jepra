@@ -5,7 +5,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 ## Status
 - JEPA proof currently uses temporal random-video tasks as the forcing function.
 - Projected path now has EMA target projector + optional encoder training (`step_with_trainable_encoder`).
-- Hardening evidence is in `crates/jepra-core/tests/projected_temporal_support.rs` (EMA edges, momentum bounds, trainable encoder behavior).
+- Regression coverage is in `crates/jepra-core/tests/projected_temporal_support.rs`; fixed-seed hardening evidence is captured in README and reproducible via `run-projected-momentum-sweep.sh`.
 
 ## Next Action
 - Current phase focus is projected warmup + protocol evidence:
@@ -33,6 +33,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - `predictor.rs`: two-layer predictor with ReLU between layers, backward pass, SGD step.
 - `conv.rs`: `Conv2d` with forward, backward, and SGD step APIs.
 - `encoder.rs`: `ConvEncoder` and `EmbeddingEncoder` on top of conv + global average pooling.
+- `regularizers.rs`: JEPA projection regularizer utilities (`gaussian_moment_regularizer`, gradient, projection stats, projection-grad combination).
 - `vision_jepa.rs`: `VisionJepa` and `ProjectedVisionJepa` wrappers that compose encoders + predictor/projector and expose core encode/predict/loss/update entry points.
 - `losses.rs` and `init.rs`: MSE loss/grad and deterministic random init helpers.
 
@@ -88,11 +89,12 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Current VISION message: Rust-first JEPA systems framework with broader temporal predictive latent scope.
 - Practical takeaway: code and docs now both reflect the same JEPA-first temporal direction.
 
-## Best Next Small Step
+## Promotion Baseline
 
-- Implement projected-path hardening sweep:
-  - lock down momentum schedules (`0.0`, `0.5`, `1.0`) against fixed-batch/probe train/val trajectories,
+- Maintain projected-path hardening sweep baseline:
+  - re-run `run-projected-momentum-sweep.sh all` before default changes,
+  - compare against captured fixed-seed rows,
+  - emit CSV via `JEPRA_MOMENTUM_SWEEP_REPORT` when updating evidence,
   - keep defaults conservative (`--encoder-lr=0.0`, `--target-momentum=1.0`) and require explicit intent for departures,
   - only expand trainable projected defaults if trajectory checks are stable.
-  - capture sweep rows in wiki-facing evidence table before altering defaults.
-  - script enforcement now requires a parserable `projected run summary` and both train/val segments reporting `improved=true`; optional CSV output is available via `JEPRA_MOMENTUM_SWEEP_REPORT`.
+  - script enforcement requires a parserable `projected run summary` and both train/val segments reporting `improved=true`.

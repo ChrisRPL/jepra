@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -109,6 +111,7 @@ impl TemporalRunConfig {
         }
     }
 
+    #[allow(dead_code)]
     pub fn target_projection_momentum_at_step(&self, step: usize) -> f32 {
         if self.target_projection_momentum_warmup_steps == 0 {
             return self.target_projection_momentum_end;
@@ -142,9 +145,9 @@ fn compact_encoder_mode_from_args(args: &[String]) -> CompactEncoderMode {
 }
 
 fn parse_compact_encoder_mode_flag(args: &[String]) -> Option<CompactEncoderMode> {
-    parse_arg_value(args, "--compact-encoder-mode").and_then(|raw_mode| match raw_mode {
-        "base" => Some(CompactEncoderMode::Base),
-        "stronger" => Some(CompactEncoderMode::Stronger),
+    parse_arg_value(args, "--compact-encoder-mode").map(|raw_mode| match raw_mode {
+        "base" => CompactEncoderMode::Base,
+        "stronger" => CompactEncoderMode::Stronger,
         _ => panic!(
             "unsupported value for --compact-encoder-mode: {} (expected base|stronger)",
             raw_mode
@@ -637,6 +640,7 @@ pub fn print_temporal_train_val_metrics(step: usize, train_loss: f32, val_loss: 
 }
 
 #[allow(dead_code)]
+#[allow(clippy::too_many_arguments)]
 pub fn print_projected_temporal_train_val_metrics(
     step: usize,
     prediction_loss: f32,
@@ -665,7 +669,7 @@ pub fn print_projected_temporal_train_val_metrics(
 
 pub fn should_log_step(step: usize, log_every: usize) -> bool {
     assert!(log_every > 0, "log_every must be greater than 0");
-    step == 1 || step % log_every == 0
+    step == 1 || step.is_multiple_of(log_every)
 }
 
 const COMPACT_ENCODER_CHANNELS: usize = 6;
@@ -858,6 +862,7 @@ pub fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
     let mut count = 0usize;
 
@@ -873,6 +878,7 @@ pub fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn assert_square_footprint_and_decay_invariants(
     x_t: &Tensor,
     x_t1: &Tensor,
@@ -919,6 +925,7 @@ pub fn assert_square_footprint_and_decay_invariants(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn assert_seed_range_has_single_and_double_square_batch_examples(
     seed_count: u64,
     mut make_batch: impl FnMut(u64) -> (Tensor, Tensor),
@@ -950,6 +957,7 @@ pub fn assert_seed_range_has_single_and_double_square_batch_examples(
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 pub fn assert_seed_range_has_both_motion_modes(
     seed_count: u64,
     mut make_batch: impl FnMut(u64) -> (Tensor, Tensor),

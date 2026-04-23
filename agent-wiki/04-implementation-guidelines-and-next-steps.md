@@ -10,6 +10,7 @@ Read with `VISION.md`.
   - target-projector momentum (`target_projection_momentum`), builder API, and EMA update in `step_with_trainable_encoder`.
   - optional encoder update mode (`step_with_trainable_encoder(..., encoder_lr)`).
   - CLI/env control via `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, `--target-momentum-warmup-steps`, optional projection aliases (`--target-projection-momentum`, `--target-projection-momentum-end`), and `JEPRA_TARGET_MOMENTUM`.
+- Projection regularization utilities now live in core (`regularizers.rs`) instead of example-only support code.
 - Current defaults preserve hard target-projector behavior (`momentum = 1.0`) unless explicit tuning is passed.
 - Regression posture:
   - one-step projected loss reduction,
@@ -29,16 +30,16 @@ Read with `VISION.md`.
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
 
-## Next 3-Step Plan (Current Phase)
+## Promotion/Regression Gate
 
-1. Confirm warmup contract before widening protocol permutations.
+1. Reconfirm warmup contract before projected-path policy changes.
    - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test temporal_vision_support target_projection_momentum_warms_linearly_to_end`.
    - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support projected_target_projector_warmup_schedule_matches_frozen_and_trainable_protocols`.
    - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support projected_target_projector_ema_edges_with_trainable_encoder_lr`.
    - Acceptance: all three tests pass, including: warmup midpoint and collapse assertions pass, EMA update math assertions stay exact (`target_projection_drift` consistency) for frozen/trainable branches.
-   - Stop condition: if any assertion fails, remain in warmup contract hardening and do not start new protocol sweeps.
+   - Stop condition: if any assertion fails, remain in warmup contract hardening and do not change projected defaults.
 
-2. Keep protocol evidence loop active with fixed-seed sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
+2. Keep protocol evidence clean against the fixed-seed baseline at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
    - Use `run-projected-momentum-sweep.sh` profiles (`all|warmup|frozen|trainable|zero`) with fixed seeds `21000, 21001, 21002` and capture parser-readable results.
    - `run-projected-momentum-sweep.sh` now enforces summary shape, checks `improved=true` for both train and validation segments, and optionally emits per-row CSV via `JEPRA_MOMENTUM_SWEEP_REPORT`.
    - Warmup controls are part of the profile contract:
@@ -51,12 +52,12 @@ Read with `VISION.md`.
      - no deterministic regressions against prior wiki evidence at fixed seeds.
    - Stop condition: any profile missing data, any run failure, or any deterministic mismatch blocks default-momentum changes.
 
-3. Promote only after explicit hardening gate closure and freeze protocol baseline lock.
+3. Promote only after explicit hardening gate closure and protocol baseline lock.
    - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support` and confirm:
      - frozen vs trainable parity tests still hold at `encoder_lr=0.0`,
      - trajectory determinism tests pass for projected step and validation helpers,
      - momentum edge tests remain green.
-   - Capture in wiki: final `(train_loss, val_loss, target_projection_drift)` summary for each seed+momentum row, and note warmup-step behavior.
+   - Update evidence only when final `(train_loss, val_loss, target_projection_drift)` rows are parser-clean and comparable to the captured baseline.
    - Stop condition: all targeted tests pass and recorded evidence has no regression against prior phase; then and only then allow explicit non-default momentum and encoder-learning experiments as opt-in follow-up.
 
 ### Immediate Phase Stop Matrix
@@ -107,7 +108,8 @@ The proof comes from a compact model that learns useful temporal structure.
 ## Implementation Notes
 
 - keep files small; keep core-path APIs explicit
-- keep projected hardening evidence in `tests/projected_temporal_support.rs`
+- keep projected regression coverage in `tests/projected_temporal_support.rs`
+- keep JEPA projection regularizer math in core `regularizers.rs`
 - keep one source of truth for training/validation math in core and shared support helpers
 
 ## Decision Rule

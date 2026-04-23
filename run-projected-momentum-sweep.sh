@@ -224,8 +224,7 @@ run_profile() {
           failures=$((failures + 1))
         fi
       else
-        parsed_tuple="$(validate_and_extract_summary "$summary_line")"
-        if [[ "$?" -ne 0 ]]; then
+        if ! parsed_tuple="$(validate_and_extract_summary "$summary_line")"; then
           summary_line="${summary_line} | ${parsed_tuple}"
           status="summary_invalid"
           failures=$((failures + 1))

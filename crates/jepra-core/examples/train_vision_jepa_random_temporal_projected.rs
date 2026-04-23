@@ -3,18 +3,18 @@ mod projected_temporal;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
+use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor, projection_stats};
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_validation_batch_losses_from_base_seed, projection_stats,
+    projected_validation_batch_losses_from_base_seed,
 };
 use temporal_vision::{
-    CompactEncoderMode,
-    MIN_MIXED_MODE_COUNT, assert_temporal_contract, assert_temporal_experiment_improved,
-    make_compact_frozen_encoder, make_compact_frozen_encoder_stronger, make_frozen_encoder,
-    make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
+    CompactEncoderMode, MIN_MIXED_MODE_COUNT, assert_temporal_contract,
+    assert_temporal_experiment_improved, make_compact_frozen_encoder,
+    make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
+    print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;

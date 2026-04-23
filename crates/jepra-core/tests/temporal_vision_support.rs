@@ -236,7 +236,7 @@ fn unprojected_run_with_encoder(
     let initial_train_loss = batch_loss(&model, &probe_t, &probe_t1);
     let initial_validation_loss = validation_loss(&model);
 
-    let summary = temporal_vision::run_temporal_experiment_with_summary(
+    temporal_vision::run_temporal_experiment_with_summary(
         config,
         &mut model,
         initial_train_loss,
@@ -250,10 +250,8 @@ fn unprojected_run_with_encoder(
             };
             train_loss
         },
-        |model| validation_loss(model),
-    );
-
-    summary
+        validation_loss,
+    )
 }
 
 fn assert_unprojected_frozen_vs_trainable_protocol(
