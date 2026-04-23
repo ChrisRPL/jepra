@@ -27,7 +27,7 @@ Read with `VISION.md`.
   - midpoint warmup to final target behavior,
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
-- Evidence gap: no committed protocol sweep currently verifies fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path and logs it as phase evidence.
+- Protocol evidence is now committed for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path (`agent-wiki/06-projected-momentum-sweep-evidence.md`).
 
 ## Next 3-Step Plan (Current Phase)
 
@@ -38,13 +38,17 @@ Read with `VISION.md`.
    - Acceptance: all three tests pass, including: warmup midpoint and collapse assertions pass, EMA update math assertions stay exact (`target_projection_drift` consistency) for frozen/trainable branches.
    - Stop condition: if any assertion fails, remain in warmup contract hardening and do not start new protocol sweeps.
 
-2. Execute projected protocol evidence sweep with fixed seeds at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
-   - For each target momentum value in the set, run the projected example with fixed seeds `21000, 21001, 21002` and explicit CLI:
-     - `--train-base-seed <seed> --train-steps 80 --log 20`
-     - `--encoder-lr 0.0`
-     - warmup controls for non-trivial schedule: when testing `0.5`, use `--target-momentum-start 1.0 --target-momentum-end 0.5 --target-momentum-warmup-steps 24`.
-   - Acceptance per seed: final train/validation totals must strictly improve, and meet deterministic reduction floors (same ratios as suite constants: train ≤ 0.2×initial, validation ≤ 0.2×initial where supported).
-   - Stop condition: any momentum value with one seed failing deterministic reproducibility or reduction gate blocks promotion to next step.
+2. Keep protocol evidence loop active with fixed-seed sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
+   - Use `run-projected-momentum-sweep.sh` profiles (`all|warmup|frozen|trainable|zero`) with fixed seeds `21000, 21001, 21002` and capture parser-readable results.
+   - Warmup controls are part of the profile contract:
+     - `--target-momentum-start 1.0`
+     - `--target-momentum-end 0.5`
+     - `--target-momentum-warmup-steps 24`
+   - Track acceptance on:
+     - no command failures,
+     - parser-recognized output for all 12 rows (3 seeds × 4 profiles: warmup/frozen/trainable/zero),
+     - no deterministic regressions against prior wiki evidence at fixed seeds.
+   - Stop condition: any profile missing data, any run failure, or any deterministic mismatch blocks default-momentum changes.
 
 3. Promote only after explicit hardening gate closure and freeze protocol baseline lock.
    - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support` and confirm:
@@ -60,6 +64,23 @@ Read with `VISION.md`.
 2. Evidence sweep mismatch on any momentum branch or seed: keep momentum and defaults frozen at `1.0`, encoder-lr zero, until re-runs are clean.
 3. Regression in parity/determinism/edge tests: stop immediately; no follow-up changes until regression source is isolated and fixed.
 
+## Cross-Document Alignment Check
+
+- `README.md` is aligned for this step on:
+  - script modes (`all|warmup|frozen|trainable|zero`),
+  - profile momentum set (`1.0`, `0.5`, `0.0`),
+  - output format (`seed`, `momentum`, `profile`, `status`, `projected run summary`).
+- `VISION.md` is stale on immediate-step framing:
+  - section 7 still frames unprojected compact-encoder work as active next-step work,
+  - it does not name warmup-protocol hardening with fixed-seed momentum sweep as the immediate phase.
+
+Exact VISION-only patch proposal (if applied):
+1. In section 7, replace the current “Immediate status / Next small step / Next short step” block with:
+   - “Projected-path warmup contract and momentum evidence is the immediate hardening phase.”
+   - “Run warmup+frozen+trainable+zero fixed-seed checks under `run-projected-momentum-sweep.sh`, then promote defaults only after step-1 and step-2 stop conditions close.”
+2. In section 7 stop language, add the hard rule:
+   - “Do not shift defaults to non-`1.0` momentum or opt-in projected encoder learning until all three step gates are closed.”
+
 ## Anti-Goals
 - no new abstractions for their own sake
 - no generic framework expansion
@@ -69,11 +90,11 @@ Read with `VISION.md`.
 - no hidden target-projector training bypass (all projected encoder updates stay explicit)
 
 ## Stale Guidance Audit
-- README and wiki guidance are now aligned on current projected-mode behavior:
+- README and wiki guidance are currently aligned on current projected-mode behavior:
   - defaults remain conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) unless explicitly configured,
   - warmup and fixed-momentum CLI paths are documented,
   - trainable encoder updates are explicit via `--encoder-lr`.
-- VISION is consistent on JEPA-first scope, projection head presence, and momentum-control direction.
+- `VISION.md` needs a one-point alignment update for immediate-step framing (section 7 currently advertises earlier compact-encoder sequencing).
 
 ## Approved Implementation Sequence
 
