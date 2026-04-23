@@ -62,6 +62,13 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
+### Evidence Snapshot
+
+- [ ] Projected momentum hardening protocol (fixed-seed sweeps) using the projected temporal entrypoint:
+  - warmup: `for SEED in 21000 21001 21002; do cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --train-base-seed "$SEED" --train-steps 80 --encoder-lr 0.0 --target-momentum-start 0.60 --target-momentum-end 0.99 --target-momentum-warmup-steps 24 --log 20; done`
+  - frozen: `for SEED in 21000 21001 21002; do cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --train-base-seed "$SEED" --train-steps 80 --encoder-lr 0.0 --target-momentum 1.0 --log 20; done`
+  - trainable: `for SEED in 21000 21001 21002; do cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --train-base-seed "$SEED" --train-steps 80 --encoder-lr 0.004 --target-momentum 0.99 --target-momentum-warmup-steps 0 --log 20; done`
+
 ## Fast Feedback Loop
 
 For quick iteration:
