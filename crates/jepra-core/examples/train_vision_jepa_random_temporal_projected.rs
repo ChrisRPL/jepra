@@ -5,14 +5,14 @@ mod temporal_vision;
 
 use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use projected_temporal::{
-    PROJECTED_VALIDATION_BASE_SEED, PROJECTED_VALIDATION_BATCHES,
+    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
+    PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     projected_validation_batch_losses_from_base_seed, projection_stats,
 };
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-    PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
-    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_mode_counts, print_batch_summary, training_steps,
+    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
+    print_batch_summary, training_steps,
 };
 
 const PROJECTION_DIM: usize = 4;

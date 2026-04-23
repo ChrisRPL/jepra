@@ -1,14 +1,18 @@
+#[path = "support/temporal_validation.rs"]
+mod temporal_validation;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
 use jepra_core::{Linear, Predictor, Tensor, VisionJepa};
+use temporal_validation::{
+    UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, UNPROJECTED_VALIDATION_BASE_SEED,
+    UNPROJECTED_VALIDATION_BATCHES, UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    temporal_validation_batch_loss_from_base_seed,
+};
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-    UNPROJECTED_VALIDATION_BASE_SEED, UNPROJECTED_VALIDATION_BATCHES,
-    UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
-    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_mode_counts, print_batch_summary, temporal_validation_batch_loss_from_base_seed,
-    training_steps,
+    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
+    print_batch_summary, training_steps,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;

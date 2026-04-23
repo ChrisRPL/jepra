@@ -1,6 +1,4 @@
-#![allow(dead_code)]
-
-use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor, VisionJepa};
+use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -14,12 +12,6 @@ pub const FAST_MOTION_MASS_THRESHOLD: f32 = 0.8f32 * (SQUARE_SIZE * SQUARE_SIZE)
 pub const EXTRA_SQUARE_CHANCE: f64 = 0.5;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
-pub const UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.5;
-pub const UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.9;
-pub const UNPROJECTED_VALIDATION_BASE_SEED: u64 = 99_001;
-pub const UNPROJECTED_VALIDATION_BATCHES: usize = 8;
-pub const PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
-pub const PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 
 pub fn training_steps(default_steps: usize) -> usize {
     std::env::var("JEPRA_TRAIN_STEPS")
@@ -184,38 +176,6 @@ pub fn make_validation_batch_with_both_motion_modes(
         validation_base_seed,
         start_batch_idx
     );
-}
-
-pub fn temporal_validation_batch_loss<F>(
-    model: &VisionJepa,
-    base_seed: u64,
-    validation_batches: usize,
-    make_batch: F,
-) -> f32
-where
-    F: Fn(u64) -> (Tensor, Tensor),
-{
-    let mut total = 0.0;
-
-    for batch_idx in 0..validation_batches {
-        let (x_t, x_t1) = make_batch(base_seed + batch_idx as u64);
-        total += model.losses(&x_t, &x_t1).0;
-    }
-
-    total / validation_batches as f32
-}
-
-pub fn temporal_validation_batch_loss_from_base_seed(
-    model: &VisionJepa,
-    validation_base_seed: u64,
-    validation_batches: usize,
-) -> f32 {
-    temporal_validation_batch_loss(
-        model,
-        validation_base_seed,
-        validation_batches,
-        |batch_idx| make_validation_batch(validation_base_seed, batch_idx),
-    )
 }
 
 pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {

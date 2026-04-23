@@ -3,6 +3,8 @@ use jepra_core::{EmbeddingEncoder, Linear, Predictor, ProjectedVisionJepa, Tenso
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
 pub const PROJECTED_VALIDATION_BATCHES: usize = 8;
+pub const PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
+pub const PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 
 pub fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
     assert!(
