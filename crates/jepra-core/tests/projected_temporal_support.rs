@@ -17,7 +17,7 @@ use temporal_vision::{
     BATCH_SIZE, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples,
     assert_temporal_experiment_improved, make_frozen_encoder, make_temporal_batch,
-    make_train_batch,
+    make_train_batch, CompactEncoderMode, TemporalRunConfig,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -380,6 +380,92 @@ fn projected_step_updates_target_projector_when_momentum_is_enabled() {
         "target_projection_drift should match EMA lag metric: {:.6} vs {:.6}",
         model.target_projection_drift(),
         expected_drift
+    );
+}
+
+#[test]
+fn projected_target_projector_warmup_transition_is_deterministic() {
+    let config = TemporalRunConfig {
+        train_base_seed: 11_000u64,
+        total_steps: 2,
+        log_every: 1,
+        encoder_learning_rate: 0.0,
+        compact_encoder_mode: CompactEncoderMode::Disabled,
+        target_projection_momentum: 0.0,
+        target_projection_momentum_start: 1.0,
+        target_projection_momentum_end: 0.0,
+        target_projection_momentum_warmup_steps: 2,
+    };
+
+    assert!(
+        (config.target_projection_momentum_at_step(1) - 0.5).abs() < 1e-6,
+        "warmup should start at 0.5 momentum for step 1 (start=1.0, end=0.0, warmup=2)"
+    );
+    assert!(
+        (config.target_projection_momentum_at_step(2) - 0.0).abs() < 1e-6,
+        "warmup should finish at 0.0 momentum for step 2 (end after warmup)"
+    );
+
+    let mut model = ProjectedVisionJepa::new(
+        make_frozen_encoder(),
+        make_projector(),
+        make_projector(),
+        make_predictor(),
+    );
+
+    let (x_t_1, x_t1_1) = make_train_batch(config.train_base_seed, 1);
+    let (x_t_2, x_t1_2) = make_train_batch(config.train_base_seed, 2);
+    let initial_target = model.target_projector.clone();
+
+    model.set_target_projection_momentum(config.target_projection_momentum_at_step(1));
+    model.step_with_trainable_encoder(
+        &x_t_1,
+        &x_t1_1,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+        config.encoder_learning_rate,
+    );
+    let step1_projector = model.projector.clone();
+    let step1_target = model.target_projector.clone();
+
+    assert_ne!(
+        step1_target.weight, initial_target.weight,
+        "step 1 should move target projector during warmup"
+    );
+    for i in 0..step1_target.weight.len() {
+        let expected = 0.5 * initial_target.weight.data[i] + 0.5 * step1_projector.weight.data[i];
+        assert!(
+            (expected - step1_target.weight.data[i]).abs() < 1e-6,
+            "step 1 target weight EMA not aligned at index {}: expected {:.6}, got {:.6}",
+            i,
+            expected,
+            step1_target.weight.data[i]
+        );
+    }
+
+    model.set_target_projection_momentum(config.target_projection_momentum_at_step(2));
+    model.step_with_trainable_encoder(
+        &x_t_2,
+        &x_t1_2,
+        REGULARIZER_WEIGHT,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+        config.encoder_learning_rate,
+    );
+
+    assert_eq!(
+        model.target_projector.weight, model.projector.weight,
+        "step 2 should hard-copy target projector once warmup reaches momentum 0.0"
+    );
+    assert_eq!(
+        model.target_projector.bias, model.projector.bias,
+        "step 2 should hard-copy target bias once warmup reaches momentum 0.0"
+    );
+
+    assert!(
+        model.target_projection_momentum() < 1e-6,
+        "step 2 momentum must be near zero after warmup transition"
     );
 }
 
