@@ -46,6 +46,91 @@ fn make_predictor() -> Predictor {
     )
 }
 
+fn make_predictor_with_seed(seed_offset: u64) -> Predictor {
+    Predictor::new(
+        Linear::randn(PROJECTION_DIM, 8, 0.1, 22_000 + seed_offset),
+        Linear::randn(8, PROJECTION_DIM, 0.1, 22_001 + seed_offset),
+    )
+}
+
+fn projected_short_run_convergence(train_base_seed: u64, predictor_seed: u64) -> (f32, f32) {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let mut model = ProjectedVisionJepa::new(
+        encoder,
+        projector,
+        target_projector,
+        make_predictor_with_seed(predictor_seed),
+    );
+    let steps = 60;
+
+    let (probe_t, probe_t1) = make_train_batch(train_base_seed, 0);
+    let initial_train_loss = model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT).2;
+    let initial_val_loss = projected_validation_losses_model(&model).2;
+
+    for step in 1..=steps {
+        let (x_t, x_t1) = make_train_batch(train_base_seed, step as u64);
+        model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+    }
+
+    let final_train_loss = model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT).2;
+    let final_val_loss = projected_validation_losses_model(&model).2;
+
+    assert!(
+        final_train_loss < initial_train_loss * PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        "short projected run did not shrink train total loss enough: {:.6} -> {:.6}",
+        initial_train_loss,
+        final_train_loss
+    );
+    assert!(
+        final_val_loss < initial_val_loss * PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        "short projected run did not shrink validation total loss enough: {:.6} -> {:.6}",
+        initial_val_loss,
+        final_val_loss
+    );
+
+    (
+        final_train_loss / initial_train_loss,
+        final_val_loss / initial_val_loss,
+    )
+}
+
+#[test]
+fn projected_short_runs_have_stable_convergence_ratios() {
+    let train_base_seed = 11_000;
+    let runs = [22_010u64, 22_011u64, 22_012u64];
+    let mut train_ratios = Vec::<f32>::new();
+    let mut val_ratios = Vec::<f32>::new();
+
+    for seed in runs {
+        let (train_ratio, val_ratio) = projected_short_run_convergence(train_base_seed, seed);
+        train_ratios.push(train_ratio);
+        val_ratios.push(val_ratio);
+    }
+
+    let train_min = train_ratios.iter().copied().fold(f32::INFINITY, f32::min);
+    let train_max = train_ratios
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, f32::max);
+    let val_min = val_ratios.iter().copied().fold(f32::INFINITY, f32::min);
+    let val_max = val_ratios.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+
+    assert!(
+        train_max - train_min < 0.20,
+        "projected train convergence spread too large: [{:.6}, {:.6}]",
+        train_min,
+        train_max
+    );
+    assert!(
+        val_max - val_min < 0.20,
+        "projected validation convergence spread too large: [{:.6}, {:.6}]",
+        val_min,
+        val_max
+    );
+}
+
 fn finite_difference_regularizer_grad(latents: &Tensor, index: usize, epsilon: f32) -> f32 {
     let mut plus = latents.clone();
     plus.data[index] += epsilon;
