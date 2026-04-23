@@ -7,6 +7,7 @@ RoadJEPA is a Rust-first framework for compact JEPA-style latent predictive mode
 - frozen-encoder `VisionJepa` and `ProjectedVisionJepa` training paths
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
+- temporal data now supports one or two moving squares per sample in the synthetic generator
 
 ## Core Verification Commands
 
