@@ -134,10 +134,12 @@ fn main() {
         initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss
     );
 
-    temporal_vision::run_temporal_training_loop(
-        run_config.total_steps,
-        run_config.log_every,
-        |step, should_log| {
+    let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
+        run_config,
+        &mut model,
+        initial_train_total_loss,
+        initial_val_total_loss,
+        |model, step, should_log| {
             let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
             let (prediction_loss, regularizer_loss, total_loss) =
                 model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
@@ -145,7 +147,7 @@ fn main() {
             if should_log {
                 let (val_prediction_loss, val_regularizer_loss, val_total_loss) =
                     projected_validation_batch_losses_from_base_seed(
-                        &model,
+                        model,
                         REGULARIZER_WEIGHT,
                         PROJECTED_VALIDATION_BASE_SEED,
                         PROJECTED_VALIDATION_BATCHES,
@@ -161,8 +163,20 @@ fn main() {
                     val_total_loss,
                 );
             }
+
+            total_loss
+        },
+        |model| {
+            projected_validation_batch_losses_from_base_seed(
+                model,
+                REGULARIZER_WEIGHT,
+                PROJECTED_VALIDATION_BASE_SEED,
+                PROJECTED_VALIDATION_BATCHES,
+            )
+            .2
         },
     );
+    temporal_vision::print_temporal_experiment_summary("projected", &experiment_summary);
 
     let final_projection_t = model.project_latent(&train_probe_t);
     let final_pred = model.predict_next_projection(&train_probe_t);

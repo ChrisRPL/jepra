@@ -88,6 +88,79 @@ fn parse_usize_arg(args: &[String], flag: &str) -> Option<usize> {
         .filter(|&value| value > 0)
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TemporalExperimentSummary {
+    pub config: TemporalRunConfig,
+    pub initial_train_loss: f32,
+    pub final_train_loss: f32,
+    pub initial_validation_loss: f32,
+    pub final_validation_loss: f32,
+}
+
+impl TemporalExperimentSummary {
+    pub fn train_delta(&self) -> f32 {
+        self.final_train_loss - self.initial_train_loss
+    }
+
+    pub fn validation_delta(&self) -> f32 {
+        self.final_validation_loss - self.initial_validation_loss
+    }
+
+    pub fn train_improved(&self) -> bool {
+        self.final_train_loss < self.initial_train_loss
+    }
+
+    pub fn validation_improved(&self) -> bool {
+        self.final_validation_loss < self.initial_validation_loss
+    }
+}
+
+pub fn run_temporal_experiment_with_summary<TModel, TStep, TValue>(
+    config: TemporalRunConfig,
+    model: &mut TModel,
+    initial_train_loss: f32,
+    initial_validation_loss: f32,
+    mut train_step: TStep,
+    mut validation_loss: TValue,
+) -> TemporalExperimentSummary
+where
+    TStep: FnMut(&mut TModel, usize, bool) -> f32,
+    TValue: FnMut(&TModel) -> f32,
+{
+    let mut final_train_loss = initial_train_loss;
+
+    run_temporal_training_loop(config.total_steps, config.log_every, |step, should_log| {
+        final_train_loss = train_step(model, step, should_log);
+    });
+
+    let final_validation_loss = validation_loss(model);
+
+    TemporalExperimentSummary {
+        config,
+        initial_train_loss,
+        final_train_loss,
+        initial_validation_loss,
+        final_validation_loss,
+    }
+}
+
+#[allow(dead_code)]
+pub fn print_temporal_experiment_summary(tag: &str, summary: &TemporalExperimentSummary) {
+    println!(
+        "{} run summary | steps {} | train {:.6} -> {:.6} (Δ {:+.6}, improved={}) | val {:.6} -> {:.6} (Δ {:+.6}, improved={})",
+        tag,
+        summary.config.total_steps,
+        summary.initial_train_loss,
+        summary.final_train_loss,
+        summary.train_delta(),
+        summary.train_improved(),
+        summary.initial_validation_loss,
+        summary.final_validation_loss,
+        summary.validation_delta(),
+        summary.validation_improved()
+    );
+}
+
 pub fn motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {
     let center_x_t = square_center_x(x_t, sample);
     let center_x_t1 = square_center_x(x_t1, sample);

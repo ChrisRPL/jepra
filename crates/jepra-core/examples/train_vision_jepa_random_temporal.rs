@@ -114,10 +114,12 @@ pub fn main() {
         initial_train_loss, initial_val_loss
     );
 
-    temporal_vision::run_temporal_training_loop(
-        run_config.total_steps,
-        run_config.log_every,
-        |step, should_log| {
+    let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
+        run_config,
+        &mut model,
+        initial_train_loss,
+        initial_val_loss,
+        |model, step, should_log| {
             let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
             let (train_loss, _) = model.step(&x_t, &x_t1, LR);
             if should_log {
@@ -125,14 +127,24 @@ pub fn main() {
                     step,
                     train_loss,
                     temporal_validation_batch_loss_from_base_seed(
-                        &model,
+                        model,
                         UNPROJECTED_VALIDATION_BASE_SEED,
                         UNPROJECTED_VALIDATION_BATCHES,
                     ),
                 );
             }
+
+            train_loss
+        },
+        |model| {
+            temporal_validation_batch_loss_from_base_seed(
+                model,
+                UNPROJECTED_VALIDATION_BASE_SEED,
+                UNPROJECTED_VALIDATION_BATCHES,
+            )
         },
     );
+    temporal_vision::print_temporal_experiment_summary("unprojected", &experiment_summary);
 
     let final_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
     let final_val_loss = temporal_validation_batch_loss_from_base_seed(
