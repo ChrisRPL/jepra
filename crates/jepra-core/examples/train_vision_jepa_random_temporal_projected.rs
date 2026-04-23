@@ -23,6 +23,14 @@ const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
 
+fn training_steps() -> usize {
+    std::env::var("JEPRA_TRAIN_STEPS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&steps| steps > 0)
+        .unwrap_or(NUM_STEPS)
+}
+
 fn make_projector() -> Linear {
     Linear::new(
         Tensor::new(
@@ -126,7 +134,7 @@ fn main() {
         initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss
     );
 
-    for step in 1..=NUM_STEPS {
+    for step in 1..=training_steps() {
         let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
         let (prediction_loss, regularizer_loss, total_loss) =
             model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);

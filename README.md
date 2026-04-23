@@ -31,9 +31,9 @@ cargo clippy --all-targets --all-features
 ```bash
 cargo fmt --manifest-path crates/jepra-core/Cargo.toml
 cargo test --manifest-path crates/jepra-core/Cargo.toml --all-targets
-cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal
-cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa
-cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected
+JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal
+JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa
+JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected
 ```
 
 ## Fast Feedback Loop
