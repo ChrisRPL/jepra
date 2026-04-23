@@ -368,3 +368,48 @@ pub fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
 
     count
 }
+
+pub fn assert_square_footprint_and_decay_invariants(
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    seed: u64,
+) -> (usize, usize) {
+    let mut single_square_samples = 0usize;
+    let mut double_square_samples = 0usize;
+
+    for sample in 0..BATCH_SIZE {
+        let cells_t = active_cell_count(x_t, sample);
+        let cells_t1 = active_cell_count(x_t1, sample);
+
+        match cells_t {
+            4 => single_square_samples += 1,
+            8 => double_square_samples += 1,
+            cells => panic!(
+                "unexpected non-zero footprint at seed {} sample {}: {}",
+                seed, sample, cells
+            ),
+        }
+
+        assert!(
+            cells_t == cells_t1,
+            "non-zero footprint changed across temporal step at seed {} sample {}: {} -> {}",
+            seed,
+            sample,
+            cells_t,
+            cells_t1
+        );
+
+        let mass_t = total_mass(x_t, sample);
+        let mass_t1 = total_mass(x_t1, sample);
+        assert!(
+            mass_t1 < mass_t,
+            "sample {} mass did not decay at seed {}: {:.6} -> {:.6}",
+            sample,
+            seed,
+            mass_t,
+            mass_t1
+        );
+    }
+
+    (single_square_samples, double_square_samples)
+}

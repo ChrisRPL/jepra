@@ -5,11 +5,11 @@ mod temporal_vision;
 use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
-    active_cell_count, assert_temporal_contract, batch_has_both_motion_modes,
-    batch_has_min_motion_mode_counts, fast_mode_channel_summary, fast_motion_feature_for_sample,
-    make_frozen_encoder, make_temporal_batch, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
-    square_center_x, total_mass,
+    assert_square_footprint_and_decay_invariants, assert_temporal_contract,
+    batch_has_both_motion_modes, batch_has_min_motion_mode_counts, fast_mode_channel_summary,
+    fast_motion_feature_for_sample, make_frozen_encoder, make_temporal_batch, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_dx_for_sample,
+    motion_mode_counts, square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -509,37 +509,11 @@ fn temporal_batch_contains_expected_square_counts_and_decays_mass() {
 
     for seed in 0..128u64 {
         let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
+        let (single_count, double_count) =
+            assert_square_footprint_and_decay_invariants(&x_t, &x_t1, seed);
 
-        for sample in 0..BATCH_SIZE {
-            let cells_t = active_cell_count(&x_t, sample);
-            let cells_t1 = active_cell_count(&x_t1, sample);
-
-            match cells_t {
-                4 => saw_single_square = true,
-                8 => saw_double_square = true,
-                cells => panic!(
-                    "unexpected non-zero footprint at seed {} sample {}: {}",
-                    seed, sample, cells
-                ),
-            }
-
-            assert!(
-                cells_t == cells_t1,
-                "non-zero footprint changed across temporal step at seed {} sample {}: {} -> {}",
-                seed,
-                sample,
-                cells_t,
-                cells_t1
-            );
-            assert!(
-                total_mass(&x_t1, sample) < total_mass(&x_t, sample),
-                "sample {} mass did not decay at seed {}: {:.6} -> {:.6}",
-                sample,
-                seed,
-                total_mass(&x_t, sample),
-                total_mass(&x_t1, sample)
-            );
-        }
+        saw_single_square |= single_count > 0;
+        saw_double_square |= double_count > 0;
     }
 
     assert!(saw_single_square, "never saw single-square sample");

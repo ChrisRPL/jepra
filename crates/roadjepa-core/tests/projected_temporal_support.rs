@@ -11,7 +11,7 @@ use projected_temporal::{
 };
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
-    BATCH_SIZE, active_cell_count, make_frozen_encoder, make_train_batch, total_mass,
+    assert_square_footprint_and_decay_invariants, make_frozen_encoder, make_train_batch,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -160,37 +160,11 @@ fn projected_temporal_batch_contains_expected_square_counts_and_decays_mass() {
 
     for seed in 0..128u64 {
         let (x_t, x_t1) = make_train_batch(seed, 0);
+        let (single_count, double_count) =
+            assert_square_footprint_and_decay_invariants(&x_t, &x_t1, seed);
 
-        for sample in 0..BATCH_SIZE {
-            let cells_t = active_cell_count(&x_t, sample);
-            let cells_t1 = active_cell_count(&x_t1, sample);
-
-            match cells_t {
-                4 => saw_single_square = true,
-                8 => saw_double_square = true,
-                cells => panic!(
-                    "unexpected non-zero footprint at seed {} sample {}: {}",
-                    seed, sample, cells
-                ),
-            }
-
-            assert!(
-                cells_t == cells_t1,
-                "non-zero footprint changed across temporal step at seed {} sample {}: {} -> {}",
-                seed,
-                sample,
-                cells_t,
-                cells_t1
-            );
-            assert!(
-                total_mass(&x_t1, sample) < total_mass(&x_t, sample),
-                "sample {} mass did not decay at seed {}: {:.6} -> {:.6}",
-                sample,
-                seed,
-                total_mass(&x_t, sample),
-                total_mass(&x_t1, sample)
-            );
-        }
+        saw_single_square |= single_count > 0;
+        saw_double_square |= double_count > 0;
     }
 
     assert!(saw_single_square, "never saw single-square sample");
