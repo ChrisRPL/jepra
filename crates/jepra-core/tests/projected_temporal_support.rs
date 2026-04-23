@@ -5,11 +5,11 @@ mod projected_temporal;
 #[path = "../examples/support/temporal_vision.rs"]
 mod temporal_vision;
 
+use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use projected_temporal::{
     combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
     projected_batch_losses, projected_step, projection_stats,
 };
-use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     assert_seed_range_has_both_motion_modes,
@@ -57,7 +57,7 @@ fn finite_difference_regularizer_grad(latents: &Tensor, index: usize, epsilon: f
 }
 
 fn projected_validation_losses(
-    encoder: &roadjepa_core::EmbeddingEncoder,
+    encoder: &jepra_core::EmbeddingEncoder,
     online_projector: &Linear,
     target_projector: &Linear,
     predictor: &Predictor,

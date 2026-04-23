@@ -1,6 +1,6 @@
+use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use roadjepa_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor};
 
 pub const BATCH_SIZE: usize = 8;
 pub const IMAGE_SIZE: usize = 8;

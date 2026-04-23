@@ -1,4 +1,4 @@
-use roadjepa_core::{EmbeddingEncoder, Linear, Predictor, ProjectedVisionJepa, Tensor, mse_loss};
+use jepra_core::{EmbeddingEncoder, Linear, Predictor, ProjectedVisionJepa, Tensor, mse_loss};
 
 pub fn gaussian_moment_regularizer(latents: &Tensor) -> f32 {
     assert!(

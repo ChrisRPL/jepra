@@ -1,7 +1,7 @@
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
+use jepra_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
     make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,

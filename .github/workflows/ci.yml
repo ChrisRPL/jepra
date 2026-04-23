@@ -22,13 +22,13 @@ jobs:
       - name: Restore cargo cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: "crates/roadjepa-core"
+          workspaces: "crates/jepra-core"
 
       - name: Check formatting
-        run: cargo fmt --manifest-path crates/roadjepa-core/Cargo.toml --all -- --check
+        run: cargo fmt --manifest-path crates/jepra-core/Cargo.toml --all -- --check
 
       - name: Lint
-        run: cargo clippy --manifest-path crates/roadjepa-core/Cargo.toml --all-targets --all-features -- -D warnings
+        run: cargo clippy --manifest-path crates/jepra-core/Cargo.toml --all-targets --all-features -- -D warnings
 
       - name: Test all targets
-        run: cargo test --manifest-path crates/roadjepa-core/Cargo.toml --all-targets
+        run: cargo test --manifest-path crates/jepra-core/Cargo.toml --all-targets

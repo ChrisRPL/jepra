@@ -2,7 +2,7 @@
 #[path = "../examples/support/temporal_vision.rs"]
 mod temporal_vision;
 
-use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
+use jepra_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
     UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_seed_range_has_both_motion_modes,
