@@ -84,12 +84,8 @@ impl Conv2d {
                                         && (ih_padded as usize) < in_h
                                         && (iw_padded as usize) < in_w
                                     {
-                                        let x_val = x.get(&[
-                                            b,
-                                            ic,
-                                            ih_padded as usize,
-                                            iw_padded as usize,
-                                        ]);
+                                        let x_val =
+                                            x.get(&[b, ic, ih_padded as usize, iw_padded as usize]);
                                         let w_val = self.weight.get(&[oc, ic, kh, kw]);
                                         sum += x_val * w_val;
                                     }

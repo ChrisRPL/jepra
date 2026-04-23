@@ -1,4 +1,4 @@
-use roadjepa_core::{mse_loss, mse_loss_grad, Linear, Predictor, Tensor};
+use roadjepa_core::{Linear, Predictor, Tensor, mse_loss, mse_loss_grad};
 
 fn main() {
     let fc1 = Linear::randn(2, 8, 0.1, 42);
