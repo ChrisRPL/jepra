@@ -185,50 +185,6 @@ pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
     weighted_sum / total_mass
 }
 
-#[allow(dead_code)]
-pub fn fast_motion_feature_from_mass(mass: f32) -> f32 {
-    (mass - FAST_MOTION_MASS_THRESHOLD).max(0.0)
-}
-
-#[allow(dead_code)]
-pub fn fast_motion_feature_for_sample(x_t: &Tensor, sample: usize) -> f32 {
-    fast_motion_feature_from_mass(total_mass(x_t, sample))
-}
-
-#[allow(dead_code)]
-pub fn fast_mode_channel_summary(z: &Tensor) -> (usize, usize, f32, f32) {
-    assert_eq!(
-        z.shape,
-        vec![BATCH_SIZE, 3],
-        "fast_mode_channel_summary expects [B, 3], got {:?}",
-        z.shape
-    );
-
-    let mut inactive_count = 0;
-    let mut active_count = 0;
-    let mut sum = 0.0;
-    let mut max_value: f32 = 0.0;
-
-    for sample in 0..BATCH_SIZE {
-        let value = z.get(&[sample, 2]);
-        sum += value;
-        max_value = max_value.max(value);
-
-        if value > 0.0 {
-            active_count += 1;
-        } else {
-            inactive_count += 1;
-        }
-    }
-
-    (
-        inactive_count,
-        active_count,
-        sum / BATCH_SIZE as f32,
-        max_value,
-    )
-}
-
 pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
     assert_eq!(
         x_t.shape,
