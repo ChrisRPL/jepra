@@ -19,26 +19,46 @@ Read with `VISION.md`.
   - fixed + multi-seed convergence gates.
 
 ## Next Action
+## Focused Review (Projected Path Hardening)
+
+- `TemporalRunConfig` already supports `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, and warmup args in `examples/support/temporal_vision.rs`, with a linear schedule tested in `target_projection_momentum_warms_linearly_to_end`.
+- `ProjectedVisionJepa` already has bounded `target_projection_momentum`, explicit EMA updates in `step_with_trainable_encoder`, and `target_projection_drift()` for protocol introspection.
+- `tests/projected_temporal_support.rs` already validates:
+  - midpoint warmup to final target behavior,
+  - zero/one momentum edge behavior,
+  - frozen/trainable protocol parity while warmup is active.
+- Evidence gap: no committed protocol sweep currently verifies fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path and logs it as phase evidence.
+
 ## Next 3-Step Plan (Current Phase)
 
-1. Current phase focus: projected hardening freeze
-   - Keep default training conservative: `--encoder-lr=0.0`, `target_projection_momentum=1.0`.
-   - Require explicit opt-in for non-default momentum behavior in the projected example.
-   - Checkpoint: existing targeted assertions remain green after each change and `target_projection_drift` stays bounded in defaults.
+1. Confirm warmup contract before widening protocol permutations.
+   - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test temporal_vision_support target_projection_momentum_warms_linearly_to_end`.
+   - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support projected_target_projector_warmup_schedule_matches_frozen_and_trainable_protocols`.
+   - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support projected_target_projector_ema_edges_with_trainable_encoder_lr`.
+   - Acceptance: all three tests pass, including: warmup midpoint and collapse assertions pass, EMA update math assertions stay exact (`target_projection_drift` consistency) for frozen/trainable branches.
+   - Stop condition: if any assertion fails, remain in warmup contract hardening and do not start new protocol sweeps.
 
-2. Momentum warmup
-   - Add/normalize projected momentum scheduling in `TemporalRunConfig` (`target_projection_momentum`) before broadening defaults.
-   - Scope: schedule is linear from configured `--target-momentum-start` to `--target-momentum-end` over a warmup window, then hold steady.
-   - Checkpoint: a regression test documents warmup + final momentum values and validates monotonic drift under schedule.
+2. Execute projected protocol evidence sweep with fixed seeds at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
+   - For each target momentum value in the set, run the projected example with fixed seeds `21000, 21001, 21002` and explicit CLI:
+     - `--train-base-seed <seed> --train-steps 80 --log 20`
+     - `--encoder-lr 0.0`
+     - warmup controls for non-trivial schedule: when testing `0.5`, use `--target-momentum-start 1.0 --target-momentum-end 0.5 --target-momentum-warmup-steps 24`.
+   - Acceptance per seed: final train/validation totals must strictly improve, and meet deterministic reduction floors (same ratios as suite constants: train ≤ 0.2×initial, validation ≤ 0.2×initial where supported).
+   - Stop condition: any momentum value with one seed failing deterministic reproducibility or reduction gate blocks promotion to next step.
 
-3. Projected protocol evidence package
-   - Run fixed-seed protocol checks for momentum values `{1.0, 0.5, 0.0}` in projected suite.
-   - Record results in docs and keep gates at:
-     - one-step total-loss reduction,
-     - EMA edge validity,
-     - drift monotonicity trend under scheduler,
-     - trainable-encoder parity checks vs frozen baseline.
-   - Stop condition: promote non-default momentum/encoder-learning behavior only if all checkpoints pass in local fixed-seed runs.
+3. Promote only after explicit hardening gate closure and freeze protocol baseline lock.
+   - Run `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support` and confirm:
+     - frozen vs trainable parity tests still hold at `encoder_lr=0.0`,
+     - trajectory determinism tests pass for projected step and validation helpers,
+     - momentum edge tests remain green.
+   - Capture in wiki: final `(train_loss, val_loss, target_projection_drift)` summary for each seed+momentum row, and note warmup-step behavior.
+   - Stop condition: all targeted tests pass and recorded evidence has no regression against prior phase; then and only then allow explicit non-default momentum and encoder-learning experiments as opt-in follow-up.
+
+### Immediate Phase Stop Matrix
+
+1. Warmup contract not stable: halt at step 1 and record failing assertion.
+2. Evidence sweep mismatch on any momentum branch or seed: keep momentum and defaults frozen at `1.0`, encoder-lr zero, until re-runs are clean.
+3. Regression in parity/determinism/edge tests: stop immediately; no follow-up changes until regression source is isolated and fixed.
 
 ## Anti-Goals
 - no new abstractions for their own sake
