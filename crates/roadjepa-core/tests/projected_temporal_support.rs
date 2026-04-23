@@ -23,6 +23,8 @@ const REGULARIZER_WEIGHT: f32 = 1e-4;
 const TRAIN_BASE_SEED: u64 = 11_000;
 const VALIDATION_BASE_SEED: u64 = 111_000;
 const VALIDATION_BATCHES: usize = 8;
+const TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
+const VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -874,15 +876,19 @@ fn projected_random_temporal_loop_reduces_train_and_validation_loss() {
         final_validation.2
     );
     assert!(
-        final_losses.2 < 0.18,
-        "train total loss too high after {} steps: {:.6}",
+        final_losses.2 < initial_losses.2 * TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        "projected train total loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
         steps,
-        final_losses.2
+        final_losses.2,
+        initial_losses.2,
+        TRAIN_LOSS_MAX_REDUCTION_RATIO
     );
     assert!(
-        final_validation.2 < 0.18,
-        "validation total loss too high after {} steps: {:.6}",
+        final_validation.2 < initial_validation.2 * VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        "projected validation total loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
         steps,
-        final_validation.2
+        final_validation.2,
+        initial_validation.2,
+        VALIDATION_LOSS_MAX_REDUCTION_RATIO
     );
 }
