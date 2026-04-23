@@ -94,7 +94,7 @@ fn compact_encoder_mode_from_args(args: &[String]) -> CompactEncoderMode {
 
     match (compact_encoder_enabled, compact_mode_from_flag) {
         (true, Some(mode)) => mode,
-        (true, None) => CompactEncoderMode::Base,
+        (true, None) => CompactEncoderMode::Stronger,
         (false, Some(mode)) => mode,
         (false, None) => CompactEncoderMode::Disabled,
     }
@@ -287,7 +287,7 @@ mod temporal_vision_config_tests {
     fn compact_encoder_mode_switches_on_compact_flag() {
         assert_eq!(
             compact_encoder_mode_from_args(&args_with(&["--compact-encoder"])),
-            CompactEncoderMode::Base
+            CompactEncoderMode::Stronger
         );
     }
 
