@@ -32,6 +32,10 @@ Read with `VISION.md`.
 - no implicit trainable-encoder defaults
 - no hidden target-projector training bypass (all projected encoder updates stay explicit)
 
+## Stale Guidance Audit
+- README has one remaining narrow phrasing point about trainable encoder defaults; tracked roadmap text should match `ProjectedVisionJepa` trainable encoder capability.
+- VISION is consistent on JEPA-first scope, projection head presence, and momentum-control direction.
+
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
