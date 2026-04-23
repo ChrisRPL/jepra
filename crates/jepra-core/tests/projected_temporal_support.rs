@@ -1142,6 +1142,147 @@ fn projected_random_temporal_training_trajectory_is_reproducible() {
 }
 
 #[test]
+fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
+    let train_base_seed = 11_000u64;
+    let predictor_seed = 22_300u64;
+    let steps = 60usize;
+    let stability_tolerance = 1e-7f32;
+    let momenta = [1.0f32, 0.5f32, 0.0f32];
+
+    let run_protocol = |momentum: f32| {
+        let mut model = ProjectedVisionJepa::new(
+            make_frozen_encoder(),
+            make_projector(),
+            make_projector(),
+            make_predictor_with_seed(predictor_seed),
+        )
+        .with_target_projection_momentum(momentum);
+
+        let config = TemporalRunConfig {
+            train_base_seed,
+            total_steps: steps,
+            log_every: steps,
+            encoder_learning_rate: 0.0,
+            compact_encoder_mode: CompactEncoderMode::Disabled,
+            target_projection_momentum: momentum,
+            target_projection_momentum_start: momentum,
+            target_projection_momentum_end: momentum,
+            target_projection_momentum_warmup_steps: 0,
+        };
+
+        let (probe_t, probe_t1) = make_train_batch(train_base_seed, 0);
+        let initial_train_loss = model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT).2;
+        let initial_validation_loss = projected_validation_losses_model(&model).2;
+        let mut train_trajectory = Vec::<f32>::new();
+        let mut validation_trajectory = Vec::<f32>::new();
+        let mut drift_trajectory = Vec::<f32>::new();
+
+        let summary = run_temporal_experiment_with_summary(
+            config,
+            &mut model,
+            initial_train_loss,
+            initial_validation_loss,
+            |model, step, _| {
+                let (x_t, x_t1) = make_train_batch(train_base_seed, step as u64);
+                let (_, _, train_loss) = model.step(
+                    &x_t,
+                    &x_t1,
+                    REGULARIZER_WEIGHT,
+                    PREDICTOR_LR,
+                    PROJECTOR_LR,
+                );
+                let validation_loss = projected_validation_losses_model(model).2;
+
+                train_trajectory.push(train_loss);
+                validation_trajectory.push(validation_loss);
+                drift_trajectory.push(model.target_projection_drift());
+
+                train_loss
+            },
+            |model| projected_validation_losses_model(model).2,
+        );
+
+        assert_temporal_experiment_improved(
+            &format!("projected sweep momentum {momentum}"),
+            summary.initial_train_loss,
+            summary.final_train_loss,
+            summary.initial_validation_loss,
+            summary.final_validation_loss,
+            PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+            PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        );
+
+        assert_eq!(train_trajectory.len(), steps);
+        assert_eq!(validation_trajectory.len(), steps);
+        assert_eq!(drift_trajectory.len(), steps);
+
+        (train_trajectory, validation_trajectory, drift_trajectory)
+    };
+
+    let assert_trajectory_stability = |name: &str, lhs: &[f32], rhs: &[f32]| {
+        assert_eq!(
+            lhs.len(),
+            rhs.len(),
+            "{name} trajectory lengths drifted under identical seeds: {} vs {}",
+            lhs.len(),
+            rhs.len()
+        );
+
+        for (step, (lhs_value, rhs_value)) in lhs.iter().zip(rhs.iter()).enumerate() {
+            assert!(
+                (lhs_value - rhs_value).abs() < stability_tolerance,
+                "{name} trajectory diverged at step {}: {:.9} vs {:.9}",
+                step + 1,
+                lhs_value,
+                rhs_value
+            );
+        }
+    };
+
+    for momentum in momenta {
+        let (train_a, validation_a, drift_a) = run_protocol(momentum);
+        let (train_b, validation_b, drift_b) = run_protocol(momentum);
+
+        assert_trajectory_stability(
+            &format!("train (momentum {momentum})"),
+            &train_a,
+            &train_b,
+        );
+        assert_trajectory_stability(
+            &format!("validation (momentum {momentum})"),
+            &validation_a,
+            &validation_b,
+        );
+
+        if momentum == 0.0f32 {
+            assert_trajectory_stability(
+                &format!("target drift (momentum {momentum})"),
+                &drift_a,
+                &drift_b,
+            );
+            for (step, (&lhs_drift, &rhs_drift)) in drift_a
+                .iter()
+                .zip(drift_b.iter())
+                .enumerate()
+            {
+                assert!(
+                    lhs_drift < 1e-6,
+                    "target drift should stay near zero for momentum 0 at step {}: {:.6}",
+                    step + 1,
+                    lhs_drift
+                );
+                assert!(
+                    rhs_drift < 1e-6,
+                    "target drift should stay near zero for momentum 0 at step {}: {:.6}",
+                    step + 1,
+                    rhs_drift
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn projected_step_reported_losses_match_batch_losses() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();
