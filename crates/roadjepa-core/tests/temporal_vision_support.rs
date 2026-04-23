@@ -5,7 +5,7 @@ mod temporal_vision;
 use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
-    assert_square_footprint_and_decay_invariants, assert_temporal_contract,
+    assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     batch_has_both_motion_modes, batch_has_min_motion_mode_counts, fast_mode_channel_summary,
     fast_motion_feature_for_sample, make_frozen_encoder, make_temporal_batch, make_train_batch,
     make_validation_batch, make_validation_batch_with_both_motion_modes, motion_dx_for_sample,
@@ -504,20 +504,9 @@ fn generated_temporal_batch_moves_right_and_decays_mass() {
 
 #[test]
 fn temporal_batch_contains_expected_square_counts_and_decays_mass() {
-    let mut saw_single_square = false;
-    let mut saw_double_square = false;
-
-    for seed in 0..128u64 {
-        let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
-        let (single_count, double_count) =
-            assert_square_footprint_and_decay_invariants(&x_t, &x_t1, seed);
-
-        saw_single_square |= single_count > 0;
-        saw_double_square |= double_count > 0;
-    }
-
-    assert!(saw_single_square, "never saw single-square sample");
-    assert!(saw_double_square, "never saw double-square sample");
+    assert_seed_range_has_single_and_double_square_batch_examples(128, |seed| {
+        make_temporal_batch(BATCH_SIZE, seed)
+    });
 }
 
 #[test]

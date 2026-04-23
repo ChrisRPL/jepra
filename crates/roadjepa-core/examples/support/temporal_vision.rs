@@ -413,3 +413,33 @@ pub fn assert_square_footprint_and_decay_invariants(
 
     (single_square_samples, double_square_samples)
 }
+
+pub fn assert_seed_range_has_single_and_double_square_batch_examples(
+    seed_count: u64,
+    mut make_batch: impl FnMut(u64) -> (Tensor, Tensor),
+) -> (usize, usize) {
+    let mut saw_single_square_batches = 0usize;
+    let mut saw_double_square_batches = 0usize;
+
+    for seed in 0..seed_count {
+        let (x_t, x_t1) = make_batch(seed);
+        let (single_count, double_count) =
+            assert_square_footprint_and_decay_invariants(&x_t, &x_t1, seed);
+
+        saw_single_square_batches += usize::from(single_count > 0);
+        saw_double_square_batches += usize::from(double_count > 0);
+    }
+
+    assert!(
+        saw_single_square_batches > 0,
+        "never saw single-square sample in {} seeds",
+        seed_count
+    );
+    assert!(
+        saw_double_square_batches > 0,
+        "never saw double-square sample in {} seeds",
+        seed_count
+    );
+
+    (saw_single_square_batches, saw_double_square_batches)
+}

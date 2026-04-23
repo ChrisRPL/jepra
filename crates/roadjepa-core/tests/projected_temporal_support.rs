@@ -11,7 +11,8 @@ use projected_temporal::{
 };
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
-    assert_square_footprint_and_decay_invariants, make_frozen_encoder, make_train_batch,
+    assert_seed_range_has_single_and_double_square_batch_examples, make_frozen_encoder,
+    make_train_batch,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -155,20 +156,9 @@ fn combine_projection_grads_applies_regularizer_weight() {
 
 #[test]
 fn projected_temporal_batch_contains_expected_square_counts_and_decays_mass() {
-    let mut saw_single_square = false;
-    let mut saw_double_square = false;
-
-    for seed in 0..128u64 {
-        let (x_t, x_t1) = make_train_batch(seed, 0);
-        let (single_count, double_count) =
-            assert_square_footprint_and_decay_invariants(&x_t, &x_t1, seed);
-
-        saw_single_square |= single_count > 0;
-        saw_double_square |= double_count > 0;
-    }
-
-    assert!(saw_single_square, "never saw single-square sample");
-    assert!(saw_double_square, "never saw double-square sample");
+    assert_seed_range_has_single_and_double_square_batch_examples(128, |seed| {
+        make_train_batch(seed, 0)
+    });
 }
 
 #[test]
