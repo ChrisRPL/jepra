@@ -11,7 +11,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Current phase focus is projected warmup + protocol evidence:
   - keep default path conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) while adding warmup controls,
   - schedule target momentum from `--target-momentum-start` toward `--target-momentum-end` and verify target drift trend,
-  - close the next protocol evidence loop with fixed-seed projected sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
+  - protocol evidence loop with fixed-seed projected sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}` is now complete and clean under the current defaults.
 
 ## Anti-Goals
 - no implicit trainable projected encoder defaults

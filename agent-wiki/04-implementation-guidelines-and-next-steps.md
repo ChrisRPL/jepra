@@ -27,7 +27,7 @@ Read with `VISION.md`.
   - midpoint warmup to final target behavior,
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
-- Protocol evidence is now committed for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path (`agent-wiki/06-projected-momentum-sweep-evidence.md`).
+- Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
 
 ## Next 3-Step Plan (Current Phase)
 
