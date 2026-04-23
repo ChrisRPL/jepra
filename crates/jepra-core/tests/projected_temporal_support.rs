@@ -17,7 +17,8 @@ use temporal_vision::{
     BATCH_SIZE, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples,
     assert_temporal_experiment_improved, make_frozen_encoder, make_temporal_batch,
-    make_train_batch,
+    run_temporal_experiment_with_summary, make_train_batch, CompactEncoderMode,
+    TemporalExperimentSummary, TemporalRunConfig,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -162,6 +163,117 @@ fn projected_validation_losses_projection_support(model: &ProjectedVisionJepa) -
         PROJECTED_VALIDATION_BATCHES,
         |seed| make_temporal_batch(BATCH_SIZE, seed),
     )
+}
+
+fn projected_run_with_encoder_lr(
+    train_base_seed: u64,
+    predictor_seed: u64,
+    predictor_lr: f32,
+    encoder_lr: f32,
+) -> TemporalExperimentSummary {
+    let mut model = ProjectedVisionJepa::new(
+        make_frozen_encoder(),
+        make_projector(),
+        make_projector(),
+        make_predictor_with_seed(predictor_seed),
+    );
+    let steps = 80;
+    let config = TemporalRunConfig {
+        train_base_seed,
+        total_steps: steps,
+        log_every: steps,
+        encoder_learning_rate: encoder_lr,
+        compact_encoder_mode: CompactEncoderMode::Disabled,
+        target_projection_momentum: 1.0,
+    };
+
+    let (probe_t, probe_t1) = make_train_batch(config.train_base_seed, 0);
+    let initial_train_loss = model.losses(&probe_t, &probe_t1, REGULARIZER_WEIGHT).2;
+    let initial_validation_loss = projected_validation_losses_model(&model).2;
+
+    run_temporal_experiment_with_summary(
+        config,
+        &mut model,
+        initial_train_loss,
+        initial_validation_loss,
+        |model, step, _| {
+            let (x_t, x_t1) = make_train_batch(config.train_base_seed, step as u64);
+            let (train_loss, _, _) = if encoder_lr > 0.0 {
+                model.step_with_trainable_encoder(
+                    &x_t,
+                    &x_t1,
+                    REGULARIZER_WEIGHT,
+                    PREDICTOR_LR,
+                    PROJECTOR_LR,
+                    encoder_lr,
+                )
+            } else {
+                model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, predictor_lr, PROJECTOR_LR)
+            };
+            train_loss
+        },
+        |model| projected_validation_losses_model(model).2,
+    )
+}
+
+fn assert_projected_frozen_vs_trainable_protocol(
+    label: &str,
+    train_base_seed: u64,
+    predictor_seed: u64,
+    predictor_lr: f32,
+    encoder_lr: f32,
+) {
+    let frozen = projected_run_with_encoder_lr(
+        train_base_seed,
+        predictor_seed,
+        predictor_lr,
+        0.0,
+    );
+    let trainable =
+        projected_run_with_encoder_lr(train_base_seed, predictor_seed, predictor_lr, encoder_lr);
+
+    assert_temporal_experiment_improved(
+        &format!("{label} frozen projected"),
+        frozen.initial_train_loss,
+        frozen.final_train_loss,
+        frozen.initial_validation_loss,
+        frozen.final_validation_loss,
+        PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+    assert_temporal_experiment_improved(
+        &format!("{label} trainable projected"),
+        trainable.initial_train_loss,
+        trainable.final_train_loss,
+        trainable.initial_validation_loss,
+        trainable.final_validation_loss,
+        PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+
+    assert!(
+        trainable.final_train_loss <= frozen.final_train_loss * 2.0,
+        "trainable final train loss regressed too far vs frozen for {label}: frozen {:.6} vs trainable {:.6}",
+        frozen.final_train_loss,
+        trainable.final_train_loss
+    );
+    assert!(
+        trainable.final_validation_loss <= frozen.final_validation_loss * 2.0,
+        "trainable final validation loss regressed too far vs frozen for {label}: frozen {:.6} vs trainable {:.6}",
+        frozen.final_validation_loss,
+        trainable.final_validation_loss
+    );
+}
+
+#[test]
+fn projected_frozen_vs_trainable_projection_protocol_has_stable_behavior() {
+    assert_projected_frozen_vs_trainable_protocol(
+        "projected",
+        51_000u64,
+        22_100u64,
+        PREDICTOR_LR,
+        0.004f32,
+    );
 }
 
 #[test]
@@ -315,6 +427,12 @@ fn projected_step_updates_target_projector_when_momentum_is_enabled() {
             .with_target_projection_momentum(0.5);
     let (x_t, x_t1) = make_train_batch(11_000, 0);
 
+    assert_eq!(
+        model.target_projection_drift(),
+        0.0,
+        "target_projection_drift should start at zero when target mirrors projector"
+    );
+
     let initial_target_weight = model.target_projector.weight.clone();
     let initial_target_bias = model.target_projector.bias.clone();
 
@@ -349,6 +467,32 @@ fn projected_step_updates_target_projector_when_momentum_is_enabled() {
             actual
         );
     }
+
+    let mut expected_drift = 0.0f32;
+    let mut parameter_count = 0usize;
+
+    for (i, initial_target_value) in initial_target_weight.data.iter().enumerate() {
+        expected_drift += momentum * (model.projector.weight.data[i] - initial_target_value).abs();
+        parameter_count += 1;
+    }
+
+    for (i, initial_target_value) in initial_target_bias.data.iter().enumerate() {
+        expected_drift += momentum * (model.projector.bias.data[i] - initial_target_value).abs();
+        parameter_count += 1;
+    }
+
+    let expected_drift = if parameter_count == 0 {
+        0.0
+    } else {
+        expected_drift / parameter_count as f32
+    };
+
+    assert!(
+        (model.target_projection_drift() - expected_drift).abs() < 1e-6,
+        "target_projection_drift should match EMA lag metric: {:.6} vs {:.6}",
+        model.target_projection_drift(),
+        expected_drift
+    );
 }
 
 #[test]
@@ -562,7 +706,7 @@ fn projected_vision_jepa_step_reduces_total_loss_on_fixed_batch() {
 
     assert!(
         final_total + 1e-6 < initial_total,
-        "one projected VisionJePA step did not reduce total loss: {:.6} -> {:.6}",
+        "one projected ProjectedVisionJepa step did not reduce total loss: {:.6} -> {:.6}",
         initial_total,
         final_total
     );

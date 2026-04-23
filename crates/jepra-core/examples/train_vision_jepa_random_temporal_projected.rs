@@ -118,6 +118,7 @@ fn main() {
             PROJECTED_VALIDATION_BASE_SEED,
             PROJECTED_VALIDATION_BATCHES,
         );
+    let initial_projection_drift = model.target_projection_drift();
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
 
@@ -138,6 +139,7 @@ fn main() {
         "initial | val pred {:.6} | reg {:.6} | total {:.6}",
         initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss
     );
+    println!("initial | target drift {:.6}", initial_projection_drift);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -174,6 +176,7 @@ fn main() {
                     prediction_loss,
                     regularizer_loss,
                     total_loss,
+                    model.target_projection_drift(),
                     val_prediction_loss,
                     val_regularizer_loss,
                     val_total_loss,
@@ -197,6 +200,7 @@ fn main() {
     let final_projection_t = model.project_latent(&train_probe_t);
     let final_pred = model.predict_next_projection(&train_probe_t);
     let final_target = model.target_projection(&train_probe_t1);
+    let final_projection_drift = model.target_projection_drift();
     let (final_train_prediction_loss, final_train_regularizer_loss, final_train_total_loss) =
         model.losses(&train_probe_t, &train_probe_t1, REGULARIZER_WEIGHT);
     let (final_val_prediction_loss, final_val_regularizer_loss, final_val_total_loss) =
@@ -237,4 +241,5 @@ fn main() {
         "final | val pred {:.6} | reg {:.6} | total {:.6}",
         final_val_prediction_loss, final_val_regularizer_loss, final_val_total_loss
     );
+    println!("final | target drift {:.6}", final_projection_drift);
 }

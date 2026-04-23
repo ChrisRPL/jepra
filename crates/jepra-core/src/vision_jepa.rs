@@ -216,6 +216,39 @@ impl ProjectedVisionJepa {
         self.target_projector.forward(&z_t1)
     }
 
+    pub fn target_projection_drift(&self) -> f32 {
+        let mut drift = 0.0f32;
+        let mut parameter_count = 0usize;
+
+        for (target_weight, online_weight) in self
+            .target_projector
+            .weight
+            .data
+            .iter()
+            .zip(self.projector.weight.data.iter())
+        {
+            drift += (target_weight - online_weight).abs();
+            parameter_count += 1;
+        }
+
+        for (target_bias, online_bias) in self
+            .target_projector
+            .bias
+            .data
+            .iter()
+            .zip(self.projector.bias.data.iter())
+        {
+            drift += (target_bias - online_bias).abs();
+            parameter_count += 1;
+        }
+
+        if parameter_count == 0 {
+            0.0
+        } else {
+            drift / parameter_count as f32
+        }
+    }
+
     pub fn predict_next_projection(&self, x_t: &Tensor) -> Tensor {
         let projected = self.project_latent(x_t);
         self.predictor.forward(&projected)

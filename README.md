@@ -50,7 +50,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--train-base-seed` (`--seed`) sets the base training seed
 - `--train-steps` (`--steps`) sets total training steps
 - `--log-every` (`--log`) sets log cadence (must be > 0)
-- `--encoder-lr` (or `--encoder-learning-rate`) controls unprojected encoder updates; `0.0` keeps frozen encoder baseline
+- `--encoder-lr` (or `--encoder-learning-rate`) enables encoder updates in temporal JEPA runs; `0.0` keeps a frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)

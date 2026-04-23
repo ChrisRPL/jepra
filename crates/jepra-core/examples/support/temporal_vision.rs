@@ -596,17 +596,18 @@ pub fn print_projected_temporal_train_val_metrics(
     prediction_loss: f32,
     regularizer_loss: f32,
     total_loss: f32,
+    target_projection_drift: f32,
     val_prediction_loss: f32,
     val_regularizer_loss: f32,
     val_total_loss: f32,
 ) {
     println!(
-        "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | val total {:.6}",
-        step, prediction_loss, regularizer_loss, total_loss, val_total_loss
+        "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | target drift {:.6}",
+        step, prediction_loss, regularizer_loss, total_loss, target_projection_drift
     );
     println!(
-        "step {:03} | val pred {:.6} | reg {:.6}",
-        step, val_prediction_loss, val_regularizer_loss
+        "step {:03} | val pred {:.6} | reg {:.6} | val total {:.6}",
+        step, val_prediction_loss, val_regularizer_loss, val_total_loss
     );
 }
 
