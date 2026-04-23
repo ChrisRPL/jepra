@@ -9,13 +9,14 @@ use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use projected_temporal::{
     PROJECTED_VALIDATION_BASE_SEED, PROJECTED_VALIDATION_BATCHES, combine_projection_grads,
     gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projected_batch_losses,
-    projected_step, projected_validation_batch_losses_from_base_seed, projection_stats,
+    projected_step, projected_validation_batch_losses,
+    projected_validation_batch_losses_from_base_seed, projection_stats,
 };
 use temporal_vision::{
-    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    assert_seed_range_has_both_motion_modes,
+    BATCH_SIZE, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, make_frozen_encoder,
-    make_train_batch,
+    make_temporal_batch, make_train_batch,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -61,6 +62,19 @@ fn projected_validation_losses_model(model: &ProjectedVisionJepa) -> (f32, f32, 
         REGULARIZER_WEIGHT,
         PROJECTED_VALIDATION_BASE_SEED,
         PROJECTED_VALIDATION_BATCHES,
+    )
+}
+
+fn projected_validation_losses_projection_support(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
+    projected_validation_batch_losses(
+        &model.encoder,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+        |seed| make_temporal_batch(BATCH_SIZE, seed),
     )
 }
 
@@ -753,12 +767,7 @@ fn projected_validation_losses_matches_projection_support() {
     let predictor = make_predictor();
     let model = ProjectedVisionJepa::new(encoder.clone(), projector, target_projector, predictor);
 
-    let support = projected_validation_batch_losses_from_base_seed(
-        &model,
-        REGULARIZER_WEIGHT,
-        PROJECTED_VALIDATION_BASE_SEED,
-        PROJECTED_VALIDATION_BATCHES,
-    );
+    let support = projected_validation_losses_projection_support(&model);
     let model_losses = projected_validation_losses_model(&model);
 
     assert!(
