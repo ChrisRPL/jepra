@@ -1,4 +1,4 @@
-use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor};
+use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor, VisionJepa};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -172,6 +172,25 @@ pub fn make_validation_batch_with_both_motion_modes(
         validation_base_seed,
         start_batch_idx
     );
+}
+
+pub fn temporal_validation_batch_loss<F>(
+    model: &VisionJepa,
+    base_seed: u64,
+    validation_batches: usize,
+    make_batch: F,
+) -> f32
+where
+    F: Fn(u64) -> (Tensor, Tensor),
+{
+    let mut total = 0.0;
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_batch(base_seed + batch_idx as u64);
+        total += model.losses(&x_t, &x_t1).0;
+    }
+
+    total / validation_batches as f32
 }
 
 pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {

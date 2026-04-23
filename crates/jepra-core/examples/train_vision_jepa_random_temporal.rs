@@ -6,7 +6,7 @@ use temporal_vision::{
     MIN_MIXED_MODE_COUNT, UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
     UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
     make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_mode_counts, print_batch_summary,
+    motion_mode_counts, print_batch_summary, temporal_validation_batch_loss,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -34,21 +34,6 @@ fn make_predictor() -> Predictor {
     );
 
     Predictor::new(fc1, fc2)
-}
-
-fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
-    model.losses(x_t, x_t1).0
-}
-
-fn validation_loss(model: &VisionJepa) -> f32 {
-    let mut total = 0.0;
-
-    for batch_idx in 0..VALIDATION_BATCHES {
-        let (x_t, x_t1) = make_validation_batch(VALIDATION_BASE_SEED, batch_idx as u64);
-        total += batch_loss(model, &x_t, &x_t1);
-    }
-
-    total / VALIDATION_BATCHES as f32
 }
 
 pub fn main() {
@@ -99,8 +84,13 @@ pub fn main() {
 
     let initial_z_t = model.encode(&train_probe_t);
     let initial_z_t1 = model.target_latent(&train_probe_t1);
-    let initial_train_loss = batch_loss(&model, &train_probe_t, &train_probe_t1);
-    let initial_val_loss = validation_loss(&model);
+    let initial_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
+    let initial_val_loss = temporal_validation_batch_loss(
+        &model,
+        VALIDATION_BASE_SEED,
+        VALIDATION_BATCHES,
+        make_validation_batch,
+    );
 
     println!(
         "initial | latent sample0 {:?} -> {:?}",
@@ -121,13 +111,23 @@ pub fn main() {
                 "step {:03} | train {:.6} | val {:.6}",
                 step,
                 train_loss,
-                validation_loss(&model)
+                temporal_validation_batch_loss(
+                    &model,
+                    VALIDATION_BASE_SEED,
+                    VALIDATION_BATCHES,
+                    make_validation_batch,
+                )
             );
         }
     }
 
-    let final_train_loss = batch_loss(&model, &train_probe_t, &train_probe_t1);
-    let final_val_loss = validation_loss(&model);
+    let final_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
+    let final_val_loss = temporal_validation_batch_loss(
+        &model,
+        VALIDATION_BASE_SEED,
+        VALIDATION_BATCHES,
+        make_validation_batch,
+    );
     let final_z_t = model.encode(&train_probe_t);
     let final_pred = model.predict_next_latent(&train_probe_t);
     let final_target = model.target_latent(&train_probe_t1);
