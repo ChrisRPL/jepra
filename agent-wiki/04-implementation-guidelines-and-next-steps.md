@@ -69,7 +69,10 @@ Read with `VISION.md`.
 - no hidden target-projector training bypass (all projected encoder updates stay explicit)
 
 ## Stale Guidance Audit
-- README has one remaining narrow phrasing point about trainable encoder defaults; tracked roadmap text should match `ProjectedVisionJepa` trainable encoder capability.
+- README and wiki guidance are now aligned on current projected-mode behavior:
+  - defaults remain conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) unless explicitly configured,
+  - warmup and fixed-momentum CLI paths are documented,
+  - trainable encoder updates are explicit via `--encoder-lr`.
 - VISION is consistent on JEPA-first scope, projection head presence, and momentum-control direction.
 
 ## Approved Implementation Sequence
