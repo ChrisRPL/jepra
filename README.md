@@ -77,7 +77,7 @@ Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa
 The script prints one structured line per seed/momentum:
 
 ```text
-seed=<seed> momentum=<1.0|0.5|0.0|1.0->0.5> profile=<warmup|frozen|trainable|zero> status=ok | projected run summary | steps 80 | train <start> -> <end> (Δ <delta>, improved=<true|false>) | val <start> -> <end> (Δ <delta>, improved=<true|false>)
+seed=<seed> momentum=<1.0|0.5|0.0|1.0->0.5> profile=<warmup|frozen|trainable|zero> status=ok | projected run summary | steps 80 | train <start> -> <end> (Δ <delta>, improved=<true|false>) | val <start> -> <end> (Δ <delta>, improved=<true|false>) | target drift <start> -> <end> (Δ <delta>)
 ```
 
 ## Fast Feedback Loop

@@ -211,7 +211,6 @@ fn main() {
             .2
         },
     );
-    temporal_vision::print_temporal_experiment_summary("projected", &experiment_summary);
 
     let final_projection_t = model.project_latent(&train_probe_t);
     let final_pred = model.predict_next_projection(&train_probe_t);
@@ -237,6 +236,22 @@ fn main() {
         final_val_total_loss,
         PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
         PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+
+    println!(
+        "projected run summary | steps {} | train {:.6} -> {:.6} (Δ {:+.6}, improved={}) | val {:.6} -> {:.6} (Δ {:+.6}, improved={}) | target drift {:.6} -> {:.6} (Δ {:+.6})",
+        experiment_summary.config.total_steps,
+        experiment_summary.initial_train_loss,
+        experiment_summary.final_train_loss,
+        experiment_summary.train_delta(),
+        experiment_summary.train_improved(),
+        experiment_summary.initial_validation_loss,
+        experiment_summary.final_validation_loss,
+        experiment_summary.validation_delta(),
+        experiment_summary.validation_improved(),
+        initial_projection_drift,
+        final_projection_drift,
+        final_projection_drift - initial_projection_drift,
     );
 
     println!(
