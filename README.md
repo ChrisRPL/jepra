@@ -1,6 +1,7 @@
-# RoadJEPA
+# JEPRA
 
-RoadJEPA is a Rust-first framework for compact JEPA-style latent predictive modeling, with a current focus on temporal prediction (vision-based synthetic tasks) rather than broad framework abstraction.
+JEPRA is a Rust-first framework for compact JEPA-style latent predictive modeling, with a current focus on temporal prediction (vision-based synthetic tasks) rather than broad framework abstraction.
+The current crate is still published as `roadjepa-core` while project branding is migrating to `JEPRA`.
 
 ## Current Scope (from `VISION.md`)
 
