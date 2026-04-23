@@ -75,5 +75,5 @@ Use these first; run the full `--all-targets`/clippy suite before PR handoff or 
 
 ### Example Entrypoints
 
-- `train_vision_jepa_random_temporal.rs` is the canonical hardening path for the current JEPA temporal proof.
+- `train_vision_jepa_random_temporal.rs` and `train_vision_jepa_random_temporal_projected.rs` form the core JEPA temporal proof pair.
 - `train_vision_jepa.rs` remains as a legacy entrypoint and now delegates to the same random-temporal training flow.
