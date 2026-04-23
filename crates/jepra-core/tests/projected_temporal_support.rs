@@ -165,6 +165,37 @@ fn projected_validation_losses_projection_support(model: &ProjectedVisionJepa) -
     )
 }
 
+fn symmetric_relative_difference(lhs: f32, rhs: f32) -> f32 {
+    let scale = lhs.abs() + rhs.abs();
+    if scale == 0.0 {
+        0.0
+    } else {
+        2.0 * (lhs - rhs).abs() / scale
+    }
+}
+
+fn tensor_symmetric_relative_difference(lhs: &Tensor, rhs: &Tensor) -> f32 {
+    assert_eq!(lhs.shape, rhs.shape);
+    let diff_sum = lhs
+        .data
+        .iter()
+        .zip(&rhs.data)
+        .map(|(lhs_value, rhs_value)| (lhs_value - rhs_value).abs())
+        .sum::<f32>();
+    let scale_sum = lhs
+        .data
+        .iter()
+        .zip(&rhs.data)
+        .map(|(lhs_value, rhs_value)| lhs_value.abs() + rhs_value.abs())
+        .sum::<f32>();
+
+    if scale_sum == 0.0 {
+        0.0
+    } else {
+        2.0 * diff_sum / scale_sum
+    }
+}
+
 fn projected_run_with_encoder(
     train_base_seed: u64,
     predictor_seed: u64,
@@ -488,7 +519,7 @@ fn projected_step_updates_target_projector_when_momentum_is_enabled() {
 }
 
 #[test]
-fn projected_target_projector_warmup_transition_is_deterministic() {
+fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_protocols() {
     let config = TemporalRunConfig {
         train_base_seed: 11_000u64,
         total_steps: 2,
@@ -500,76 +531,100 @@ fn projected_target_projector_warmup_transition_is_deterministic() {
         target_projection_momentum_end: 0.0,
         target_projection_momentum_warmup_steps: 2,
     };
+    let step1_momentum = config.target_projection_momentum_at_step(1);
+    let step2_momentum = config.target_projection_momentum_at_step(2);
 
     assert!(
-        (config.target_projection_momentum_at_step(1) - 0.5).abs() < 1e-6,
-        "warmup should start at 0.5 momentum for step 1 (start=1.0, end=0.0, warmup=2)"
+        step1_momentum / config.target_projection_momentum_start > 0.49
+            && step1_momentum / config.target_projection_momentum_start < 0.51,
+        "warmup step 1 should land near the midpoint ratio: start {:.6}, step1 {:.6}",
+        config.target_projection_momentum_start,
+        step1_momentum
     );
     assert!(
-        (config.target_projection_momentum_at_step(2) - 0.0).abs() < 1e-6,
-        "warmup should finish at 0.0 momentum for step 2 (end after warmup)"
+        step2_momentum <= step1_momentum * 1e-3,
+        "warmup should collapse momentum relative to step 1 by the end: step1 {:.6}, step2 {:.6}",
+        step1_momentum,
+        step2_momentum
     );
 
-    let mut model = ProjectedVisionJepa::new(
+    let mut frozen = ProjectedVisionJepa::new(
         make_frozen_encoder(),
         make_projector(),
         make_projector(),
         make_predictor(),
     );
+    let mut trainable = frozen.clone();
+    let mut previous_frozen_drift = None;
 
-    let (x_t_1, x_t1_1) = make_train_batch(config.train_base_seed, 1);
-    let (x_t_2, x_t1_2) = make_train_batch(config.train_base_seed, 2);
-    let initial_target = model.target_projector.clone();
+    for step in 1..=config.total_steps {
+        let scheduled_momentum = config.target_projection_momentum_at_step(step);
+        let (x_t, x_t1) = make_train_batch(config.train_base_seed, step as u64);
 
-    model.set_target_projection_momentum(config.target_projection_momentum_at_step(1));
-    model.step_with_trainable_encoder(
-        &x_t_1,
-        &x_t1_1,
-        REGULARIZER_WEIGHT,
-        PREDICTOR_LR,
-        PROJECTOR_LR,
-        config.encoder_learning_rate,
-    );
-    let step1_projector = model.projector.clone();
-    let step1_target = model.target_projector.clone();
+        frozen.set_target_projection_momentum(scheduled_momentum);
+        trainable.set_target_projection_momentum(scheduled_momentum);
 
-    assert_ne!(
-        step1_target.weight, initial_target.weight,
-        "step 1 should move target projector during warmup"
-    );
-    for i in 0..step1_target.weight.len() {
-        let expected = 0.5 * initial_target.weight.data[i] + 0.5 * step1_projector.weight.data[i];
-        assert!(
-            (expected - step1_target.weight.data[i]).abs() < 1e-6,
-            "step 1 target weight EMA not aligned at index {}: expected {:.6}, got {:.6}",
-            i,
-            expected,
-            step1_target.weight.data[i]
+        let frozen_losses = frozen.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+        let trainable_losses = trainable.step_with_trainable_encoder(
+            &x_t,
+            &x_t1,
+            REGULARIZER_WEIGHT,
+            PREDICTOR_LR,
+            PROJECTOR_LR,
+            config.encoder_learning_rate,
         );
+
+        assert!(
+            symmetric_relative_difference(frozen_losses.2, trainable_losses.2) < 1e-6,
+            "scheduled warmup total loss drifted across frozen/trainable protocols at step {}: frozen {:.6}, trainable {:.6}",
+            step,
+            frozen_losses.2,
+            trainable_losses.2
+        );
+        assert!(
+            symmetric_relative_difference(
+                frozen.target_projection_drift(),
+                trainable.target_projection_drift()
+            ) < 1e-6,
+            "scheduled warmup target drift diverged across protocols at step {}: frozen {:.6}, trainable {:.6}",
+            step,
+            frozen.target_projection_drift(),
+            trainable.target_projection_drift()
+        );
+
+        if let Some(previous_drift) = previous_frozen_drift {
+            assert!(
+                frozen.target_projection_drift() <= previous_drift * 1e-3,
+                "end-of-warmup target drift should collapse relative to the prior step: previous {:.6}, current {:.6}",
+                previous_drift,
+                frozen.target_projection_drift()
+            );
+        } else {
+            assert!(
+                frozen.target_projection_drift() > 0.0,
+                "mid-warmup step should leave non-zero target drift"
+            );
+        }
+
+        previous_frozen_drift = Some(frozen.target_projection_drift());
     }
 
-    model.set_target_projection_momentum(config.target_projection_momentum_at_step(2));
-    model.step_with_trainable_encoder(
-        &x_t_2,
-        &x_t1_2,
-        REGULARIZER_WEIGHT,
-        PREDICTOR_LR,
-        PROJECTOR_LR,
-        config.encoder_learning_rate,
-    );
-
-    assert_eq!(
-        model.target_projector.weight, model.projector.weight,
-        "step 2 should hard-copy target projector once warmup reaches momentum 0.0"
-    );
-    assert_eq!(
-        model.target_projector.bias, model.projector.bias,
-        "step 2 should hard-copy target bias once warmup reaches momentum 0.0"
-    );
-
     assert!(
-        model.target_projection_momentum() < 1e-6,
-        "step 2 momentum must be near zero after warmup transition"
+        tensor_symmetric_relative_difference(&frozen.projector.weight, &trainable.projector.weight)
+            < 1e-6,
+        "projector weights diverged across frozen/trainable scheduled warmup runs"
+    );
+    assert!(
+        tensor_symmetric_relative_difference(
+            &frozen.target_projector.weight,
+            &trainable.target_projector.weight
+        ) < 1e-6,
+        "target projector weights diverged across frozen/trainable scheduled warmup runs"
+    );
+    assert!(
+        tensor_symmetric_relative_difference(&frozen.target_projector.bias, &trainable.target_projector.bias)
+            < 1e-6,
+        "target projector biases diverged across frozen/trainable scheduled warmup runs"
     );
 }
 
