@@ -443,3 +443,39 @@ pub fn assert_seed_range_has_single_and_double_square_batch_examples(
 
     (saw_single_square_batches, saw_double_square_batches)
 }
+
+pub fn assert_seed_range_has_both_motion_modes(
+    seed_count: u64,
+    mut make_batch: impl FnMut(u64) -> (Tensor, Tensor),
+) -> (bool, bool) {
+    let mut saw_slow_motion = false;
+    let mut saw_fast_motion = false;
+
+    for seed in 0..seed_count {
+        let (x_t, x_t1) = make_batch(seed);
+
+        for sample in 0..BATCH_SIZE {
+            match motion_dx_for_sample(&x_t, &x_t1, sample) {
+                SLOW_MOTION_DX => saw_slow_motion = true,
+                FAST_MOTION_DX => saw_fast_motion = true,
+                dx => panic!(
+                    "unexpected motion dx {} in seed {} sample {}",
+                    dx, seed, sample
+                ),
+            }
+        }
+    }
+
+    assert!(
+        saw_slow_motion,
+        "never observed slow motion in {} seeds",
+        seed_count
+    );
+    assert!(
+        saw_fast_motion,
+        "never observed fast motion in {} seeds",
+        seed_count
+    );
+
+    (saw_slow_motion, saw_fast_motion)
+}

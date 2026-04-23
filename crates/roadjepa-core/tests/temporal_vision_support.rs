@@ -4,7 +4,7 @@ mod temporal_vision;
 
 use roadjepa_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
-    BATCH_SIZE, FAST_MOTION_DX, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, SLOW_MOTION_DX,
+    BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     batch_has_both_motion_modes, batch_has_min_motion_mode_counts, fast_mode_channel_summary,
     fast_motion_feature_for_sample, make_frozen_encoder, make_temporal_batch, make_train_batch,
@@ -511,23 +511,8 @@ fn temporal_batch_contains_expected_square_counts_and_decays_mass() {
 
 #[test]
 fn generator_exposes_both_motion_modes_across_seed_range() {
-    let mut saw_slow_motion = false;
-    let mut saw_fast_motion = false;
-
-    for seed in 0..64 {
-        let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
-
-        for sample in 0..BATCH_SIZE {
-            match motion_dx_for_sample(&x_t, &x_t1, sample) {
-                SLOW_MOTION_DX => saw_slow_motion = true,
-                FAST_MOTION_DX => saw_fast_motion = true,
-                dx => panic!("unexpected motion dx {}", dx),
-            }
-        }
-    }
-
-    assert!(saw_slow_motion, "never observed slow motion");
-    assert!(saw_fast_motion, "never observed fast motion");
+    let (_saw_slow_motion, _saw_fast_motion) =
+        assert_seed_range_has_both_motion_modes(64, |seed| make_temporal_batch(BATCH_SIZE, seed));
 }
 
 #[test]
