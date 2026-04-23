@@ -56,7 +56,8 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
-- `--target-momentum-warmup-steps` linearly interpolates momentum from start to end over the first N steps
+- `--target-momentum-end` can also be passed as `--target-projection-momentum-end`
+- `--target-momentum-warmup-steps` linearly interpolates momentum from start to end over the first N steps (alias: `--target-projection-warmup-steps`)
 - `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
