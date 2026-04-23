@@ -319,6 +319,7 @@ pub fn total_mass(tensor: &Tensor, sample: usize) -> f32 {
     total
 }
 
+#[cfg(test)]
 pub fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
     let mut count = 0usize;
 
@@ -333,6 +334,7 @@ pub fn active_cell_count(tensor: &Tensor, sample: usize) -> usize {
     count
 }
 
+#[cfg(test)]
 pub fn assert_square_footprint_and_decay_invariants(
     x_t: &Tensor,
     x_t1: &Tensor,
@@ -378,6 +380,7 @@ pub fn assert_square_footprint_and_decay_invariants(
     (single_square_samples, double_square_samples)
 }
 
+#[cfg(test)]
 pub fn assert_seed_range_has_single_and_double_square_batch_examples(
     seed_count: u64,
     mut make_batch: impl FnMut(u64) -> (Tensor, Tensor),
@@ -408,6 +411,7 @@ pub fn assert_seed_range_has_single_and_double_square_batch_examples(
     (saw_single_square_batches, saw_double_square_batches)
 }
 
+#[cfg(test)]
 pub fn assert_seed_range_has_both_motion_modes(
     seed_count: u64,
     mut make_batch: impl FnMut(u64) -> (Tensor, Tensor),

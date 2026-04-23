@@ -115,7 +115,7 @@ fn main() {
     let mut model =
         ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor);
 
-    let initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
+    let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
     let initial_target = model.target_projection(&train_probe_t1);
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
