@@ -13,11 +13,12 @@ pub const EXTRA_SQUARE_CHANCE: f64 = 0.5;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TemporalRunConfig {
     pub train_base_seed: u64,
     pub total_steps: usize,
     pub log_every: usize,
+    pub encoder_learning_rate: f32,
 }
 
 impl TemporalRunConfig {
@@ -25,6 +26,7 @@ impl TemporalRunConfig {
         default_train_base_seed: u64,
         default_total_steps: usize,
         default_log_every: usize,
+        default_encoder_learning_rate: f32,
     ) -> Self {
         let args: Vec<String> = std::env::args().collect();
 
@@ -41,6 +43,11 @@ impl TemporalRunConfig {
             .or_else(|| parse_usize_arg(&args, "--log"))
             .unwrap_or(default_log_every);
 
+        let encoder_learning_rate = parse_f32_arg(&args, "--encoder-lr")
+            .or_else(|| parse_f32_arg(&args, "--encoder-learning-rate"))
+            .or_else(|| parse_f32_arg_env("JEPRA_ENCODER_LR"))
+            .unwrap_or(default_encoder_learning_rate);
+
         assert!(
             total_steps > 0,
             "train steps must be greater than 0, got {}",
@@ -56,6 +63,7 @@ impl TemporalRunConfig {
             train_base_seed,
             total_steps,
             log_every,
+            encoder_learning_rate,
         }
     }
 }
@@ -86,6 +94,19 @@ fn parse_usize_arg(args: &[String], flag: &str) -> Option<usize> {
     parse_arg_value(args, flag)
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|&value| value > 0)
+}
+
+fn parse_f32_arg(args: &[String], flag: &str) -> Option<f32> {
+    parse_arg_value(args, flag)
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|&value| value.is_finite() && value >= 0.0)
+}
+
+fn parse_f32_arg_env(flag: &str) -> Option<f32> {
+    std::env::var(flag)
+        .ok()
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 #[derive(Debug, Clone, Copy)]

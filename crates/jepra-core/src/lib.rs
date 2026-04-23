@@ -7,8 +7,8 @@ pub mod predictor;
 pub mod tensor;
 pub mod vision_jepa;
 
-pub use conv::Conv2d;
-pub use encoder::{ConvEncoder, EmbeddingEncoder};
+pub use conv::{Conv2d, Conv2dGrads};
+pub use encoder::{ConvEncoder, ConvEncoderGrads, EmbeddingEncoder, EmbeddingEncoderGrads};
 pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
@@ -1088,6 +1088,115 @@ mod tests {
 
         assert_eq!(step_loss, initial_loss);
         assert!(final_loss + 1e-6 < initial_loss);
+    }
+
+    #[test]
+    fn vision_jepa_step_with_trainable_encoder_updates_encoder_and_predictor() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0
+                    2.0, // out channel 1
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let encoder = EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2));
+
+        let fc1 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+        let mut model = VisionJepa::new(encoder, predictor);
+
+        let x_t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+        let x_t1 = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![1, 1, 2, 2]);
+
+        let encoder_snapshot = model.encoder.clone();
+        let predictor_fc1_weight_snapshot = model.predictor.fc1.weight.clone();
+        let predictor_fc1_bias_snapshot = model.predictor.fc1.bias.clone();
+        let predictor_fc2_weight_snapshot = model.predictor.fc2.weight.clone();
+        let predictor_fc2_bias_snapshot = model.predictor.fc2.bias.clone();
+        let initial_loss = model.losses(&x_t, &x_t1).0;
+
+        let mut best_loss = initial_loss;
+
+        for _ in 0..4 {
+            model.step_with_trainable_encoder(&x_t, &x_t1, 0.02, 0.005);
+            best_loss = best_loss.min(model.losses(&x_t, &x_t1).0);
+        }
+
+        assert_ne!(model.encoder, encoder_snapshot);
+        assert_ne!(model.predictor.fc1.weight, predictor_fc1_weight_snapshot);
+        assert_ne!(model.predictor.fc1.bias, predictor_fc1_bias_snapshot);
+        assert_ne!(model.predictor.fc2.weight, predictor_fc2_weight_snapshot);
+        assert_ne!(model.predictor.fc2.bias, predictor_fc2_bias_snapshot);
+        assert!(best_loss < initial_loss);
+    }
+
+    #[test]
+    fn vision_jepa_step_with_trainable_encoder_can_disable_encoder_update_with_zero_lr() {
+        let conv1 = Conv2d::new(
+            Tensor::new(
+                vec![
+                    1.0, // out channel 0
+                    2.0, // out channel 1
+                ],
+                vec![2, 1, 1, 1],
+            ),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let conv2 = Conv2d::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2, 1, 1]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+            1,
+            0,
+        );
+
+        let encoder = EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2));
+
+        let fc1 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let fc2 = Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::new(vec![0.0, 0.0], vec![2]),
+        );
+
+        let predictor = Predictor::new(fc1, fc2);
+        let mut model = VisionJepa::new(encoder, predictor);
+
+        let x_t = Tensor::new(vec![1.0, 2.0, 3.0, 4.0], vec![1, 1, 2, 2]);
+        let x_t1 = Tensor::new(vec![2.0, 4.0, 6.0, 8.0], vec![1, 1, 2, 2]);
+
+        let encoder_snapshot = model.encoder.clone();
+
+        model.step_with_trainable_encoder(&x_t, &x_t1, 0.2, 0.0);
+
+        assert_eq!(model.encoder, encoder_snapshot);
     }
 
     #[test]

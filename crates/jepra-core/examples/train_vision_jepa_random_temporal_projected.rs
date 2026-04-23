@@ -46,7 +46,7 @@ fn make_predictor() -> Predictor {
 
 fn main() {
     let run_config =
-        temporal_vision::TemporalRunConfig::from_args(TRAIN_BASE_SEED, NUM_STEPS, LOG_EVERY);
+        temporal_vision::TemporalRunConfig::from_args(TRAIN_BASE_SEED, NUM_STEPS, LOG_EVERY, 0.0);
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",

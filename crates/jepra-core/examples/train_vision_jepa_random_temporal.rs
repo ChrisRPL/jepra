@@ -19,6 +19,7 @@ const TRAIN_BASE_SEED: u64 = 1_000;
 const NUM_STEPS: usize = 300;
 const LOG_EVERY: usize = 25;
 const LR: f32 = 0.02;
+const ENCODER_LR: f32 = 0.0;
 
 fn make_predictor() -> Predictor {
     let fc1 = Linear::new(
@@ -42,12 +43,20 @@ fn make_predictor() -> Predictor {
 }
 
 pub fn main() {
-    let run_config =
-        temporal_vision::TemporalRunConfig::from_args(TRAIN_BASE_SEED, NUM_STEPS, LOG_EVERY);
+    let run_config = temporal_vision::TemporalRunConfig::from_args(
+        TRAIN_BASE_SEED,
+        NUM_STEPS,
+        LOG_EVERY,
+        ENCODER_LR,
+    );
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",
-        run_config.train_base_seed, run_config.total_steps, run_config.log_every
+        run_config.train_base_seed, run_config.total_steps, run_config.log_every,
+    );
+    println!(
+        "temporal run config | encoder learning rate {}",
+        run_config.encoder_learning_rate
     );
 
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
@@ -121,7 +130,12 @@ pub fn main() {
         initial_val_loss,
         |model, step, should_log| {
             let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
-            let (train_loss, _) = model.step(&x_t, &x_t1, LR);
+            let (train_loss, _) = model.step_with_trainable_encoder(
+                &x_t,
+                &x_t1,
+                LR,
+                run_config.encoder_learning_rate,
+            );
             if should_log {
                 temporal_vision::print_temporal_train_val_metrics(
                     step,

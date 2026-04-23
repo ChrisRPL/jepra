@@ -268,4 +268,40 @@ impl Tensor {
 
         out
     }
+
+    pub fn global_avg_pool2d_backward(&self, out_h: usize, out_w: usize) -> Tensor {
+        assert!(
+            self.ndim() == 2,
+            "global_avg_pool2d_backward expects 2D grad tensor [B, C], got shape {:?}",
+            self.shape
+        );
+
+        let batch = self.shape[0];
+        let channels = self.shape[1];
+        let out_area = out_h * out_w;
+
+        assert!(
+            out_area > 0,
+            "global_avg_pool2d_backward expects non-empty output spatial size, got {}x{}",
+            out_h,
+            out_w
+        );
+
+        let mut out = Tensor::zeros(vec![batch, channels, out_h, out_w]);
+        let scale = 1.0 / out_area as f32;
+
+        for b in 0..batch {
+            for c in 0..channels {
+                let grad = self.get(&[b, c]) * scale;
+
+                for h in 0..out_h {
+                    for w in 0..out_w {
+                        out.set(&[b, c, h, w], grad);
+                    }
+                }
+            }
+        }
+
+        out
+    }
 }

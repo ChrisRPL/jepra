@@ -132,6 +132,16 @@ impl VisionJepa {
     }
 
     pub fn step(&mut self, x_t: &Tensor, x_t1: &Tensor, lr: f32) -> (f32, f32) {
+        self.step_with_trainable_encoder(x_t, x_t1, lr, 0.0)
+    }
+
+    pub fn step_with_trainable_encoder(
+        &mut self,
+        x_t: &Tensor,
+        x_t1: &Tensor,
+        predictor_lr: f32,
+        encoder_lr: f32,
+    ) -> (f32, f32) {
         let z_t = self.encode(x_t);
         let pred = self.predictor.forward(&z_t);
         let target = self.target_latent(x_t1);
@@ -141,7 +151,9 @@ impl VisionJepa {
 
         let grad_out = mse_loss_grad(&pred, &target);
         let grads = self.predictor.backward(&z_t, &grad_out);
-        self.predictor.sgd_step(&grads, lr);
+        let encoder_grads = self.encoder.backward(x_t, &grads.grad_input);
+        self.predictor.sgd_step(&grads, predictor_lr);
+        self.encoder.sgd_step(&encoder_grads, encoder_lr);
 
         (prediction_loss, total_loss)
     }

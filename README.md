@@ -5,7 +5,7 @@ The crate is published as `jepra-core`.
 
 ## Current Scope (from `VISION.md`)
 
-- frozen-encoder `VisionJepa` and `ProjectedVisionJepa` training paths
+- `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline and optional trainable-encoder updates in unprojected mode
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - temporal data now supports one or two moving squares per sample in the synthetic generator
@@ -17,14 +17,14 @@ The crate is published as `jepra-core`.
 ```bash
 cargo test --manifest-path crates/jepra-core/Cargo.toml --test temporal_vision_support
 cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support
-cargo clippy --all-targets --all-features
+cargo clippy --manifest-path crates/jepra-core/Cargo.toml --all-targets --all-features
 ```
 
 ## Current Tracked Scope
 
 - Use `cargo test --manifest-path crates/jepra-core/Cargo.toml --all-targets` to validate core suite; expected test count may vary with added coverage.
 - CI in this repo runs the core checks from `.github/workflows/ci.yml`.
-- `cargo test --test temporal_vision_support` and `--test projected_temporal_support` should both pass with deterministic loss reductions and reproducible trajectories
+- `cargo test --manifest-path crates/jepra-core/Cargo.toml --test temporal_vision_support` and `cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support` should both pass with deterministic loss reductions and reproducible trajectories
 - `train_vision_jepa_random_temporal.rs` and `train_vision_jepa_random_temporal_projected.rs` are the hardening examples for the JEPA proof path
 - `train_vision_jepa.rs` remains legacy and delegates to `train_vision_jepa_random_temporal.rs` via `train_vision_jepa_random_temporal::main()`.
 
@@ -38,8 +38,20 @@ JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --ex
 JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected
 # explicit flags now supported:
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal -- --train-base-seed 1400 --train-steps 40 --log-every 10
+# cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal -- --encoder-lr 0.005 --train-steps 60 --train-base-seed 1400
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --seed 21000 --steps 80 --log 20
 ```
+
+### Temporal Example CLI
+
+Temporal examples accept shared args via `TemporalRunConfig`:
+
+- `--train-base-seed` (`--seed`) sets the base training seed
+- `--train-steps` (`--steps`) sets total training steps
+- `--log-every` (`--log`) sets log cadence (must be > 0)
+- `--encoder-lr` (or `--encoder-learning-rate`) controls unprojected encoder updates; `0.0` keeps frozen encoder baseline
+- `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
+- `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
 
 ## Fast Feedback Loop
 
