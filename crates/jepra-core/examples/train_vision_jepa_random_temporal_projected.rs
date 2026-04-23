@@ -10,9 +10,9 @@ use projected_temporal::{
     projected_validation_batch_losses_from_base_seed, projection_stats,
 };
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary,
+    MIN_MIXED_MODE_COUNT, assert_temporal_contract, assert_temporal_experiment_improved,
+    make_frozen_encoder, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -193,31 +193,14 @@ fn main() {
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);
 
-    assert!(
-        final_train_total_loss < initial_train_total_loss,
-        "probe total loss did not improve: {:.6} -> {:.6}",
+    assert_temporal_experiment_improved(
+        "projected",
         initial_train_total_loss,
-        final_train_total_loss
-    );
-    assert!(
-        final_val_total_loss < initial_val_total_loss,
-        "validation total loss did not improve: {:.6} -> {:.6}",
-        initial_val_total_loss,
-        final_val_total_loss
-    );
-    assert!(
-        final_train_total_loss
-            < initial_train_total_loss * PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        "probe total loss stayed too high: {:.6} >= {:.6}",
         final_train_total_loss,
-        initial_train_total_loss * PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
-    );
-    assert!(
-        final_val_total_loss
-            < initial_val_total_loss * PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-        "validation total loss stayed too high: {:.6} >= {:.6}",
+        initial_val_total_loss,
         final_val_total_loss,
-        initial_val_total_loss * PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
+        PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     );
 
     println!(

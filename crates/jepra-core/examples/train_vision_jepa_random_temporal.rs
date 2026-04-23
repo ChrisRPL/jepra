@@ -10,9 +10,9 @@ use temporal_validation::{
     temporal_validation_batch_loss_from_base_seed,
 };
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, assert_temporal_contract, make_frozen_encoder, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary,
+    MIN_MIXED_MODE_COUNT, assert_temporal_contract, assert_temporal_experiment_improved,
+    make_frozen_encoder, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -156,29 +156,14 @@ pub fn main() {
     let final_pred = model.predict_next_latent(&train_probe_t);
     let final_target = model.target_latent(&train_probe_t1);
 
-    assert!(
-        final_train_loss < initial_train_loss,
-        "probe train loss did not improve: {:.6} -> {:.6}",
+    assert_temporal_experiment_improved(
+        "unprojected",
         initial_train_loss,
-        final_train_loss
-    );
-    assert!(
-        final_val_loss < initial_val_loss,
-        "validation loss did not improve: {:.6} -> {:.6}",
-        initial_val_loss,
-        final_val_loss
-    );
-    assert!(
-        final_train_loss < initial_train_loss * UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        "probe train loss stayed too high: {:.6} >= {:.6}",
         final_train_loss,
-        initial_train_loss * UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
-    );
-    assert!(
-        final_val_loss < initial_val_loss * UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-        "validation loss stayed too high: {:.6} >= {:.6}",
+        initial_val_loss,
         final_val_loss,
-        initial_val_loss * UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     );
 
     println!(

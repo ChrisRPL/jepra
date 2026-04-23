@@ -161,6 +161,45 @@ pub fn print_temporal_experiment_summary(tag: &str, summary: &TemporalExperiment
     );
 }
 
+pub fn assert_temporal_experiment_improved(
+    experiment_tag: &str,
+    initial_train_loss: f32,
+    final_train_loss: f32,
+    initial_validation_loss: f32,
+    final_validation_loss: f32,
+    train_max_reduction_ratio: f32,
+    validation_max_reduction_ratio: f32,
+) {
+    assert!(
+        final_train_loss < initial_train_loss,
+        "{} probe train loss did not improve: {:.6} -> {:.6}",
+        experiment_tag,
+        initial_train_loss,
+        final_train_loss
+    );
+    assert!(
+        final_validation_loss < initial_validation_loss,
+        "{} validation loss did not improve: {:.6} -> {:.6}",
+        experiment_tag,
+        initial_validation_loss,
+        final_validation_loss
+    );
+    assert!(
+        final_train_loss < initial_train_loss * train_max_reduction_ratio,
+        "{} train loss stayed too high: {:.6} >= {:.6}",
+        experiment_tag,
+        final_train_loss,
+        initial_train_loss * train_max_reduction_ratio
+    );
+    assert!(
+        final_validation_loss < initial_validation_loss * validation_max_reduction_ratio,
+        "{} validation loss stayed too high: {:.6} >= {:.6}",
+        experiment_tag,
+        final_validation_loss,
+        initial_validation_loss * validation_max_reduction_ratio
+    );
+}
+
 pub fn motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {
     let center_x_t = square_center_x(x_t, sample);
     let center_x_t1 = square_center_x(x_t1, sample);
