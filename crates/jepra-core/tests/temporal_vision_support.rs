@@ -12,7 +12,8 @@ use temporal_validation::{
     temporal_validation_batch_loss, temporal_validation_batch_loss_from_base_seed,
 };
 use temporal_vision::{
-    BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, assert_seed_range_has_both_motion_modes,
+    BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, TemporalExperimentSummary, TemporalRunConfig,
+    assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     assert_temporal_experiment_improved, batch_has_both_motion_modes,
     batch_has_min_motion_mode_counts, make_frozen_encoder, make_temporal_batch, make_train_batch,
@@ -140,6 +141,47 @@ fn unprojected_short_run_convergence(train_base_seed: u64, predictor_seed: u64) 
     )
 }
 
+fn unprojected_run(
+    train_base_seed: u64,
+    predictor_seed: u64,
+    predictor_lr: f32,
+    encoder_lr: f32,
+) -> TemporalExperimentSummary {
+    let encoder = make_frozen_encoder();
+    let mut model = VisionJepa::new(encoder, make_predictor_with_seed(predictor_seed));
+
+    let steps = 80;
+    let config = TemporalRunConfig {
+        train_base_seed,
+        total_steps: steps,
+        log_every: steps,
+        encoder_learning_rate: encoder_lr,
+    };
+
+    let (probe_t, probe_t1) = make_train_batch(config.train_base_seed, 0);
+    let initial_train_loss = batch_loss(&model, &probe_t, &probe_t1);
+    let initial_validation_loss = validation_loss(&model);
+
+    let summary = temporal_vision::run_temporal_experiment_with_summary(
+        config,
+        &mut model,
+        initial_train_loss,
+        initial_validation_loss,
+        |model, step, _| {
+            let (x_t, x_t1) = make_train_batch(config.train_base_seed, step as u64);
+            let (train_loss, _) = if encoder_lr > 0.0 {
+                model.step_with_trainable_encoder(&x_t, &x_t1, predictor_lr, encoder_lr)
+            } else {
+                model.step(&x_t, &x_t1, predictor_lr)
+            };
+            train_loss
+        },
+        |model| validation_loss(model),
+    );
+
+    summary
+}
+
 #[test]
 fn unprojected_short_runs_have_stable_convergence_ratios() {
     let train_base_seed = 12_000;
@@ -172,6 +214,55 @@ fn unprojected_short_runs_have_stable_convergence_ratios() {
         "unprojected validation convergence spread too large: [{:.6}, {:.6}]",
         val_min,
         val_max
+    );
+}
+
+#[test]
+fn unprojected_frozen_vs_trainable_encoder_protocol_has_stable_behavior() {
+    let train_base_seed = 30_000u64;
+    let predictor_seed = 21_500u64;
+    let predictor_lr = 0.02f32;
+    let encoder_lr = 0.004f32;
+
+    let frozen = unprojected_run(train_base_seed, predictor_seed, predictor_lr, 0.0);
+    let trainable = unprojected_run(train_base_seed, predictor_seed, predictor_lr, encoder_lr);
+
+    assert_temporal_experiment_improved(
+        "frozen unprojected",
+        frozen.initial_train_loss,
+        frozen.final_train_loss,
+        frozen.initial_validation_loss,
+        frozen.final_validation_loss,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+    assert_temporal_experiment_improved(
+        "trainable unprojected",
+        trainable.initial_train_loss,
+        trainable.final_train_loss,
+        trainable.initial_validation_loss,
+        trainable.final_validation_loss,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+
+    assert!(
+        trainable.final_train_loss <= frozen.final_train_loss * 2.0,
+        "trainable final train loss regressed too far vs frozen: frozen {:.6} vs trainable {:.6}",
+        frozen.final_train_loss,
+        trainable.final_train_loss
+    );
+    assert!(
+        trainable.final_validation_loss <= frozen.final_validation_loss * 2.0,
+        "trainable final validation loss regressed too far vs frozen: frozen {:.6} vs trainable {:.6}",
+        frozen.final_validation_loss,
+        trainable.final_validation_loss
+    );
+    assert!(
+        trainable.final_train_loss <= frozen.final_train_loss * 2.0,
+        "trainable final train loss regressed too far vs frozen: frozen {:.6} vs trainable {:.6}",
+        frozen.final_train_loss,
+        trainable.final_train_loss
     );
 }
 
