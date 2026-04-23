@@ -11,6 +11,7 @@ use projected_temporal::{
 };
 use roadjepa_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use temporal_vision::{
+    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, make_frozen_encoder,
     make_train_batch,
@@ -23,8 +24,6 @@ const REGULARIZER_WEIGHT: f32 = 1e-4;
 const TRAIN_BASE_SEED: u64 = 11_000;
 const VALIDATION_BASE_SEED: u64 = 111_000;
 const VALIDATION_BATCHES: usize = 8;
-const TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
-const VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -876,19 +875,19 @@ fn projected_random_temporal_loop_reduces_train_and_validation_loss() {
         final_validation.2
     );
     assert!(
-        final_losses.2 < initial_losses.2 * TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        final_losses.2 < initial_losses.2 * PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
         "projected train total loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
         steps,
         final_losses.2,
         initial_losses.2,
-        TRAIN_LOSS_MAX_REDUCTION_RATIO
+        PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
     );
     assert!(
-        final_validation.2 < initial_validation.2 * VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        final_validation.2 < initial_validation.2 * PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
         "projected validation total loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
         steps,
         final_validation.2,
         initial_validation.2,
-        VALIDATION_LOSS_MAX_REDUCTION_RATIO
+        PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
     );
 }
