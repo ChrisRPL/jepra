@@ -77,6 +77,10 @@ run_profile() {
           status="summary_missing"
           failures=$((failures + 1))
         fi
+      elif [[ "$summary_line" != *"target drift"* ]]; then
+        summary_line="${summary_line} | drift_field_missing"
+        status="summary_missing"
+        failures=$((failures + 1))
       fi
     fi
 

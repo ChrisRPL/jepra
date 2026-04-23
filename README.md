@@ -80,6 +80,23 @@ The script prints one structured line per seed/momentum:
 seed=<seed> momentum=<1.0|0.5|0.0|1.0->0.5> profile=<warmup|frozen|trainable|zero> status=ok | projected run summary | steps 80 | train <start> -> <end> (Δ <delta>, improved=<true|false>) | val <start> -> <end> (Δ <delta>, improved=<true|false>) | target drift <start> -> <end> (Δ <delta>)
 ```
 
+Latest captured fixed-seed hardening evidence (`2026-04-23`, 80 steps, log 20):
+
+```text
+seed=21000 momentum=1.0->0.5 profile=warmup status=ok | projected run summary | steps 80 | train 22.758507 -> 0.376958 (Δ -22.381550, improved=true) | val 24.749554 -> 0.427223 (Δ -24.322330, improved=true) | target drift 0.000000 -> 0.000641 (Δ +0.000641)
+seed=21001 momentum=1.0->0.5 profile=warmup status=ok | projected run summary | steps 80 | train 17.251961 -> 0.253679 (Δ -16.998281, improved=true) | val 24.749554 -> 0.349486 (Δ -24.400068, improved=true) | target drift 0.000000 -> 0.000310 (Δ +0.000310)
+seed=21002 momentum=1.0->0.5 profile=warmup status=ok | projected run summary | steps 80 | train 32.680893 -> 0.320816 (Δ -32.360077, improved=true) | val 24.749554 -> 0.325427 (Δ -24.424128, improved=true) | target drift 0.000000 -> 0.000134 (Δ +0.000134)
+seed=21000 momentum=1.0 profile=frozen status=ok | projected run summary | steps 80 | train 22.758507 -> 0.492315 (Δ -22.266191, improved=true) | val 24.749554 -> 0.589146 (Δ -24.160408, improved=true) | target drift 0.000000 -> 0.016285 (Δ +0.016285)
+seed=21001 momentum=1.0 profile=frozen status=ok | projected run summary | steps 80 | train 17.251961 -> 0.388103 (Δ -16.863857, improved=true) | val 24.749554 -> 0.427732 (Δ -24.321821, improved=true) | target drift 0.000000 -> 0.018250 (Δ +0.018250)
+seed=21002 momentum=1.0 profile=frozen status=ok | projected run summary | steps 80 | train 32.680893 -> 0.366556 (Δ -32.314335, improved=true) | val 24.749554 -> 0.327721 (Δ -24.421833, improved=true) | target drift 0.000000 -> 0.014827 (Δ +0.014827)
+seed=21000 momentum=0.5 profile=trainable status=ok | projected run summary | steps 80 | train 22.758507 -> 0.284548 (Δ -22.473959, improved=true) | val 24.749554 -> 0.313719 (Δ -24.435835, improved=true) | target drift 0.000000 -> 0.000065 (Δ +0.000065)
+seed=21001 momentum=0.5 profile=trainable status=ok | projected run summary | steps 80 | train 17.251961 -> 0.194428 (Δ -17.057533, improved=true) | val 24.749554 -> 0.351039 (Δ -24.398514, improved=true) | target drift 0.000000 -> 0.000210 (Δ +0.000210)
+seed=21002 momentum=0.5 profile=trainable status=ok | projected run summary | steps 80 | train 32.680893 -> 0.326627 (Δ -32.354267, improved=true) | val 24.749554 -> 0.315798 (Δ -24.433756, improved=true) | target drift 0.000000 -> 0.000216 (Δ +0.000216)
+seed=21000 momentum=0.0 profile=zero status=ok | projected run summary | steps 80 | train 22.758507 -> 0.347984 (Δ -22.410522, improved=true) | val 24.749554 -> 0.389587 (Δ -24.359966, improved=true) | target drift 0.000000 -> 0.000000 (Δ +0.000000)
+seed=21001 momentum=0.0 profile=zero status=ok | projected run summary | steps 80 | train 17.251961 -> 0.223455 (Δ -17.028505, improved=true) | val 24.749554 -> 0.345468 (Δ -24.404085, improved=true) | target drift 0.000000 -> 0.000000 (Δ +0.000000)
+seed=21002 momentum=0.0 profile=zero status=ok | projected run summary | steps 80 | train 32.680893 -> 0.322963 (Δ -32.357929, improved=true) | val 24.749554 -> 0.327485 (Δ -24.422068, improved=true) | target drift 0.000000 -> 0.000000 (Δ +0.000000)
+```
+
 ## Fast Feedback Loop
 
 For quick iteration:
