@@ -164,6 +164,31 @@ fn projected_validation_losses_projection_support(model: &ProjectedVisionJepa) -
 }
 
 #[test]
+#[should_panic(expected = "validation_batches must be greater than 0")]
+fn projected_validation_batch_losses_zero_batch_count_panics() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(
+        encoder,
+        projector,
+        target_projector,
+        make_predictor(),
+    );
+
+    let _ = projected_validation_batch_losses(
+        &model.encoder,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        0,
+        |seed| make_train_batch(seed, 0),
+    );
+}
+
+#[test]
 fn gaussian_moment_regularizer_is_zero_for_zero_mean_unit_variance_latents() {
     let latents = Tensor::new(vec![-1.0, 1.0, 1.0, -1.0], vec![2, 2]);
 

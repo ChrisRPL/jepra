@@ -42,6 +42,20 @@ fn validation_loss_projection_support(model: &VisionJepa) -> f32 {
 }
 
 #[test]
+#[should_panic(expected = "validation_batches must be greater than 0")]
+fn unprojected_validation_batch_losses_zero_batch_count_panics() {
+    let encoder = make_frozen_encoder();
+    let model = VisionJepa::new(encoder, make_predictor());
+
+    let _ = temporal_validation_batch_loss(
+        &model,
+        UNPROJECTED_VALIDATION_BASE_SEED,
+        0,
+        |batch_idx| make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, batch_idx),
+    );
+}
+
+#[test]
 fn unprojected_validation_loss_helpers_match() {
     let encoder = make_frozen_encoder();
     let model = VisionJepa::new(encoder, make_predictor());
