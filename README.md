@@ -5,7 +5,7 @@ The crate is published as `jepra-core`.
 
 ## Current Scope (from `VISION.md`)
 
-- `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline and optional trainable-encoder updates in unprojected mode
+- `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline, a compact frozen-encoder option, and optional trainable-encoder updates in unprojected mode
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - temporal data now supports one or two moving squares per sample in the synthetic generator
@@ -50,6 +50,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--train-steps` (`--steps`) sets total training steps
 - `--log-every` (`--log`) sets log cadence (must be > 0)
 - `--encoder-lr` (or `--encoder-learning-rate`) controls unprojected encoder updates; `0.0` keeps frozen encoder baseline
+- `--compact-encoder` uses the compact momentum-aware frozen encoder variant for unprojected path experiments
 - `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
 

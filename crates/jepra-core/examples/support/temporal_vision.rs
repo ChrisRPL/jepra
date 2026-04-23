@@ -19,6 +19,7 @@ pub struct TemporalRunConfig {
     pub total_steps: usize,
     pub log_every: usize,
     pub encoder_learning_rate: f32,
+    pub use_compact_encoder: bool,
 }
 
 impl TemporalRunConfig {
@@ -47,6 +48,7 @@ impl TemporalRunConfig {
             .or_else(|| parse_f32_arg(&args, "--encoder-learning-rate"))
             .or_else(|| parse_f32_arg_env("JEPRA_ENCODER_LR"))
             .unwrap_or(default_encoder_learning_rate);
+        let use_compact_encoder = args.iter().any(|arg| arg == "--compact-encoder");
 
         assert!(
             total_steps > 0,
@@ -64,6 +66,7 @@ impl TemporalRunConfig {
             total_steps,
             log_every,
             encoder_learning_rate,
+            use_compact_encoder,
         }
     }
 }
@@ -491,6 +494,24 @@ pub fn should_log_step(step: usize, log_every: usize) -> bool {
     step == 1 || step % log_every == 0
 }
 
+const COMPACT_ENCODER_CHANNELS: usize = 6;
+
+fn compact_encoder_channel_weights(row: usize, col: usize) -> [f32; COMPACT_ENCODER_CHANNELS] {
+    let center = (IMAGE_SIZE as f32 - 1.0) / 2.0;
+    let norm = (IMAGE_SIZE as f32 - 1.0).max(1.0);
+    let x = (col as f32 - center) / norm;
+    let y = (row as f32 - center) / norm;
+
+    [
+        1.0,   // total mass
+        x,     // x centroid signal
+        1.0,   // duplicate mass channel for compatibility with baseline
+        y,     // y centroid signal
+        x * x, // x dispersion signal
+        y * y, // y dispersion signal
+    ]
+}
+
 pub fn make_frozen_encoder() -> EmbeddingEncoder {
     let mut conv1_weights = Vec::with_capacity(3 * IMAGE_SIZE * IMAGE_SIZE);
 
@@ -529,6 +550,42 @@ pub fn make_frozen_encoder() -> EmbeddingEncoder {
             vec![3, 3, 1, 1],
         ),
         Tensor::new(vec![0.0, 0.0, 0.0], vec![3]),
+        1,
+        0,
+    );
+
+    EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2))
+}
+
+pub fn make_compact_frozen_encoder() -> EmbeddingEncoder {
+    let mut conv1_weights = Vec::with_capacity(COMPACT_ENCODER_CHANNELS * IMAGE_SIZE * IMAGE_SIZE);
+
+    for row in 0..IMAGE_SIZE {
+        for col in 0..IMAGE_SIZE {
+            conv1_weights.extend_from_slice(&compact_encoder_channel_weights(row, col));
+        }
+    }
+
+    let conv1 = Conv2d::new(
+        Tensor::new(
+            conv1_weights,
+            vec![COMPACT_ENCODER_CHANNELS, 1, IMAGE_SIZE, IMAGE_SIZE],
+        ),
+        Tensor::zeros(vec![COMPACT_ENCODER_CHANNELS]),
+        1,
+        0,
+    );
+
+    let conv2 = Conv2d::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, 0.0, 0.0, 0.10, 0.00, //
+                0.0, 1.0, 0.0, 0.05, 0.00, 0.00, //
+                0.0, 0.0, 1.0, 0.00, 0.00, 0.05,
+            ],
+            vec![3, COMPACT_ENCODER_CHANNELS, 1, 1],
+        ),
+        Tensor::new(vec![0.0, 0.0, -FAST_MOTION_MASS_THRESHOLD], vec![3]),
         1,
         0,
     );

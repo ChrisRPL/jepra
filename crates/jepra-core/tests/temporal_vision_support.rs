@@ -16,9 +16,10 @@ use temporal_vision::{
     assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     assert_temporal_experiment_improved, batch_has_both_motion_modes,
-    batch_has_min_motion_mode_counts, make_frozen_encoder, make_temporal_batch, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_dx_for_sample,
-    motion_mode_counts, square_center_x, total_mass,
+    batch_has_min_motion_mode_counts, make_compact_frozen_encoder, make_frozen_encoder,
+    make_temporal_batch, make_train_batch, make_validation_batch,
+    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
+    square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -105,7 +106,19 @@ fn make_predictor_with_seed(seed_offset: u64) -> Predictor {
 }
 
 fn unprojected_short_run_convergence(train_base_seed: u64, predictor_seed: u64) -> (f32, f32) {
-    let encoder = make_frozen_encoder();
+    unprojected_short_run_convergence_with_encoder(
+        train_base_seed,
+        predictor_seed,
+        make_frozen_encoder,
+    )
+}
+
+fn unprojected_short_run_convergence_with_encoder(
+    train_base_seed: u64,
+    predictor_seed: u64,
+    make_encoder: fn() -> jepra_core::EmbeddingEncoder,
+) -> (f32, f32) {
+    let encoder = make_encoder();
     let mut model = VisionJepa::new(encoder, make_predictor_with_seed(predictor_seed));
     let steps = 60;
     let lr = 0.02;
@@ -141,13 +154,40 @@ fn unprojected_short_run_convergence(train_base_seed: u64, predictor_seed: u64) 
     )
 }
 
-fn unprojected_run(
+#[test]
+fn unprojected_compact_encoder_stays_reasonable_on_short_run() {
+    let train_base_seed = 12_000u64;
+    let predictor_seed = 21_120u64;
+
+    let compact = unprojected_short_run_convergence_with_encoder(
+        train_base_seed,
+        predictor_seed,
+        make_compact_frozen_encoder,
+    );
+
+    assert!(
+        compact.0 <= UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        "compact short unprojected run did not shrink train loss enough: {:.6} > {:.6}",
+        compact.0,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    );
+    assert!(
+        compact.1 <= UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        "compact short unprojected run did not shrink val loss enough: {:.6} > {:.6}",
+        compact.1,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+}
+
+fn unprojected_run_with_encoder(
     train_base_seed: u64,
     predictor_seed: u64,
     predictor_lr: f32,
     encoder_lr: f32,
+    make_encoder: fn() -> jepra_core::EmbeddingEncoder,
+    use_compact_encoder: bool,
 ) -> TemporalExperimentSummary {
-    let encoder = make_frozen_encoder();
+    let encoder = make_encoder();
     let mut model = VisionJepa::new(encoder, make_predictor_with_seed(predictor_seed));
 
     let steps = 80;
@@ -155,6 +195,7 @@ fn unprojected_run(
         train_base_seed,
         total_steps: steps,
         log_every: steps,
+        use_compact_encoder,
         encoder_learning_rate: encoder_lr,
     };
 
@@ -180,6 +221,65 @@ fn unprojected_run(
     );
 
     summary
+}
+
+fn assert_unprojected_frozen_vs_trainable_protocol(
+    label: &str,
+    train_base_seed: u64,
+    predictor_seed: u64,
+    predictor_lr: f32,
+    encoder_lr: f32,
+    make_encoder: fn() -> jepra_core::EmbeddingEncoder,
+    use_compact_encoder: bool,
+) {
+    let frozen = unprojected_run_with_encoder(
+        train_base_seed,
+        predictor_seed,
+        predictor_lr,
+        0.0,
+        make_encoder,
+        use_compact_encoder,
+    );
+    let trainable = unprojected_run_with_encoder(
+        train_base_seed,
+        predictor_seed,
+        predictor_lr,
+        encoder_lr,
+        make_encoder,
+        use_compact_encoder,
+    );
+
+    assert_temporal_experiment_improved(
+        &format!("{label} frozen unprojected"),
+        frozen.initial_train_loss,
+        frozen.final_train_loss,
+        frozen.initial_validation_loss,
+        frozen.final_validation_loss,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+    assert_temporal_experiment_improved(
+        &format!("{label} trainable unprojected"),
+        trainable.initial_train_loss,
+        trainable.final_train_loss,
+        trainable.initial_validation_loss,
+        trainable.final_validation_loss,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+
+    assert!(
+        trainable.final_train_loss <= frozen.final_train_loss * 2.0,
+        "trainable final train loss regressed too far vs frozen for {label}: frozen {:.6} vs trainable {:.6}",
+        frozen.final_train_loss,
+        trainable.final_train_loss
+    );
+    assert!(
+        trainable.final_validation_loss <= frozen.final_validation_loss * 2.0,
+        "trainable final validation loss regressed too far vs frozen for {label}: frozen {:.6} vs trainable {:.6}",
+        frozen.final_validation_loss,
+        trainable.final_validation_loss
+    );
 }
 
 #[test]
@@ -219,50 +319,27 @@ fn unprojected_short_runs_have_stable_convergence_ratios() {
 
 #[test]
 fn unprojected_frozen_vs_trainable_encoder_protocol_has_stable_behavior() {
-    let train_base_seed = 30_000u64;
-    let predictor_seed = 21_500u64;
-    let predictor_lr = 0.02f32;
-    let encoder_lr = 0.004f32;
+    assert_unprojected_frozen_vs_trainable_protocol(
+        "base encoder",
+        30_000u64,
+        21_500u64,
+        0.02f32,
+        0.004f32,
+        make_frozen_encoder,
+        false,
+    );
+}
 
-    let frozen = unprojected_run(train_base_seed, predictor_seed, predictor_lr, 0.0);
-    let trainable = unprojected_run(train_base_seed, predictor_seed, predictor_lr, encoder_lr);
-
-    assert_temporal_experiment_improved(
-        "frozen unprojected",
-        frozen.initial_train_loss,
-        frozen.final_train_loss,
-        frozen.initial_validation_loss,
-        frozen.final_validation_loss,
-        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    );
-    assert_temporal_experiment_improved(
-        "trainable unprojected",
-        trainable.initial_train_loss,
-        trainable.final_train_loss,
-        trainable.initial_validation_loss,
-        trainable.final_validation_loss,
-        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    );
-
-    assert!(
-        trainable.final_train_loss <= frozen.final_train_loss * 2.0,
-        "trainable final train loss regressed too far vs frozen: frozen {:.6} vs trainable {:.6}",
-        frozen.final_train_loss,
-        trainable.final_train_loss
-    );
-    assert!(
-        trainable.final_validation_loss <= frozen.final_validation_loss * 2.0,
-        "trainable final validation loss regressed too far vs frozen: frozen {:.6} vs trainable {:.6}",
-        frozen.final_validation_loss,
-        trainable.final_validation_loss
-    );
-    assert!(
-        trainable.final_train_loss <= frozen.final_train_loss * 2.0,
-        "trainable final train loss regressed too far vs frozen: frozen {:.6} vs trainable {:.6}",
-        frozen.final_train_loss,
-        trainable.final_train_loss
+#[test]
+fn compact_unprojected_frozen_vs_trainable_encoder_protocol_has_stable_behavior() {
+    assert_unprojected_frozen_vs_trainable_protocol(
+        "compact encoder",
+        40_000u64,
+        21_800u64,
+        0.02f32,
+        0.004f32,
+        make_compact_frozen_encoder,
+        true,
     );
 }
 

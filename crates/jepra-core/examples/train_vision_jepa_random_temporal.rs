@@ -11,7 +11,7 @@ use temporal_validation::{
 };
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, assert_temporal_contract, assert_temporal_experiment_improved,
-    make_frozen_encoder, make_train_batch, make_validation_batch,
+    make_compact_frozen_encoder, make_frozen_encoder, make_train_batch, make_validation_batch,
     make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
 };
 
@@ -58,6 +58,14 @@ pub fn main() {
         "temporal run config | encoder learning rate {}",
         run_config.encoder_learning_rate
     );
+    println!(
+        "temporal run config | encoder variant {}",
+        if run_config.use_compact_encoder {
+            "compact(moment-aware)"
+        } else {
+            "frozen(base)"
+        }
+    );
 
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(run_config.train_base_seed, 1);
@@ -100,7 +108,11 @@ pub fn main() {
         mixed_val_probe_seed, mixed_slow_count, mixed_fast_count
     );
 
-    let encoder = make_frozen_encoder();
+    let encoder = if run_config.use_compact_encoder {
+        make_compact_frozen_encoder()
+    } else {
+        make_frozen_encoder()
+    };
     let predictor = make_predictor();
     let mut model = VisionJepa::new(encoder, predictor);
 
