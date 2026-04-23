@@ -511,8 +511,7 @@ fn temporal_batch_contains_expected_square_counts_and_decays_mass() {
 
 #[test]
 fn generator_exposes_both_motion_modes_across_seed_range() {
-    let (_saw_slow_motion, _saw_fast_motion) =
-        assert_seed_range_has_both_motion_modes(64, |seed| make_temporal_batch(BATCH_SIZE, seed));
+    assert_seed_range_has_both_motion_modes(64, |seed| make_temporal_batch(BATCH_SIZE, seed));
 }
 
 #[test]

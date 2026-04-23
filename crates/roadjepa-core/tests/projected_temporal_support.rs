@@ -164,10 +164,7 @@ fn projected_temporal_batch_contains_expected_square_counts_and_decays_mass() {
 
 #[test]
 fn projected_generator_exposes_both_motion_modes_across_seed_range() {
-    let (saw_slow_motion, saw_fast_motion) =
-        assert_seed_range_has_both_motion_modes(64, |seed| make_train_batch(seed, 0));
-    assert!(saw_slow_motion);
-    assert!(saw_fast_motion);
+    assert_seed_range_has_both_motion_modes(64, |seed| make_train_batch(seed, 0));
 }
 
 #[test]
