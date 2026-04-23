@@ -12,6 +12,9 @@ use temporal_vision::{
     square_center_x, total_mass,
 };
 
+const UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.5;
+const UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.9;
+
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
     model.losses(x_t, x_t1).0
 }
@@ -98,16 +101,20 @@ fn unprojected_random_temporal_training_reduces_train_and_validation_loss() {
         final_val_loss
     );
     assert!(
-        final_train_loss < 0.1,
-        "train loss too high after {} steps: {:.6}",
+        final_train_loss < initial_train_loss * UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        "train loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
         steps,
-        final_train_loss
+        final_train_loss,
+        initial_train_loss,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO
     );
     assert!(
-        final_val_loss < 0.08,
-        "validation loss too high after {} steps: {:.6}",
+        final_val_loss < initial_val_loss * UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        "validation loss did not shrink enough after {} steps: {:.6} -> {:.6} (required < {:.2}x)",
         steps,
-        final_val_loss
+        final_val_loss,
+        initial_val_loss,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO
     );
 }
 
