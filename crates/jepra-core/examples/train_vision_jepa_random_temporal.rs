@@ -121,15 +121,14 @@ pub fn main() {
             let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
             let (train_loss, _) = model.step(&x_t, &x_t1, LR);
             if should_log {
-                println!(
-                    "step {:03} | train {:.6} | val {:.6}",
+                temporal_vision::print_temporal_train_val_metrics(
                     step,
                     train_loss,
                     temporal_validation_batch_loss_from_base_seed(
                         &model,
                         UNPROJECTED_VALIDATION_BASE_SEED,
                         UNPROJECTED_VALIDATION_BATCHES,
-                    )
+                    ),
                 );
             }
         },

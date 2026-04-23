@@ -325,6 +325,34 @@ where
     }
 }
 
+#[allow(dead_code)]
+pub fn print_temporal_train_val_metrics(step: usize, train_loss: f32, val_loss: f32) {
+    println!(
+        "step {:03} | train {:.6} | val {:.6}",
+        step, train_loss, val_loss
+    );
+}
+
+#[allow(dead_code)]
+pub fn print_projected_temporal_train_val_metrics(
+    step: usize,
+    prediction_loss: f32,
+    regularizer_loss: f32,
+    total_loss: f32,
+    val_prediction_loss: f32,
+    val_regularizer_loss: f32,
+    val_total_loss: f32,
+) {
+    println!(
+        "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | val total {:.6}",
+        step, prediction_loss, regularizer_loss, total_loss, val_total_loss
+    );
+    println!(
+        "step {:03} | val pred {:.6} | reg {:.6}",
+        step, val_prediction_loss, val_regularizer_loss
+    );
+}
+
 pub fn should_log_step(step: usize, log_every: usize) -> bool {
     assert!(log_every > 0, "log_every must be greater than 0");
     step == 1 || step % log_every == 0
