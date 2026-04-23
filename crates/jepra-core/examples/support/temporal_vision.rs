@@ -13,13 +13,30 @@ pub const EXTRA_SQUARE_CHANCE: f64 = 0.5;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactEncoderMode {
+    Disabled,
+    Base,
+    Stronger,
+}
+
+impl CompactEncoderMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Disabled => "frozen(base)",
+            Self::Base => "compact(base)",
+            Self::Stronger => "compact(stronger)",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TemporalRunConfig {
     pub train_base_seed: u64,
     pub total_steps: usize,
     pub log_every: usize,
     pub encoder_learning_rate: f32,
-    pub use_compact_encoder: bool,
+    pub compact_encoder_mode: CompactEncoderMode,
 }
 
 impl TemporalRunConfig {
@@ -48,7 +65,7 @@ impl TemporalRunConfig {
             .or_else(|| parse_f32_arg(&args, "--encoder-learning-rate"))
             .or_else(|| parse_f32_arg_env("JEPRA_ENCODER_LR"))
             .unwrap_or(default_encoder_learning_rate);
-        let use_compact_encoder = args.iter().any(|arg| arg == "--compact-encoder");
+        let compact_encoder_mode = compact_encoder_mode_from_args(&args);
 
         assert!(
             total_steps > 0,
@@ -66,9 +83,32 @@ impl TemporalRunConfig {
             total_steps,
             log_every,
             encoder_learning_rate,
-            use_compact_encoder,
+            compact_encoder_mode,
         }
     }
+}
+
+fn compact_encoder_mode_from_args(args: &[String]) -> CompactEncoderMode {
+    let compact_mode_from_flag = parse_compact_encoder_mode_flag(args);
+    let compact_encoder_enabled = args.iter().any(|arg| arg == "--compact-encoder");
+
+    match (compact_encoder_enabled, compact_mode_from_flag) {
+        (true, Some(mode)) => mode,
+        (true, None) => CompactEncoderMode::Base,
+        (false, Some(mode)) => mode,
+        (false, None) => CompactEncoderMode::Disabled,
+    }
+}
+
+fn parse_compact_encoder_mode_flag(args: &[String]) -> Option<CompactEncoderMode> {
+    parse_arg_value(args, "--compact-encoder-mode").and_then(|raw_mode| match raw_mode {
+        "base" => Some(CompactEncoderMode::Base),
+        "stronger" => Some(CompactEncoderMode::Stronger),
+        _ => panic!(
+            "unsupported value for --compact-encoder-mode: {} (expected base|stronger)",
+            raw_mode
+        ),
+    })
 }
 
 pub fn training_steps(default_steps: usize) -> usize {
@@ -222,6 +262,72 @@ pub fn assert_temporal_experiment_improved(
         final_validation_loss,
         initial_validation_loss * validation_max_reduction_ratio
     );
+}
+
+#[cfg(test)]
+mod temporal_vision_config_tests {
+    use super::{CompactEncoderMode, compact_encoder_mode_from_args};
+
+    fn args_with(values: &[&str]) -> Vec<String> {
+        values
+            .iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+    }
+
+    #[test]
+    fn compact_encoder_mode_defaults_to_disabled() {
+        assert_eq!(
+            compact_encoder_mode_from_args(&args_with(&[])),
+            CompactEncoderMode::Disabled
+        );
+    }
+
+    #[test]
+    fn compact_encoder_mode_switches_on_compact_flag() {
+        assert_eq!(
+            compact_encoder_mode_from_args(&args_with(&["--compact-encoder"])),
+            CompactEncoderMode::Base
+        );
+    }
+
+    #[test]
+    fn compact_encoder_mode_supports_stronger_mode_flag() {
+        assert_eq!(
+            compact_encoder_mode_from_args(&args_with(&["--compact-encoder-mode", "stronger"])),
+            CompactEncoderMode::Stronger
+        );
+    }
+
+    #[test]
+    fn compact_encoder_flag_uses_stronger_mode() {
+        assert_eq!(
+            compact_encoder_mode_from_args(&args_with(&[
+                "--compact-encoder",
+                "--compact-encoder-mode",
+                "stronger"
+            ])),
+            CompactEncoderMode::Stronger
+        );
+    }
+
+    #[test]
+    fn compact_encoder_base_mode_is_explicit() {
+        assert_eq!(
+            compact_encoder_mode_from_args(&args_with(&[
+                "--compact-encoder",
+                "--compact-encoder-mode",
+                "base"
+            ])),
+            CompactEncoderMode::Base
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported value for --compact-encoder-mode")]
+    fn compact_encoder_mode_panics_on_invalid_value() {
+        compact_encoder_mode_from_args(&args_with(&["--compact-encoder-mode", "mega"]));
+    }
 }
 
 pub fn motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {

@@ -12,8 +12,8 @@ use temporal_validation::{
     temporal_validation_batch_loss, temporal_validation_batch_loss_from_base_seed,
 };
 use temporal_vision::{
-    BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, TemporalExperimentSummary, TemporalRunConfig,
-    assert_seed_range_has_both_motion_modes,
+    BATCH_SIZE, CompactEncoderMode, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, TemporalExperimentSummary,
+    TemporalRunConfig, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     assert_temporal_experiment_improved, batch_has_both_motion_modes,
     batch_has_min_motion_mode_counts, make_compact_frozen_encoder,
@@ -220,7 +220,11 @@ fn unprojected_run_with_encoder(
         train_base_seed,
         total_steps: steps,
         log_every: steps,
-        use_compact_encoder,
+        compact_encoder_mode: if use_compact_encoder {
+            CompactEncoderMode::Base
+        } else {
+            CompactEncoderMode::Disabled
+        },
         encoder_learning_rate: encoder_lr,
     };
 

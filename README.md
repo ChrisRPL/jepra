@@ -50,7 +50,8 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--train-steps` (`--steps`) sets total training steps
 - `--log-every` (`--log`) sets log cadence (must be > 0)
 - `--encoder-lr` (or `--encoder-learning-rate`) controls unprojected encoder updates; `0.0` keeps frozen encoder baseline
-- `--compact-encoder` uses the compact momentum-aware frozen encoder variant for unprojected path experiments
+- `--compact-encoder` enables compact frozen encoder mode
+- `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `base`, `stronger` turns on the stronger compact variant)
 - `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
 

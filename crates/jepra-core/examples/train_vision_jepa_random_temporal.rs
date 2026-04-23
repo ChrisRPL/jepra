@@ -10,9 +10,11 @@ use temporal_validation::{
     temporal_validation_batch_loss_from_base_seed,
 };
 use temporal_vision::{
-    MIN_MIXED_MODE_COUNT, assert_temporal_contract, assert_temporal_experiment_improved,
-    make_compact_frozen_encoder, make_frozen_encoder, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_mode_counts, print_batch_summary,
+    CompactEncoderMode, MIN_MIXED_MODE_COUNT, assert_temporal_contract,
+    assert_temporal_experiment_improved, make_compact_frozen_encoder,
+    make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch,
+    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
+    print_batch_summary,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -60,11 +62,7 @@ pub fn main() {
     );
     println!(
         "temporal run config | encoder variant {}",
-        if run_config.use_compact_encoder {
-            "compact(moment-aware)"
-        } else {
-            "frozen(base)"
-        }
+        run_config.compact_encoder_mode.as_str()
     );
 
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
@@ -108,10 +106,10 @@ pub fn main() {
         mixed_val_probe_seed, mixed_slow_count, mixed_fast_count
     );
 
-    let encoder = if run_config.use_compact_encoder {
-        make_compact_frozen_encoder()
-    } else {
-        make_frozen_encoder()
+    let encoder = match run_config.compact_encoder_mode {
+        CompactEncoderMode::Disabled => make_frozen_encoder(),
+        CompactEncoderMode::Base => make_compact_frozen_encoder(),
+        CompactEncoderMode::Stronger => make_compact_frozen_encoder_stronger(),
     };
     let predictor = make_predictor();
     let mut model = VisionJepa::new(encoder, predictor);
