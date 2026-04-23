@@ -12,9 +12,13 @@ pub const FAST_MOTION_MASS_THRESHOLD: f32 = 0.8f32 * (SQUARE_SIZE * SQUARE_SIZE)
 pub const EXTRA_SQUARE_CHANCE: f64 = 0.5;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
+#[cfg(test)]
 pub const UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.5;
+#[cfg(test)]
 pub const UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.9;
+#[cfg(test)]
 pub const PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
+#[cfg(test)]
 pub const PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 
 pub fn motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {
