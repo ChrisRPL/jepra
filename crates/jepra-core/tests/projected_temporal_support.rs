@@ -9,13 +9,13 @@ use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor};
 use projected_temporal::{
     PROJECTED_VALIDATION_BASE_SEED, PROJECTED_VALIDATION_BATCHES, combine_projection_grads,
     gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projected_batch_losses,
-    projected_step, projected_validation_batch_losses, projection_stats,
+    projected_step, projected_validation_batch_losses_from_base_seed, projection_stats,
 };
 use temporal_vision::{
-    BATCH_SIZE, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-    PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_seed_range_has_both_motion_modes,
+    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, make_frozen_encoder,
-    make_temporal_batch, make_train_batch,
+    make_train_batch,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -55,34 +55,12 @@ fn finite_difference_regularizer_grad(latents: &Tensor, index: usize, epsilon: f
     (gaussian_moment_regularizer(&plus) - gaussian_moment_regularizer(&minus)) / (2.0 * epsilon)
 }
 
-fn projected_validation_losses(
-    encoder: &jepra_core::EmbeddingEncoder,
-    online_projector: &Linear,
-    target_projector: &Linear,
-    predictor: &Predictor,
-) -> (f32, f32, f32) {
-    projected_validation_batch_losses(
-        encoder,
-        online_projector,
-        target_projector,
-        predictor,
-        REGULARIZER_WEIGHT,
-        PROJECTED_VALIDATION_BASE_SEED,
-        PROJECTED_VALIDATION_BATCHES,
-        |seed| make_temporal_batch(BATCH_SIZE, seed),
-    )
-}
-
 fn projected_validation_losses_model(model: &ProjectedVisionJepa) -> (f32, f32, f32) {
-    projected_validation_batch_losses(
-        &model.encoder,
-        &model.projector,
-        &model.target_projector,
-        &model.predictor,
+    projected_validation_batch_losses_from_base_seed(
+        model,
         REGULARIZER_WEIGHT,
         PROJECTED_VALIDATION_BASE_SEED,
         PROJECTED_VALIDATION_BATCHES,
-        |seed| make_temporal_batch(BATCH_SIZE, seed),
     )
 }
 
@@ -775,11 +753,11 @@ fn projected_validation_losses_matches_projection_support() {
     let predictor = make_predictor();
     let model = ProjectedVisionJepa::new(encoder.clone(), projector, target_projector, predictor);
 
-    let support = projected_validation_losses(
-        &encoder,
-        &model.projector,
-        &model.target_projector,
-        &model.predictor,
+    let support = projected_validation_batch_losses_from_base_seed(
+        &model,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
     );
     let model_losses = projected_validation_losses_model(&model);
 

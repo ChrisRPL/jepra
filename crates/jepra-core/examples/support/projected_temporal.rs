@@ -1,3 +1,4 @@
+use super::temporal_vision::{BATCH_SIZE, make_temporal_batch};
 use jepra_core::{EmbeddingEncoder, Linear, Predictor, ProjectedVisionJepa, Tensor, mse_loss};
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -220,5 +221,23 @@ where
         prediction_total / batches,
         regularizer_total / batches,
         total / batches,
+    )
+}
+
+pub fn projected_validation_batch_losses_from_base_seed(
+    model: &ProjectedVisionJepa,
+    regularizer_weight: f32,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> (f32, f32, f32) {
+    projected_validation_batch_losses(
+        &model.encoder,
+        &model.projector,
+        &model.target_projector,
+        &model.predictor,
+        regularizer_weight,
+        validation_base_seed,
+        validation_batches,
+        |seed| make_temporal_batch(BATCH_SIZE, seed),
     )
 }
