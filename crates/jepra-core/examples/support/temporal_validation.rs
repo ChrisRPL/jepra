@@ -15,6 +15,11 @@ pub fn temporal_validation_batch_loss<F>(
 where
     F: Fn(u64) -> (Tensor, Tensor),
 {
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
     let mut total = 0.0;
 
     for batch_idx in 0..validation_batches {

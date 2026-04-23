@@ -198,6 +198,11 @@ pub fn projected_validation_batch_losses<F>(
 where
     F: Fn(u64) -> (Tensor, Tensor),
 {
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
     let mut prediction_total = 0.0;
     let mut regularizer_total = 0.0;
     let mut total = 0.0;
