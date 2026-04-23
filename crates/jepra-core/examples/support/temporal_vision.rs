@@ -245,6 +245,11 @@ pub fn print_batch_summary(name: &str, x_t: &Tensor, x_t1: &Tensor) {
     );
 }
 
+pub fn should_log_step(step: usize, log_every: usize) -> bool {
+    assert!(log_every > 0, "log_every must be greater than 0");
+    step == 1 || step % log_every == 0
+}
+
 pub fn make_frozen_encoder() -> EmbeddingEncoder {
     let mut conv1_weights = Vec::with_capacity(3 * IMAGE_SIZE * IMAGE_SIZE);
 

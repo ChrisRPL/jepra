@@ -110,7 +110,7 @@ pub fn main() {
         let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
         let (train_loss, _) = model.step(&x_t, &x_t1, LR);
 
-        if step == 1 || step % LOG_EVERY == 0 {
+        if temporal_vision::should_log_step(step, LOG_EVERY) {
             println!(
                 "step {:03} | train {:.6} | val {:.6}",
                 step,

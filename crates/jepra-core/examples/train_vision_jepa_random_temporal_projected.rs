@@ -131,7 +131,7 @@ fn main() {
         let (prediction_loss, regularizer_loss, total_loss) =
             model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
 
-        if step == 1 || step % LOG_EVERY == 0 {
+        if temporal_vision::should_log_step(step, LOG_EVERY) {
             let (val_prediction_loss, val_regularizer_loss, val_total_loss) =
                 projected_validation_batch_losses_from_base_seed(
                     &model,
