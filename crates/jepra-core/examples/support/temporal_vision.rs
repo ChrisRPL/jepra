@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor, VisionJepa};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -18,6 +20,14 @@ pub const UNPROJECTED_VALIDATION_BASE_SEED: u64 = 99_001;
 pub const UNPROJECTED_VALIDATION_BATCHES: usize = 8;
 pub const PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 pub const PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
+
+pub fn training_steps(default_steps: usize) -> usize {
+    std::env::var("JEPRA_TRAIN_STEPS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&steps| steps > 0)
+        .unwrap_or(default_steps)
+}
 
 pub fn motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {
     let center_x_t = square_center_x(x_t, sample);

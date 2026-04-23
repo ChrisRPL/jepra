@@ -8,20 +8,13 @@ use temporal_vision::{
     UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
     make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
     motion_mode_counts, print_batch_summary, temporal_validation_batch_loss_from_base_seed,
+    training_steps,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
 const NUM_STEPS: usize = 300;
 const LOG_EVERY: usize = 25;
 const LR: f32 = 0.02;
-
-fn training_steps() -> usize {
-    std::env::var("JEPRA_TRAIN_STEPS")
-        .ok()
-        .and_then(|value| value.parse::<usize>().ok())
-        .filter(|&steps| steps > 0)
-        .unwrap_or(NUM_STEPS)
-}
 
 fn make_predictor() -> Predictor {
     let fc1 = Linear::new(
@@ -109,7 +102,7 @@ pub fn main() {
         initial_train_loss, initial_val_loss
     );
 
-    for step in 1..=training_steps() {
+    for step in 1..=training_steps(NUM_STEPS) {
         let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
         let (train_loss, _) = model.step(&x_t, &x_t1, LR);
 
