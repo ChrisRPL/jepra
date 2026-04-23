@@ -34,6 +34,16 @@ cargo run --manifest-path crates/roadjepa-core/Cargo.toml --example train_vision
 cargo run --manifest-path crates/roadjepa-core/Cargo.toml --example train_vision_jepa_random_temporal_projected
 ```
 
+## Fast Feedback Loop
+
+For quick iteration:
+
+- `cargo fmt --manifest-path crates/roadjepa-core/Cargo.toml --all -- --check`
+- `cargo test --manifest-path crates/roadjepa-core/Cargo.toml --test example_entrypoint_guard`
+- `cargo test --manifest-path crates/roadjepa-core/Cargo.toml --test temporal_vision_support`
+
+Use these first; run the full `--all-targets`/clippy suite before PR handoff or CI-sensitive changes.
+
 ### Example Entrypoints
 
 - `train_vision_jepa_random_temporal.rs` is the canonical hardening path for the current JEPA temporal proof.
