@@ -16,10 +16,10 @@ use temporal_vision::{
     assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     assert_temporal_experiment_improved, batch_has_both_motion_modes,
-    batch_has_min_motion_mode_counts, make_compact_frozen_encoder, make_frozen_encoder,
-    make_temporal_batch, make_train_batch, make_validation_batch,
-    make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
-    square_center_x, total_mass,
+    batch_has_min_motion_mode_counts, make_compact_frozen_encoder,
+    make_compact_frozen_encoder_stronger, make_frozen_encoder, make_temporal_batch,
+    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
+    motion_dx_for_sample, motion_mode_counts, square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -174,6 +174,31 @@ fn unprojected_compact_encoder_stays_reasonable_on_short_run() {
     assert!(
         compact.1 <= UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
         "compact short unprojected run did not shrink val loss enough: {:.6} > {:.6}",
+        compact.1,
+        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    );
+}
+
+#[test]
+fn unprojected_stronger_compact_encoder_stays_reasonable_on_short_run() {
+    let train_base_seed = 12_500u64;
+    let predictor_seed = 21_150u64;
+
+    let compact = unprojected_short_run_convergence_with_encoder(
+        train_base_seed,
+        predictor_seed,
+        make_compact_frozen_encoder_stronger,
+    );
+
+    assert!(
+        compact.0 <= UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+        "stronger compact short unprojected run did not shrink train loss enough: {:.6} > {:.6}",
+        compact.0,
+        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    );
+    assert!(
+        compact.1 <= UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        "stronger compact short unprojected run did not shrink val loss enough: {:.6} > {:.6}",
         compact.1,
         UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     );
@@ -339,6 +364,19 @@ fn compact_unprojected_frozen_vs_trainable_encoder_protocol_has_stable_behavior(
         0.02f32,
         0.004f32,
         make_compact_frozen_encoder,
+        true,
+    );
+}
+
+#[test]
+fn stronger_compact_unprojected_frozen_vs_trainable_encoder_protocol_has_stable_behavior() {
+    assert_unprojected_frozen_vs_trainable_protocol(
+        "stronger compact encoder",
+        41_000u64,
+        21_900u64,
+        0.02f32,
+        0.004f32,
+        make_compact_frozen_encoder_stronger,
         true,
     );
 }

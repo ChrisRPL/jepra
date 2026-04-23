@@ -495,6 +495,7 @@ pub fn should_log_step(step: usize, log_every: usize) -> bool {
 }
 
 const COMPACT_ENCODER_CHANNELS: usize = 6;
+const COMPACT_ENCODER_STRONGER_CHANNELS: usize = 8;
 
 fn compact_encoder_channel_weights(row: usize, col: usize) -> [f32; COMPACT_ENCODER_CHANNELS] {
     let center = (IMAGE_SIZE as f32 - 1.0) / 2.0;
@@ -509,6 +510,29 @@ fn compact_encoder_channel_weights(row: usize, col: usize) -> [f32; COMPACT_ENCO
         y,     // y centroid signal
         x * x, // x dispersion signal
         y * y, // y dispersion signal
+    ]
+}
+
+fn compact_encoder_channel_weights_stronger(
+    row: usize,
+    col: usize,
+) -> [f32; COMPACT_ENCODER_STRONGER_CHANNELS] {
+    let center = (IMAGE_SIZE as f32 - 1.0) / 2.0;
+    let norm = (IMAGE_SIZE as f32 - 1.0).max(1.0);
+    let x = (col as f32 - center) / norm;
+    let y = (row as f32 - center) / norm;
+    let xx = x * x;
+    let yy = y * y;
+
+    [
+        1.0,     // total mass
+        x,       // x centroid signal
+        1.0,     // duplicate mass signal
+        y,       // y centroid signal
+        xx,      // x spread proxy
+        yy,      // y spread proxy
+        x * y,   // mixed/diagonal motion signal
+        y.abs(), // directional magnitude
     ]
 }
 
@@ -584,6 +608,43 @@ pub fn make_compact_frozen_encoder() -> EmbeddingEncoder {
                 0.0, 0.0, 1.0, 0.00, 0.00, 0.05,
             ],
             vec![3, COMPACT_ENCODER_CHANNELS, 1, 1],
+        ),
+        Tensor::new(vec![0.0, 0.0, -FAST_MOTION_MASS_THRESHOLD], vec![3]),
+        1,
+        0,
+    );
+
+    EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2))
+}
+
+pub fn make_compact_frozen_encoder_stronger() -> EmbeddingEncoder {
+    let mut conv1_weights =
+        Vec::with_capacity(COMPACT_ENCODER_STRONGER_CHANNELS * IMAGE_SIZE * IMAGE_SIZE);
+
+    for row in 0..IMAGE_SIZE {
+        for col in 0..IMAGE_SIZE {
+            conv1_weights.extend_from_slice(&compact_encoder_channel_weights_stronger(row, col));
+        }
+    }
+
+    let conv1 = Conv2d::new(
+        Tensor::new(
+            conv1_weights,
+            vec![COMPACT_ENCODER_STRONGER_CHANNELS, 1, IMAGE_SIZE, IMAGE_SIZE],
+        ),
+        Tensor::zeros(vec![COMPACT_ENCODER_STRONGER_CHANNELS]),
+        1,
+        0,
+    );
+
+    let conv2 = Conv2d::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, 1.0, 0.0, 0.10, 0.00, 0.02, -0.02, //
+                0.0, 1.0, 0.0, 0.05, 0.00, 0.00, 0.01, 0.01, //
+                0.0, 0.0, 1.0, 0.00, 0.00, 0.05, 0.01, -0.01, //
+            ],
+            vec![3, COMPACT_ENCODER_STRONGER_CHANNELS, 1, 1],
         ),
         Tensor::new(vec![0.0, 0.0, -FAST_MOTION_MASS_THRESHOLD], vec![3]),
         1,
