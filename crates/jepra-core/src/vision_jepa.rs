@@ -202,6 +202,11 @@ impl ProjectedVisionJepa {
         self
     }
 
+    pub fn set_target_projection_momentum(&mut self, momentum: f32) {
+        Self::assert_target_projection_momentum_in_range(momentum);
+        self.target_projection_momentum = momentum;
+    }
+
     pub fn target_projection_momentum(&self) -> f32 {
         self.target_projection_momentum
     }

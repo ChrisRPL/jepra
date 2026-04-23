@@ -227,6 +227,9 @@ fn unprojected_run_with_encoder(
         },
         encoder_learning_rate: encoder_lr,
         target_projection_momentum: 1.0,
+        target_projection_momentum_start: 1.0,
+        target_projection_momentum_end: 1.0,
+        target_projection_momentum_warmup_steps: 0,
     };
 
     let (probe_t, probe_t1) = make_train_batch(config.train_base_seed, 0);

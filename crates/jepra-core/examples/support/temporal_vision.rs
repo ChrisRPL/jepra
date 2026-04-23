@@ -38,6 +38,9 @@ pub struct TemporalRunConfig {
     pub encoder_learning_rate: f32,
     pub compact_encoder_mode: CompactEncoderMode,
     pub target_projection_momentum: f32,
+    pub target_projection_momentum_start: f32,
+    pub target_projection_momentum_end: f32,
+    pub target_projection_momentum_warmup_steps: usize,
 }
 
 impl TemporalRunConfig {
@@ -66,12 +69,21 @@ impl TemporalRunConfig {
             .or_else(|| parse_f32_arg(&args, "--encoder-learning-rate"))
             .or_else(|| parse_f32_arg_env("JEPRA_ENCODER_LR"))
             .unwrap_or(default_encoder_learning_rate);
-        let target_projection_momentum = parse_f32_arg(&args, "--target-momentum")
+        let target_projection_momentum_end = parse_f32_arg(&args, "--target-momentum-end")
+            .or_else(|| parse_f32_arg(&args, "--target-projection-momentum-end"))
+            .or_else(|| parse_f32_arg(&args, "--target-momentum"))
             .or_else(|| parse_f32_arg(&args, "--target-projection-momentum"))
             .or_else(|| parse_f32_arg_env("JEPRA_TARGET_MOMENTUM"))
             .unwrap_or(1.0);
+        let target_projection_momentum_start = parse_f32_arg(&args, "--target-momentum-start")
+            .unwrap_or(target_projection_momentum_end);
+        let target_projection_momentum_warmup_steps =
+            parse_usize_arg(&args, "--target-momentum-warmup-steps")
+                .or_else(|| parse_usize_arg(&args, "--target-projection-warmup-steps"))
+                .unwrap_or(0);
         let compact_encoder_mode = compact_encoder_mode_from_args(&args);
-        assert_target_projection_momentum(target_projection_momentum);
+        assert_target_projection_momentum(target_projection_momentum_end);
+        assert_target_projection_momentum(target_projection_momentum_start);
 
         assert!(
             total_steps > 0,
@@ -90,8 +102,22 @@ impl TemporalRunConfig {
             log_every,
             encoder_learning_rate,
             compact_encoder_mode,
-            target_projection_momentum,
+            target_projection_momentum: target_projection_momentum_end,
+            target_projection_momentum_start,
+            target_projection_momentum_end,
+            target_projection_momentum_warmup_steps,
         }
+    }
+
+    pub fn target_projection_momentum_at_step(&self, step: usize) -> f32 {
+        if self.target_projection_momentum_warmup_steps == 0 {
+            return self.target_projection_momentum_end;
+        }
+
+        let clamped_step = step.min(self.target_projection_momentum_warmup_steps) as f32;
+        let alpha = clamped_step / self.target_projection_momentum_warmup_steps as f32;
+        self.target_projection_momentum_start
+            + alpha * (self.target_projection_momentum_end - self.target_projection_momentum_start)
     }
 }
 
@@ -281,7 +307,7 @@ pub fn assert_temporal_experiment_improved(
 
 #[cfg(test)]
 mod temporal_vision_config_tests {
-    use super::{CompactEncoderMode, compact_encoder_mode_from_args};
+    use super::{CompactEncoderMode, TemporalRunConfig, compact_encoder_mode_from_args};
 
     fn args_with(values: &[&str]) -> Vec<String> {
         values
@@ -342,6 +368,26 @@ mod temporal_vision_config_tests {
     #[should_panic(expected = "unsupported value for --compact-encoder-mode")]
     fn compact_encoder_mode_panics_on_invalid_value() {
         compact_encoder_mode_from_args(&args_with(&["--compact-encoder-mode", "mega"]));
+    }
+
+    #[test]
+    fn target_projection_momentum_warms_linearly_to_end() {
+        let config = TemporalRunConfig {
+            train_base_seed: 0,
+            total_steps: 10,
+            log_every: 1,
+            encoder_learning_rate: 0.0,
+            compact_encoder_mode: CompactEncoderMode::Disabled,
+            target_projection_momentum: 0.5,
+            target_projection_momentum_start: 1.0,
+            target_projection_momentum_end: 0.5,
+            target_projection_momentum_warmup_steps: 2,
+        };
+
+        assert!((config.target_projection_momentum_at_step(0) - 1.0).abs() < 1e-6);
+        assert!((config.target_projection_momentum_at_step(1) - 0.75).abs() < 1e-6);
+        assert!((config.target_projection_momentum_at_step(2) - 0.5).abs() < 1e-6);
+        assert!((config.target_projection_momentum_at_step(10) - 0.5).abs() < 1e-6);
     }
 }
 
@@ -596,14 +642,20 @@ pub fn print_projected_temporal_train_val_metrics(
     prediction_loss: f32,
     regularizer_loss: f32,
     total_loss: f32,
+    target_projection_momentum: f32,
     target_projection_drift: f32,
     val_prediction_loss: f32,
     val_regularizer_loss: f32,
     val_total_loss: f32,
 ) {
     println!(
-        "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | target drift {:.6}",
-        step, prediction_loss, regularizer_loss, total_loss, target_projection_drift
+        "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | mom {:.4} drift {:.6}",
+        step,
+        prediction_loss,
+        regularizer_loss,
+        total_loss,
+        target_projection_momentum,
+        target_projection_drift
     );
     println!(
         "step {:03} | val pred {:.6} | reg {:.6} | val total {:.6}",

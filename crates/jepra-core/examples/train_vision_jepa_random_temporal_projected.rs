@@ -53,8 +53,10 @@ fn main() {
         run_config.train_base_seed, run_config.total_steps, run_config.log_every
     );
     println!(
-        "temporal run config | target projection momentum {}",
-        run_config.target_projection_momentum
+        "temporal run config | target projection momentum {} -> {} | warmup {} steps",
+        run_config.target_projection_momentum_start,
+        run_config.target_projection_momentum_end,
+        run_config.target_projection_momentum_warmup_steps
     );
 
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
@@ -104,7 +106,7 @@ fn main() {
     let predictor = make_predictor();
     let mut model =
         ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor)
-            .with_target_projection_momentum(run_config.target_projection_momentum);
+            .with_target_projection_momentum(run_config.target_projection_momentum_at_step(1));
 
     let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
@@ -148,6 +150,8 @@ fn main() {
         initial_val_total_loss,
         |model, step, should_log| {
             let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
+            let momentum = run_config.target_projection_momentum_at_step(step);
+            model.set_target_projection_momentum(momentum);
             let (prediction_loss, regularizer_loss, total_loss) =
                 if run_config.encoder_learning_rate > 0.0 {
                     model.step_with_trainable_encoder(
@@ -163,6 +167,7 @@ fn main() {
                 };
 
             if should_log {
+                let current_momentum = model.target_projection_momentum();
                 let (val_prediction_loss, val_regularizer_loss, val_total_loss) =
                     projected_validation_batch_losses_from_base_seed(
                         model,
@@ -176,6 +181,7 @@ fn main() {
                     prediction_loss,
                     regularizer_loss,
                     total_loss,
+                    current_momentum,
                     model.target_projection_drift(),
                     val_prediction_loss,
                     val_regularizer_loss,

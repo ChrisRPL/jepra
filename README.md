@@ -5,7 +5,7 @@ The crate is published as `jepra-core`.
 
 ## Current Scope (from `VISION.md`)
 
-- `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline, a compact frozen-encoder option, and optional trainable-encoder updates in unprojected mode
+- `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline, a compact frozen-encoder option, and optional trainable-encoder updates in temporal JEPA examples
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - temporal data now supports one or two moving squares per sample in the synthetic generator
@@ -54,6 +54,9 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
+- `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
+- `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
+- `--target-momentum-warmup-steps` linearly interpolates momentum from start to end over the first N steps
 - `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
