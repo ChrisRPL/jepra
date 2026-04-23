@@ -4,14 +4,13 @@ mod temporal_vision;
 use jepra_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     MIN_MIXED_MODE_COUNT, UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    UNPROJECTED_VALIDATION_BASE_SEED, UNPROJECTED_VALIDATION_BATCHES,
     UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
     make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
     motion_mode_counts, print_batch_summary, temporal_validation_batch_loss,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
-const VALIDATION_BASE_SEED: u64 = 99_001;
-const VALIDATION_BATCHES: usize = 8;
 const NUM_STEPS: usize = 300;
 const LOG_EVERY: usize = 25;
 const LR: f32 = 0.02;
@@ -39,9 +38,9 @@ fn make_predictor() -> Predictor {
 pub fn main() {
     let (train_probe_t, train_probe_t1) = make_train_batch(TRAIN_BASE_SEED, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
-    let (val_probe_t, val_probe_t1) = make_validation_batch(VALIDATION_BASE_SEED, 0);
+    let (val_probe_t, val_probe_t1) = make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, 0);
     let (mixed_val_probe_t, mixed_val_probe_t1, mixed_val_probe_seed) =
-        make_validation_batch_with_both_motion_modes(VALIDATION_BASE_SEED, 1);
+        make_validation_batch_with_both_motion_modes(UNPROJECTED_VALIDATION_BASE_SEED, 1);
 
     assert_temporal_contract(&train_probe_t, &train_probe_t1);
     assert_temporal_contract(&train_probe_next_t, &train_probe_next_t1);
@@ -87,8 +86,8 @@ pub fn main() {
     let initial_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
     let initial_val_loss = temporal_validation_batch_loss(
         &model,
-        VALIDATION_BASE_SEED,
-        VALIDATION_BATCHES,
+        UNPROJECTED_VALIDATION_BASE_SEED,
+        UNPROJECTED_VALIDATION_BATCHES,
         make_validation_batch,
     );
 
@@ -113,8 +112,8 @@ pub fn main() {
                 train_loss,
                 temporal_validation_batch_loss(
                     &model,
-                    VALIDATION_BASE_SEED,
-                    VALIDATION_BATCHES,
+                    UNPROJECTED_VALIDATION_BASE_SEED,
+                    UNPROJECTED_VALIDATION_BATCHES,
                     make_validation_batch,
                 )
             );
@@ -124,8 +123,8 @@ pub fn main() {
     let final_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
     let final_val_loss = temporal_validation_batch_loss(
         &model,
-        VALIDATION_BASE_SEED,
-        VALIDATION_BATCHES,
+        UNPROJECTED_VALIDATION_BASE_SEED,
+        UNPROJECTED_VALIDATION_BATCHES,
         make_validation_batch,
     );
     let final_z_t = model.encode(&train_probe_t);

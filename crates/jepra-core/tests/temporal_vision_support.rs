@@ -5,6 +5,7 @@ mod temporal_vision;
 use jepra_core::{Linear, Predictor, Tensor, VisionJepa};
 use temporal_vision::{
     BATCH_SIZE, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    UNPROJECTED_VALIDATION_BASE_SEED, UNPROJECTED_VALIDATION_BATCHES,
     UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     batch_has_both_motion_modes, batch_has_min_motion_mode_counts, make_frozen_encoder,
@@ -13,9 +14,6 @@ use temporal_vision::{
     square_center_x, temporal_validation_batch_loss, total_mass,
 };
 
-const VALIDATION_BASE_SEED: u64 = 99_001;
-const VALIDATION_BATCHES: usize = 8;
-
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
     model.losses(x_t, x_t1).0
 }
@@ -23,9 +21,9 @@ fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
 fn validation_loss(model: &VisionJepa) -> f32 {
     temporal_validation_batch_loss(
         model,
-        VALIDATION_BASE_SEED,
-        VALIDATION_BATCHES,
-        |batch_idx| make_validation_batch(VALIDATION_BASE_SEED, batch_idx),
+        UNPROJECTED_VALIDATION_BASE_SEED,
+        UNPROJECTED_VALIDATION_BATCHES,
+        |batch_idx| make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, batch_idx),
     )
 }
 
