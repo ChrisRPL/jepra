@@ -245,6 +245,19 @@ pub fn print_batch_summary(name: &str, x_t: &Tensor, x_t1: &Tensor) {
     );
 }
 
+pub fn run_temporal_training_loop<TStep>(total_steps: usize, log_every: usize, mut step_fn: TStep)
+where
+    TStep: FnMut(usize, bool),
+{
+    assert!(total_steps > 0, "total_steps must be greater than 0");
+    assert!(log_every > 0, "log_every must be greater than 0");
+
+    for step in 1..=total_steps {
+        let should_log = should_log_step(step, log_every);
+        step_fn(step, should_log);
+    }
+}
+
 pub fn should_log_step(step: usize, log_every: usize) -> bool {
     assert!(log_every > 0, "log_every must be greater than 0");
     step == 1 || step % log_every == 0

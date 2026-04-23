@@ -126,30 +126,34 @@ fn main() {
         initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss
     );
 
-    for step in 1..=training_steps(NUM_STEPS) {
-        let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
-        let (prediction_loss, regularizer_loss, total_loss) =
-            model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
+    temporal_vision::run_temporal_training_loop(
+        training_steps(NUM_STEPS),
+        LOG_EVERY,
+        |step, should_log| {
+            let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
+            let (prediction_loss, regularizer_loss, total_loss) =
+                model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR);
 
-        if temporal_vision::should_log_step(step, LOG_EVERY) {
-            let (val_prediction_loss, val_regularizer_loss, val_total_loss) =
-                projected_validation_batch_losses_from_base_seed(
-                    &model,
-                    REGULARIZER_WEIGHT,
-                    PROJECTED_VALIDATION_BASE_SEED,
-                    PROJECTED_VALIDATION_BATCHES,
+            if should_log {
+                let (val_prediction_loss, val_regularizer_loss, val_total_loss) =
+                    projected_validation_batch_losses_from_base_seed(
+                        &model,
+                        REGULARIZER_WEIGHT,
+                        PROJECTED_VALIDATION_BASE_SEED,
+                        PROJECTED_VALIDATION_BATCHES,
+                    );
+
+                println!(
+                    "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | val total {:.6}",
+                    step, prediction_loss, regularizer_loss, total_loss, val_total_loss
                 );
-
-            println!(
-                "step {:03} | train pred {:.6} | reg {:.6} | total {:.6} | val total {:.6}",
-                step, prediction_loss, regularizer_loss, total_loss, val_total_loss
-            );
-            println!(
-                "step {:03} | val pred {:.6} | reg {:.6}",
-                step, val_prediction_loss, val_regularizer_loss
-            );
-        }
-    }
+                println!(
+                    "step {:03} | val pred {:.6} | reg {:.6}",
+                    step, val_prediction_loss, val_regularizer_loss
+                );
+            }
+        },
+    );
 
     let final_projection_t = model.project_latent(&train_probe_t);
     let final_pred = model.predict_next_projection(&train_probe_t);

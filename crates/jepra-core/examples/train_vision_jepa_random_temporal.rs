@@ -106,23 +106,26 @@ pub fn main() {
         initial_train_loss, initial_val_loss
     );
 
-    for step in 1..=training_steps(NUM_STEPS) {
-        let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
-        let (train_loss, _) = model.step(&x_t, &x_t1, LR);
-
-        if temporal_vision::should_log_step(step, LOG_EVERY) {
-            println!(
-                "step {:03} | train {:.6} | val {:.6}",
-                step,
-                train_loss,
-                temporal_validation_batch_loss_from_base_seed(
-                    &model,
-                    UNPROJECTED_VALIDATION_BASE_SEED,
-                    UNPROJECTED_VALIDATION_BATCHES,
-                )
-            );
-        }
-    }
+    temporal_vision::run_temporal_training_loop(
+        training_steps(NUM_STEPS),
+        LOG_EVERY,
+        |step, should_log| {
+            let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, step as u64);
+            let (train_loss, _) = model.step(&x_t, &x_t1, LR);
+            if should_log {
+                println!(
+                    "step {:03} | train {:.6} | val {:.6}",
+                    step,
+                    train_loss,
+                    temporal_validation_batch_loss_from_base_seed(
+                        &model,
+                        UNPROJECTED_VALIDATION_BASE_SEED,
+                        UNPROJECTED_VALIDATION_BATCHES,
+                    )
+                );
+            }
+        },
+    );
 
     let final_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
     let final_val_loss = temporal_validation_batch_loss_from_base_seed(
