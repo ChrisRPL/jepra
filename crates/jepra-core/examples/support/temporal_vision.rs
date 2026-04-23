@@ -195,6 +195,19 @@ where
     total / validation_batches as f32
 }
 
+pub fn temporal_validation_batch_loss_from_base_seed(
+    model: &VisionJepa,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> f32 {
+    temporal_validation_batch_loss(
+        model,
+        validation_base_seed,
+        validation_batches,
+        |batch_idx| make_validation_batch(validation_base_seed, batch_idx),
+    )
+}
+
 pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
     let mut weighted_sum = 0.0;
     let mut total_mass = 0.0;

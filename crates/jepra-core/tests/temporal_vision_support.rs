@@ -11,7 +11,7 @@ use temporal_vision::{
     batch_has_both_motion_modes, batch_has_min_motion_mode_counts, make_frozen_encoder,
     make_temporal_batch, make_train_batch, make_validation_batch,
     make_validation_batch_with_both_motion_modes, motion_dx_for_sample, motion_mode_counts,
-    square_center_x, temporal_validation_batch_loss, total_mass,
+    square_center_x, temporal_validation_batch_loss_from_base_seed, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -19,11 +19,10 @@ fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
 }
 
 fn validation_loss(model: &VisionJepa) -> f32 {
-    temporal_validation_batch_loss(
+    temporal_validation_batch_loss_from_base_seed(
         model,
         UNPROJECTED_VALIDATION_BASE_SEED,
         UNPROJECTED_VALIDATION_BATCHES,
-        |batch_idx| make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, batch_idx),
     )
 }
 

@@ -7,7 +7,7 @@ use temporal_vision::{
     UNPROJECTED_VALIDATION_BASE_SEED, UNPROJECTED_VALIDATION_BATCHES,
     UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO, assert_temporal_contract, make_frozen_encoder,
     make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_mode_counts, print_batch_summary, temporal_validation_batch_loss,
+    motion_mode_counts, print_batch_summary, temporal_validation_batch_loss_from_base_seed,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -84,11 +84,10 @@ pub fn main() {
     let initial_z_t = model.encode(&train_probe_t);
     let initial_z_t1 = model.target_latent(&train_probe_t1);
     let initial_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
-    let initial_val_loss = temporal_validation_batch_loss(
+    let initial_val_loss = temporal_validation_batch_loss_from_base_seed(
         &model,
         UNPROJECTED_VALIDATION_BASE_SEED,
         UNPROJECTED_VALIDATION_BATCHES,
-        make_validation_batch,
     );
 
     println!(
@@ -110,22 +109,20 @@ pub fn main() {
                 "step {:03} | train {:.6} | val {:.6}",
                 step,
                 train_loss,
-                temporal_validation_batch_loss(
+                temporal_validation_batch_loss_from_base_seed(
                     &model,
                     UNPROJECTED_VALIDATION_BASE_SEED,
                     UNPROJECTED_VALIDATION_BATCHES,
-                    make_validation_batch,
                 )
             );
         }
     }
 
     let final_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
-    let final_val_loss = temporal_validation_batch_loss(
+    let final_val_loss = temporal_validation_batch_loss_from_base_seed(
         &model,
         UNPROJECTED_VALIDATION_BASE_SEED,
         UNPROJECTED_VALIDATION_BATCHES,
-        make_validation_batch,
     );
     let final_z_t = model.encode(&train_probe_t);
     let final_pred = model.predict_next_latent(&train_probe_t);
