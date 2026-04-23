@@ -95,3 +95,4 @@ Snapshot from local files only. Internal working note for the repo state today.
   - keep defaults conservative (`--encoder-lr=0.0`, `--target-momentum=1.0`) and require explicit intent for departures,
   - only expand trainable projected defaults if trajectory checks are stable.
   - capture sweep rows in wiki-facing evidence table before altering defaults.
+  - script enforcement now requires a parserable `projected run summary` and both train/val segments reporting `improved=true`; optional CSV output is available via `JEPRA_MOMENTUM_SWEEP_REPORT`.

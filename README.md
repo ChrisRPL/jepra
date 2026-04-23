@@ -72,6 +72,7 @@ Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa
 ./run-projected-momentum-sweep.sh frozen           # run frozen only
 ./run-projected-momentum-sweep.sh trainable        # run trainable only
 ./run-projected-momentum-sweep.sh zero            # run 0.0 momentum only
+JEPRA_MOMENTUM_SWEEP_REPORT=./artifacts/projected-momentum-sweep.csv ./run-projected-momentum-sweep.sh all # emit parsed CSV
 ```
 
 The script prints one structured line per seed/momentum:

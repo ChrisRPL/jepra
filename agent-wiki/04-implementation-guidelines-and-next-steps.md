@@ -40,6 +40,7 @@ Read with `VISION.md`.
 
 2. Keep protocol evidence loop active with fixed-seed sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}`.
    - Use `run-projected-momentum-sweep.sh` profiles (`all|warmup|frozen|trainable|zero`) with fixed seeds `21000, 21001, 21002` and capture parser-readable results.
+   - `run-projected-momentum-sweep.sh` now enforces summary shape, checks `improved=true` for both train and validation segments, and optionally emits per-row CSV via `JEPRA_MOMENTUM_SWEEP_REPORT`.
    - Warmup controls are part of the profile contract:
      - `--target-momentum-start 1.0`
      - `--target-momentum-end 0.5`
