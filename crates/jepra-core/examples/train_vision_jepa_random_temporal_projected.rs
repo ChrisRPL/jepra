@@ -10,7 +10,9 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    ProjectedVelocityBankRanking, projected_validation_batch_losses_from_base_seed_for_task,
+    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    projected_signed_velocity_bank_breakdown_from_base_seed,
+    projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed,
 };
 use temporal_vision::{
@@ -213,6 +215,8 @@ where
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
     let initial_velocity_bank_ranking = maybe_projected_velocity_bank_ranking(&model, run_config);
+    let initial_signed_velocity_bank_breakdown =
+        maybe_projected_signed_velocity_bank_breakdown(&model, run_config);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
@@ -238,6 +242,7 @@ where
     );
     println!("initial | target drift {:.6}", initial_projection_drift);
     print_velocity_bank_ranking("initial", initial_velocity_bank_ranking);
+    print_signed_velocity_bank_breakdown("initial", initial_signed_velocity_bank_breakdown);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -331,6 +336,8 @@ where
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);
     let final_velocity_bank_ranking = maybe_projected_velocity_bank_ranking(&model, run_config);
+    let final_signed_velocity_bank_breakdown =
+        maybe_projected_signed_velocity_bank_breakdown(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
         reduction_thresholds_for_run_config(run_config);
 
@@ -382,6 +389,7 @@ where
     );
     println!("final | target drift {:.6}", final_projection_drift);
     print_velocity_bank_ranking("final", final_velocity_bank_ranking);
+    print_signed_velocity_bank_breakdown("final", final_signed_velocity_bank_breakdown);
 }
 
 fn maybe_projected_velocity_bank_ranking<P>(
@@ -411,6 +419,51 @@ fn print_velocity_bank_ranking(tag: &str, ranking: Option<ProjectedVelocityBankR
         println!(
             "{} | velocity bank mrr {:.6} | top1 {:.6} | mean_rank {:.6} | samples {} | candidates {}",
             tag, ranking.mrr, ranking.top1, ranking.mean_rank, ranking.samples, ranking.candidates
+        );
+    }
+}
+
+fn maybe_projected_signed_velocity_bank_breakdown<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedVelocityBankBreakdown>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(projected_signed_velocity_bank_breakdown_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+    ))
+}
+
+fn print_signed_velocity_bank_breakdown(
+    tag: &str,
+    breakdown: Option<ProjectedSignedVelocityBankBreakdown>,
+) {
+    if let Some(breakdown) = breakdown {
+        println!(
+            "{} | signed velocity bank neg_mrr {:.6} | pos_mrr {:.6} | slow_mrr {:.6} | fast_mrr {:.6} | sign_top1 {:.6} | speed_top1 {:.6} | samples {} | true_neg_best_neg {} | true_neg_best_pos {} | true_pos_best_neg {} | true_pos_best_pos {} | true_slow_best_slow {} | true_slow_best_fast {} | true_fast_best_slow {} | true_fast_best_fast {}",
+            tag,
+            breakdown.negative_mrr,
+            breakdown.positive_mrr,
+            breakdown.slow_mrr,
+            breakdown.fast_mrr,
+            breakdown.sign_top1,
+            breakdown.speed_top1,
+            breakdown.samples,
+            breakdown.true_neg_best_neg,
+            breakdown.true_neg_best_pos,
+            breakdown.true_pos_best_neg,
+            breakdown.true_pos_best_pos,
+            breakdown.true_slow_best_slow,
+            breakdown.true_slow_best_fast,
+            breakdown.true_fast_best_slow,
+            breakdown.true_fast_best_fast
         );
     }
 }

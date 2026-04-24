@@ -23,6 +23,139 @@ pub struct ProjectedVelocityBankRanking {
     pub candidates: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedVelocityBankBreakdown {
+    pub negative_mrr: f32,
+    pub positive_mrr: f32,
+    pub slow_mrr: f32,
+    pub fast_mrr: f32,
+    pub sign_top1: f32,
+    pub speed_top1: f32,
+    pub samples: usize,
+    pub negative_samples: usize,
+    pub positive_samples: usize,
+    pub slow_samples: usize,
+    pub fast_samples: usize,
+    pub true_neg_best_neg: usize,
+    pub true_neg_best_pos: usize,
+    pub true_pos_best_neg: usize,
+    pub true_pos_best_pos: usize,
+    pub true_slow_best_slow: usize,
+    pub true_slow_best_fast: usize,
+    pub true_fast_best_slow: usize,
+    pub true_fast_best_fast: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct VelocityBankSampleOutcome {
+    true_dx: isize,
+    best_dx: isize,
+    rank: usize,
+    sign_correct: bool,
+    speed_correct: bool,
+}
+
+#[derive(Debug, Default)]
+struct SignedVelocityBankBreakdownTotals {
+    negative_rr: f32,
+    positive_rr: f32,
+    slow_rr: f32,
+    fast_rr: f32,
+    sign_correct: usize,
+    speed_correct: usize,
+    samples: usize,
+    negative_samples: usize,
+    positive_samples: usize,
+    slow_samples: usize,
+    fast_samples: usize,
+    true_neg_best_neg: usize,
+    true_neg_best_pos: usize,
+    true_pos_best_neg: usize,
+    true_pos_best_pos: usize,
+    true_slow_best_slow: usize,
+    true_slow_best_fast: usize,
+    true_fast_best_slow: usize,
+    true_fast_best_fast: usize,
+}
+
+impl SignedVelocityBankBreakdownTotals {
+    fn observe(&mut self, outcome: VelocityBankSampleOutcome) {
+        let reciprocal_rank = 1.0 / outcome.rank as f32;
+        self.samples += 1;
+        self.sign_correct += usize::from(outcome.sign_correct);
+        self.speed_correct += usize::from(outcome.speed_correct);
+
+        if outcome.true_dx < 0 {
+            self.negative_rr += reciprocal_rank;
+            self.negative_samples += 1;
+            if outcome.best_dx < 0 {
+                self.true_neg_best_neg += 1;
+            } else {
+                self.true_neg_best_pos += 1;
+            }
+        } else {
+            self.positive_rr += reciprocal_rank;
+            self.positive_samples += 1;
+            if outcome.best_dx < 0 {
+                self.true_pos_best_neg += 1;
+            } else {
+                self.true_pos_best_pos += 1;
+            }
+        }
+
+        if outcome.true_dx.abs() == 1 {
+            self.slow_rr += reciprocal_rank;
+            self.slow_samples += 1;
+            if outcome.best_dx.abs() == 1 {
+                self.true_slow_best_slow += 1;
+            } else {
+                self.true_slow_best_fast += 1;
+            }
+        } else {
+            self.fast_rr += reciprocal_rank;
+            self.fast_samples += 1;
+            if outcome.best_dx.abs() == 1 {
+                self.true_fast_best_slow += 1;
+            } else {
+                self.true_fast_best_fast += 1;
+            }
+        }
+    }
+
+    fn into_breakdown(self) -> ProjectedSignedVelocityBankBreakdown {
+        assert!(self.samples > 0, "signed velocity breakdown has no samples");
+        assert!(
+            self.negative_samples > 0
+                && self.positive_samples > 0
+                && self.slow_samples > 0
+                && self.fast_samples > 0,
+            "signed velocity breakdown requires all sign/speed groups"
+        );
+
+        ProjectedSignedVelocityBankBreakdown {
+            negative_mrr: self.negative_rr / self.negative_samples as f32,
+            positive_mrr: self.positive_rr / self.positive_samples as f32,
+            slow_mrr: self.slow_rr / self.slow_samples as f32,
+            fast_mrr: self.fast_rr / self.fast_samples as f32,
+            sign_top1: self.sign_correct as f32 / self.samples as f32,
+            speed_top1: self.speed_correct as f32 / self.samples as f32,
+            samples: self.samples,
+            negative_samples: self.negative_samples,
+            positive_samples: self.positive_samples,
+            slow_samples: self.slow_samples,
+            fast_samples: self.fast_samples,
+            true_neg_best_neg: self.true_neg_best_neg,
+            true_neg_best_pos: self.true_neg_best_pos,
+            true_pos_best_neg: self.true_pos_best_neg,
+            true_pos_best_pos: self.true_pos_best_pos,
+            true_slow_best_slow: self.true_slow_best_slow,
+            true_slow_best_fast: self.true_slow_best_fast,
+            true_fast_best_slow: self.true_fast_best_slow,
+            true_fast_best_fast: self.true_fast_best_fast,
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub fn projected_target(
     encoder: &EmbeddingEncoder,
@@ -291,6 +424,171 @@ where
         samples: sample_total,
         candidates: candidate_count,
     }
+}
+
+#[allow(dead_code)]
+pub fn projected_signed_velocity_bank_breakdown<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> ProjectedSignedVelocityBankBreakdown
+where
+    P: PredictorModule,
+{
+    let outcomes = projected_velocity_bank_sample_outcomes(
+        model,
+        x_t,
+        x_t1,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let mut totals = SignedVelocityBankBreakdownTotals::default();
+
+    for outcome in outcomes {
+        totals.observe(outcome);
+    }
+
+    totals.into_breakdown()
+}
+
+pub fn projected_signed_velocity_bank_breakdown_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedVelocityBankBreakdown
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedVelocityBankBreakdownTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let outcomes = projected_velocity_bank_sample_outcomes(
+            model,
+            &x_t,
+            &x_t1,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+
+        for outcome in outcomes {
+            totals.observe(outcome);
+        }
+    }
+
+    totals.into_breakdown()
+}
+
+fn projected_velocity_bank_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    temporal_task_mode: TemporalTaskMode,
+) -> Vec<VelocityBankSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "velocity-bank breakdown expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "velocity-bank breakdown expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = velocity_bank_candidates_for_task(temporal_task_mode);
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = candidate_dx_bank
+        .iter()
+        .map(|candidate_dx| {
+            let candidate_x_t1 =
+                make_velocity_bank_candidate_target_batch(x_t, *candidate_dx, temporal_task_mode);
+            model.target_projection(&candidate_x_t1)
+        })
+        .collect::<Vec<_>>();
+    let batch_size = x_t.shape[0];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = candidate_dx_bank
+            .iter()
+            .position(|candidate_dx| *candidate_dx == true_dx)
+            .unwrap_or_else(|| panic!("true dx {} is missing from velocity bank", true_dx));
+        let distances = candidate_targets
+            .iter()
+            .map(|candidate_target| sample_squared_distance(&prediction, candidate_target, sample))
+            .collect::<Vec<_>>();
+        let true_distance = distances[true_index];
+        let mut rank = 1usize;
+        let mut best_index = 0usize;
+        let mut best_distance = distances[0];
+
+        for (candidate_index, distance) in distances.iter().enumerate() {
+            if candidate_index != true_index
+                && *distance <= true_distance + VELOCITY_BANK_TIE_EPSILON
+            {
+                rank += 1;
+            }
+            if *distance < best_distance - VELOCITY_BANK_TIE_EPSILON {
+                best_index = candidate_index;
+                best_distance = *distance;
+            }
+        }
+
+        let best_dx = candidate_dx_bank[best_index];
+        let true_sign_distance =
+            best_group_distance(candidate_dx_bank, &distances, |candidate_dx| {
+                candidate_dx.signum() == true_dx.signum()
+            });
+        let other_sign_distance =
+            best_group_distance(candidate_dx_bank, &distances, |candidate_dx| {
+                candidate_dx.signum() != true_dx.signum()
+            });
+        let true_speed_distance =
+            best_group_distance(candidate_dx_bank, &distances, |candidate_dx| {
+                candidate_dx.abs() == true_dx.abs()
+            });
+        let other_speed_distance =
+            best_group_distance(candidate_dx_bank, &distances, |candidate_dx| {
+                candidate_dx.abs() != true_dx.abs()
+            });
+
+        outcomes.push(VelocityBankSampleOutcome {
+            true_dx,
+            best_dx,
+            rank,
+            sign_correct: true_sign_distance < other_sign_distance - VELOCITY_BANK_TIE_EPSILON,
+            speed_correct: true_speed_distance < other_speed_distance - VELOCITY_BANK_TIE_EPSILON,
+        });
+    }
+
+    outcomes
+}
+
+fn best_group_distance(
+    candidate_dx_bank: &[isize],
+    distances: &[f32],
+    mut include_candidate: impl FnMut(isize) -> bool,
+) -> f32 {
+    let mut best_distance = f32::INFINITY;
+
+    for (candidate_index, candidate_dx) in candidate_dx_bank.iter().enumerate() {
+        if include_candidate(*candidate_dx) {
+            best_distance = best_distance.min(distances[candidate_index]);
+        }
+    }
+
+    best_distance
 }
 
 fn velocity_bank_candidates_for_task(temporal_task_mode: TemporalTaskMode) -> &'static [isize] {

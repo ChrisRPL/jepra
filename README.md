@@ -90,7 +90,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v5 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v6 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> signed_bank_neg_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> signed_bank_speed_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -153,9 +153,11 @@ baseline mean val_pred_end=1.305638 | mean pred_min_std=0.177438 | mean target_d
 residual-bottleneck mean val_pred_end=1.385723 | mean pred_min_std=0.312411 | mean target_drift=0.136066 | status=ok all seeds
 baseline mean velocity_bank_mrr=0.519965 | mean velocity_bank_top1=0.239583 | mean velocity_bank_rank=2.484375
 residual-bottleneck mean velocity_bank_mrr=0.489583 | mean velocity_bank_top1=0.203125 | mean velocity_bank_rank=2.593750
+baseline signed breakdown neg_mrr=0.386285 | pos_mrr=0.653646 | slow_mrr=0.489583 | fast_mrr=0.550347 | sign_top1=0.479167 | speed_top1=0.494792
+residual signed breakdown neg_mrr=0.309896 | pos_mrr=0.669271 | slow_mrr=0.489583 | fast_mrr=0.489583 | sign_top1=0.375000 | speed_top1=0.635417
 ```
 
-Interpretation: baseline wins validation on all three signed-task seeds. Residual-bottleneck has higher prediction spread but ~16x higher target drift and weaker four-candidate signed velocity-bank ranking. The random four-candidate reference is `MRR≈0.520833`, `top1=0.25`, so neither model has credible signed-direction ranking yet. This blocks residual promotion, depthwise convolution, and spatial predictor work. The next useful implementation is a bounce/objective diagnostic or per-sign ranking breakdown, not architecture widening.
+Interpretation: baseline wins validation on all three signed-task seeds. Residual-bottleneck has higher prediction spread but ~16x higher target drift and weaker four-candidate signed velocity-bank ranking. The v6 breakdown shows a direction failure: both predictors are weak on negative motion, residual has some speed signal but worse sign accuracy. This blocks residual promotion, depthwise convolution, and spatial predictor work. The next useful implementation is target-bank separability/oracle-margin diagnostics before bounce or architecture widening.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

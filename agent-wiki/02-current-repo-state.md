@@ -13,7 +13,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Latest `velocity-trail` compact-stronger projected sweep: baseline beats residual-bottleneck on validation across seeds `11000..11002`; residual remains health-ok but target drift is ~73x higher.
 - Velocity-bank ranking/MRR is now implemented for projected `velocity-trail`; both baseline and residual rank speed above random, but residual is still blocked by validation loss and drift.
 - Latest `signed-velocity-trail` compact-stronger projected sweep: baseline beats residual-bottleneck on validation across seeds `11000..11002`; residual remains health-ok but target drift is ~16x higher.
-- Signed velocity-bank ranking remains near or below the four-candidate random reference (`MRR≈0.520833`, `top1=0.25`), so signed-direction structure is not credible enough for residual promotion.
+- Signed velocity-bank v6 breakdown shows direction failure: both predictors are weak on negative motion, and residual has speed signal (`speed_top1=0.635417`) but worse sign accuracy (`sign_top1=0.375000`) than baseline.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -22,7 +22,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - use lightweight representation-health stats to compare prediction and target behavior,
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
   - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
-  - build bounce/objective diagnostics or per-sign ranking breakdown before another architecture change,
+  - build target-bank separability/oracle-margin diagnostics before bounce or another architecture change,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.

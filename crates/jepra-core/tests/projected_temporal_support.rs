@@ -13,7 +13,8 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_batch_losses, projected_step, projected_validation_batch_losses,
+    projected_batch_losses, projected_signed_velocity_bank_breakdown_from_base_seed,
+    projected_step, projected_validation_batch_losses,
     projected_validation_batch_losses_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed,
@@ -445,6 +446,64 @@ fn projected_signed_velocity_bank_ranking_is_finite_and_bounded() {
     );
     assert_eq!(ranking.samples, BATCH_SIZE * 2);
     assert_eq!(ranking.candidates, 4);
+}
+
+#[test]
+fn projected_signed_velocity_bank_breakdown_is_finite_and_balanced() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let breakdown = projected_signed_velocity_bank_breakdown_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for value in [
+        breakdown.negative_mrr,
+        breakdown.positive_mrr,
+        breakdown.slow_mrr,
+        breakdown.fast_mrr,
+        breakdown.sign_top1,
+        breakdown.speed_top1,
+    ] {
+        assert!(value.is_finite());
+        assert!(
+            (0.0..=1.0).contains(&value),
+            "breakdown metric should be in [0.0, 1.0], got {:.6}",
+            value
+        );
+    }
+
+    assert_eq!(breakdown.samples, BATCH_SIZE * 2);
+    assert_eq!(
+        breakdown.negative_samples + breakdown.positive_samples,
+        breakdown.samples
+    );
+    assert_eq!(
+        breakdown.slow_samples + breakdown.fast_samples,
+        breakdown.samples
+    );
+    assert_eq!(breakdown.negative_samples, breakdown.positive_samples);
+    assert_eq!(breakdown.slow_samples, breakdown.fast_samples);
+    assert_eq!(
+        breakdown.true_neg_best_neg + breakdown.true_neg_best_pos,
+        breakdown.negative_samples
+    );
+    assert_eq!(
+        breakdown.true_pos_best_neg + breakdown.true_pos_best_pos,
+        breakdown.positive_samples
+    );
+    assert_eq!(
+        breakdown.true_slow_best_slow + breakdown.true_slow_best_fast,
+        breakdown.slow_samples
+    );
+    assert_eq!(
+        breakdown.true_fast_best_slow + breakdown.true_fast_best_fast,
+        breakdown.fast_samples
+    );
 }
 
 #[test]

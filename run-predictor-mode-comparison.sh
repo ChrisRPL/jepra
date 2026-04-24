@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_PATH="${JEPRA_MANIFEST_PATH:-$ROOT_DIR/crates/jepra-core/Cargo.toml}"
-SCHEMA="jepra_predictor_compare_v5"
+SCHEMA="jepra_predictor_compare_v6"
 TRAIN_STEPS="${JEPRA_TRAIN_STEPS:-300}"
 LOG_EVERY="${JEPRA_LOG_EVERY:-25}"
 TEMPORAL_TASK="${JEPRA_TEMPORAL_TASK:-random-speed}"
@@ -72,7 +72,7 @@ fi
 
 if [[ -n "$REPORT_PATH" ]]; then
   mkdir -p "$(dirname "$REPORT_PATH")"
-  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,status\n' > "$REPORT_PATH"
+  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,signed_bank_neg_mrr_end,signed_bank_pos_mrr_end,signed_bank_slow_mrr_end,signed_bank_fast_mrr_end,signed_bank_sign_top1_end,signed_bank_speed_top1_end,signed_bank_samples,signed_bank_true_neg_best_neg,signed_bank_true_neg_best_pos,signed_bank_true_pos_best_neg,signed_bank_true_pos_best_pos,signed_bank_true_slow_best_slow,signed_bank_true_slow_best_fast,signed_bank_true_fast_best_slow,signed_bank_true_fast_best_fast,status\n' > "$REPORT_PATH"
 fi
 
 encoder_mode_label() {
@@ -98,6 +98,10 @@ gt_threshold_bool() {
 
 is_velocity_bank_task() {
   [[ "$TEMPORAL_TASK" == "velocity-trail" || "$TEMPORAL_TASK" == "signed-velocity-trail" ]]
+}
+
+is_signed_velocity_bank_task() {
+  [[ "$TEMPORAL_TASK" == "signed-velocity-trail" ]]
 }
 
 parse_unprojected_probe_line() {
@@ -158,6 +162,14 @@ parse_velocity_bank_line() {
     return 1
   fi
   printf '%s' "$parsed"
+}
+
+parse_signed_velocity_bank_line() {
+  local line="$1"
+  if [[ ! "$line" =~ ^(initial|final)[[:space:]]+\|[[:space:]]+signed[[:space:]]+velocity[[:space:]]+bank[[:space:]]+neg_mrr[[:space:]] ]]; then
+    return 1
+  fi
+  awk '{print $7, $10, $13, $16, $19, $22, $25, $28, $31, $34, $37, $40, $43, $46, $49}' <<< "$line"
 }
 
 row_status() {
@@ -223,25 +235,48 @@ emit_row() {
   local velocity_bank_mean_rank_end_value="${velocity_bank_mean_rank_end:-na}"
   local velocity_bank_samples_value="${velocity_bank_samples:-na}"
   local velocity_bank_candidates_value="${velocity_bank_candidates:-na}"
+  local signed_bank_neg_mrr_end_value="${signed_bank_neg_mrr_end:-na}"
+  local signed_bank_pos_mrr_end_value="${signed_bank_pos_mrr_end:-na}"
+  local signed_bank_slow_mrr_end_value="${signed_bank_slow_mrr_end:-na}"
+  local signed_bank_fast_mrr_end_value="${signed_bank_fast_mrr_end:-na}"
+  local signed_bank_sign_top1_end_value="${signed_bank_sign_top1_end:-na}"
+  local signed_bank_speed_top1_end_value="${signed_bank_speed_top1_end:-na}"
+  local signed_bank_samples_value="${signed_bank_samples:-na}"
+  local signed_bank_true_neg_best_neg_value="${signed_bank_true_neg_best_neg:-na}"
+  local signed_bank_true_neg_best_pos_value="${signed_bank_true_neg_best_pos:-na}"
+  local signed_bank_true_pos_best_neg_value="${signed_bank_true_pos_best_neg:-na}"
+  local signed_bank_true_pos_best_pos_value="${signed_bank_true_pos_best_pos:-na}"
+  local signed_bank_true_slow_best_slow_value="${signed_bank_true_slow_best_slow:-na}"
+  local signed_bank_true_slow_best_fast_value="${signed_bank_true_slow_best_fast:-na}"
+  local signed_bank_true_fast_best_slow_value="${signed_bank_true_fast_best_slow:-na}"
+  local signed_bank_true_fast_best_fast_value="${signed_bank_true_fast_best_fast:-na}"
 
-  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s status=%s\n' \
+  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s signed_bank_neg_mrr_end=%s signed_bank_pos_mrr_end=%s signed_bank_slow_mrr_end=%s signed_bank_fast_mrr_end=%s signed_bank_sign_top1_end=%s signed_bank_speed_top1_end=%s signed_bank_samples=%s signed_bank_true_neg_best_neg=%s signed_bank_true_neg_best_pos=%s signed_bank_true_pos_best_neg=%s signed_bank_true_pos_best_pos=%s signed_bank_true_slow_best_slow=%s signed_bank_true_slow_best_fast=%s signed_bank_true_fast_best_slow=%s signed_bank_true_fast_best_fast=%s status=%s\n' \
     "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
     "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" \
     "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" \
     "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" \
     "$pred_min_std" "$target_min_std" "$proj_var_mean" "$target_drift_end" \
     "$velocity_bank_mrr_start_value" "$velocity_bank_mrr_end_value" "$velocity_bank_top1_start_value" "$velocity_bank_top1_end_value" \
-    "$velocity_bank_mean_rank_start_value" "$velocity_bank_mean_rank_end_value" "$velocity_bank_samples_value" "$velocity_bank_candidates_value" "$status"
+    "$velocity_bank_mean_rank_start_value" "$velocity_bank_mean_rank_end_value" "$velocity_bank_samples_value" "$velocity_bank_candidates_value" \
+    "$signed_bank_neg_mrr_end_value" "$signed_bank_pos_mrr_end_value" "$signed_bank_slow_mrr_end_value" "$signed_bank_fast_mrr_end_value" \
+    "$signed_bank_sign_top1_end_value" "$signed_bank_speed_top1_end_value" "$signed_bank_samples_value" \
+    "$signed_bank_true_neg_best_neg_value" "$signed_bank_true_neg_best_pos_value" "$signed_bank_true_pos_best_neg_value" "$signed_bank_true_pos_best_pos_value" \
+    "$signed_bank_true_slow_best_slow_value" "$signed_bank_true_slow_best_fast_value" "$signed_bank_true_fast_best_slow_value" "$signed_bank_true_fast_best_fast_value" "$status"
 
   if [[ -n "$REPORT_PATH" ]]; then
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
       "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
       "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" \
       "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" \
       "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" \
       "$pred_min_std" "$target_min_std" "$proj_var_mean" "$target_drift_end" \
       "$velocity_bank_mrr_start_value" "$velocity_bank_mrr_end_value" "$velocity_bank_top1_start_value" "$velocity_bank_top1_end_value" \
-      "$velocity_bank_mean_rank_start_value" "$velocity_bank_mean_rank_end_value" "$velocity_bank_samples_value" "$velocity_bank_candidates_value" "$status" >> "$REPORT_PATH"
+      "$velocity_bank_mean_rank_start_value" "$velocity_bank_mean_rank_end_value" "$velocity_bank_samples_value" "$velocity_bank_candidates_value" \
+      "$signed_bank_neg_mrr_end_value" "$signed_bank_pos_mrr_end_value" "$signed_bank_slow_mrr_end_value" "$signed_bank_fast_mrr_end_value" \
+      "$signed_bank_sign_top1_end_value" "$signed_bank_speed_top1_end_value" "$signed_bank_samples_value" \
+      "$signed_bank_true_neg_best_neg_value" "$signed_bank_true_neg_best_pos_value" "$signed_bank_true_pos_best_neg_value" "$signed_bank_true_pos_best_pos_value" \
+      "$signed_bank_true_slow_best_slow_value" "$signed_bank_true_slow_best_fast_value" "$signed_bank_true_fast_best_slow_value" "$signed_bank_true_fast_best_fast_value" "$status" >> "$REPORT_PATH"
   fi
 }
 
@@ -264,6 +299,21 @@ run_one() {
   local velocity_bank_mean_rank_end="na"
   local velocity_bank_samples="na"
   local velocity_bank_candidates="na"
+  local signed_bank_neg_mrr_end="na"
+  local signed_bank_pos_mrr_end="na"
+  local signed_bank_slow_mrr_end="na"
+  local signed_bank_fast_mrr_end="na"
+  local signed_bank_sign_top1_end="na"
+  local signed_bank_speed_top1_end="na"
+  local signed_bank_samples="na"
+  local signed_bank_true_neg_best_neg="na"
+  local signed_bank_true_neg_best_pos="na"
+  local signed_bank_true_pos_best_neg="na"
+  local signed_bank_true_pos_best_pos="na"
+  local signed_bank_true_slow_best_slow="na"
+  local signed_bank_true_slow_best_fast="na"
+  local signed_bank_true_fast_best_slow="na"
+  local signed_bank_true_fast_best_fast="na"
 
   if [[ "$path" == "unprojected" ]]; then
     example="train_vision_jepa_random_temporal"
@@ -328,6 +378,7 @@ run_one() {
   local parsed initial_train_line initial_val_line final_train_line final_val_line
   local pred_health_line target_health_line
   local initial_velocity_bank_line final_velocity_bank_line
+  local final_signed_velocity_bank_line
 
   pred_health_line="$(grep -m1 '^final prediction health |' "$log_file" || true)"
   target_health_line="$(grep -m1 '^final target health |' "$log_file" || true)"
@@ -391,6 +442,17 @@ run_one() {
         return 0
       fi
       read -r velocity_bank_mrr_end velocity_bank_top1_end velocity_bank_mean_rank_end velocity_bank_samples velocity_bank_candidates <<< "$parsed"
+    fi
+    if is_signed_velocity_bank_task; then
+      final_signed_velocity_bank_line="$(grep -m1 '^final | signed velocity bank neg_mrr ' "$log_file" || true)"
+
+      if ! parsed="$(parse_signed_velocity_bank_line "$final_signed_velocity_bank_line")"; then
+        failures=$((failures + 1))
+        emit_row "$path" "$predictor" "$seed" "$encoder_lr" "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" "na" "na" "$proj_var_mean" "$target_drift_end" "parse_failed"
+        rm -f "$log_file"
+        return 0
+      fi
+      read -r signed_bank_neg_mrr_end signed_bank_pos_mrr_end signed_bank_slow_mrr_end signed_bank_fast_mrr_end signed_bank_sign_top1_end signed_bank_speed_top1_end signed_bank_samples signed_bank_true_neg_best_neg signed_bank_true_neg_best_pos signed_bank_true_pos_best_neg signed_bank_true_pos_best_pos signed_bank_true_slow_best_slow signed_bank_true_slow_best_fast signed_bank_true_fast_best_slow signed_bank_true_fast_best_fast <<< "$parsed"
     fi
   fi
 

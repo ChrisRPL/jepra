@@ -79,7 +79,8 @@ Velocity-trail task axis:
 - Signed velocity-trail compact-stronger projected evidence (`2026-04-24`, seeds `11000..11002`, 300 steps): baseline mean validation prediction loss `1.305638`, residual-bottleneck mean `1.385723`; baseline wins 3/3.
 - Residual-bottleneck remains health-ok but drift-confounded on this task: mean prediction `min_std=0.312411` vs baseline `0.177438`, mean target drift `0.136066` vs baseline `0.008615`.
 - Signed velocity-bank ranking/MRR (`2026-04-24`, same sweep): baseline mean MRR `0.519965`, top1 `0.239583`; residual mean MRR `0.489583`, top1 `0.203125`. Four-candidate random reference is MRR `0.520833`, top1 `0.25`.
-- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. The next valid implementation step is a bounce/objective diagnostic or per-sign ranking breakdown before any architecture widening.
+- Signed v6 breakdown (`2026-04-24`, same sweep): baseline `neg_mrr=0.386285`, `pos_mrr=0.653646`, `sign_top1=0.479167`, `speed_top1=0.494792`; residual `neg_mrr=0.309896`, `pos_mrr=0.669271`, `sign_top1=0.375000`, `speed_top1=0.635417`.
+- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Residual shows some speed signal but worse sign accuracy and much higher drift. The next valid implementation step is target-bank separability/oracle-margin diagnostics before bounce or architecture widening.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -90,7 +91,7 @@ Velocity-trail task axis:
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v5`, emits `temporal_task`, velocity-bank fields for projected trail tasks, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v6`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
@@ -152,7 +153,7 @@ Velocity-trail task axis:
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use bounce/objective diagnostics or per-sign ranking breakdown as the next proof step before widening the model.
+2. Use target-bank separability/oracle-margin diagnostics as the next proof step before bounce or widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed`, `velocity-trail`, and `signed-velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.
