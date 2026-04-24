@@ -1549,6 +1549,7 @@ const COMPACT_ENCODER_STRONGER_CHANNELS: usize = 8;
 const SIGNED_DIRECTION_ENCODER_CHANNELS: usize = 3;
 const SIGNED_DIRECTION_KERNEL_HEIGHT: usize = 2;
 const SIGNED_DIRECTION_KERNEL_WIDTH: usize = 5;
+const SIGNED_DIRECTION_RESPONSE_SCALE: f32 = 6.0;
 
 fn compact_encoder_channel_weights(row: usize, col: usize) -> [f32; COMPACT_ENCODER_CHANNELS] {
     let center = (IMAGE_SIZE as f32 - 1.0) / 2.0;
@@ -1719,9 +1720,15 @@ pub fn make_compact_frozen_encoder_signed_direction() -> EmbeddingEncoder {
 
     for kh in 0..SIGNED_DIRECTION_KERNEL_HEIGHT {
         for kw in 0..SIGNED_DIRECTION_KERNEL_WIDTH {
-            conv1_weight.set(&[0, 0, kh, kw], odd_x[kw]);
-            conv1_weight.set(&[1, 0, kh, kw], -odd_x[kw]);
-            conv1_weight.set(&[2, 0, kh, kw], fast_gap[kw]);
+            conv1_weight.set(&[0, 0, kh, kw], SIGNED_DIRECTION_RESPONSE_SCALE * odd_x[kw]);
+            conv1_weight.set(
+                &[1, 0, kh, kw],
+                -SIGNED_DIRECTION_RESPONSE_SCALE * odd_x[kw],
+            );
+            conv1_weight.set(
+                &[2, 0, kh, kw],
+                SIGNED_DIRECTION_RESPONSE_SCALE * fast_gap[kw],
+            );
         }
     }
 
