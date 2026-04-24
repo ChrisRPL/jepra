@@ -13,8 +13,8 @@ use temporal_validation::{
 };
 use temporal_vision::{
     BATCH_SIZE, CompactEncoderMode, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, PredictorMode, SQUARE_SIZE,
-    TemporalExperimentSummary, TemporalRunConfig, TemporalTaskMode, active_cell_count,
-    assert_seed_range_has_both_motion_modes,
+    TemporalExperimentSummary, TemporalRunConfig, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX,
+    active_cell_count, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     assert_temporal_experiment_improved, batch_has_both_motion_modes,
     batch_has_min_motion_mode_counts, make_compact_frozen_encoder,
@@ -22,8 +22,9 @@ use temporal_vision::{
     make_temporal_batch_for_task, make_train_batch, make_train_batch_for_task,
     make_validation_batch, make_validation_batch_for_task,
     make_validation_batch_with_both_motion_modes,
-    make_validation_batch_with_both_motion_modes_for_task, motion_dx_for_sample,
-    motion_mode_counts, square_center_x, total_mass,
+    make_validation_batch_with_both_motion_modes_for_task,
+    make_velocity_trail_candidate_target_batch, motion_dx_for_sample, motion_mode_counts,
+    square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -899,6 +900,50 @@ fn velocity_trail_mixed_mode_validation_probe_is_deterministic_and_contract_vali
     ));
     assert!(slow_count >= MIN_MIXED_MODE_COUNT);
     assert!(fast_count >= MIN_MIXED_MODE_COUNT);
+}
+
+#[test]
+fn velocity_trail_candidate_targets_match_true_future_for_matching_dx() {
+    let (x_t, x_t1, _) = make_validation_batch_with_both_motion_modes_for_task(
+        20_000,
+        1,
+        TemporalTaskMode::VelocityTrail,
+    );
+
+    for candidate_dx in VELOCITY_BANK_CANDIDATE_DX {
+        let candidate_target = make_velocity_trail_candidate_target_batch(&x_t, candidate_dx);
+        let mut matched_samples = 0usize;
+
+        for sample in 0..BATCH_SIZE {
+            if motion_dx_for_sample(&x_t, &x_t1, sample) as isize != candidate_dx {
+                continue;
+            }
+
+            matched_samples += 1;
+            for row in 0..IMAGE_SIZE {
+                for col in 0..IMAGE_SIZE {
+                    let actual = candidate_target.get(&[sample, 0, row, col]);
+                    let expected = x_t1.get(&[sample, 0, row, col]);
+                    assert!(
+                        (actual - expected).abs() < 1e-6,
+                        "candidate dx {} mismatch at sample {} row {} col {}: {:.6} vs {:.6}",
+                        candidate_dx,
+                        sample,
+                        row,
+                        col,
+                        actual,
+                        expected
+                    );
+                }
+            }
+        }
+
+        assert!(
+            matched_samples > 0,
+            "no matching samples for candidate dx {}",
+            candidate_dx
+        );
+    }
 }
 
 #[test]

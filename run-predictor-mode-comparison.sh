@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_PATH="${JEPRA_MANIFEST_PATH:-$ROOT_DIR/crates/jepra-core/Cargo.toml}"
-SCHEMA="jepra_predictor_compare_v4"
+SCHEMA="jepra_predictor_compare_v5"
 TRAIN_STEPS="${JEPRA_TRAIN_STEPS:-300}"
 LOG_EVERY="${JEPRA_LOG_EVERY:-25}"
 TEMPORAL_TASK="${JEPRA_TEMPORAL_TASK:-random-speed}"
@@ -72,7 +72,7 @@ fi
 
 if [[ -n "$REPORT_PATH" ]]; then
   mkdir -p "$(dirname "$REPORT_PATH")"
-  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,status\n' > "$REPORT_PATH"
+  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,status\n' > "$REPORT_PATH"
 fi
 
 encoder_mode_label() {
@@ -146,6 +146,16 @@ parse_target_drift_line() {
   printf '%s' "$parsed"
 }
 
+parse_velocity_bank_line() {
+  local line="$1"
+  local parsed
+  parsed="$(sed -E 's/^(initial|final)[[:space:]]+\|[[:space:]]+velocity bank mrr[[:space:]]+([^[:space:]]+)[[:space:]]+\|[[:space:]]+top1[[:space:]]+([^[:space:]]+)[[:space:]]+\|[[:space:]]+mean_rank[[:space:]]+([^[:space:]]+)[[:space:]]+\|[[:space:]]+samples[[:space:]]+([^[:space:]]+)[[:space:]]+\|[[:space:]]+candidates[[:space:]]+([^[:space:]]+)$/\2 \3 \4 \5 \6/' <<< "$line")"
+  if [[ "$parsed" == "$line" ]]; then
+    return 1
+  fi
+  printf '%s' "$parsed"
+}
+
 row_status() {
   local train_pred_start="$1"
   local train_pred_end="$2"
@@ -201,21 +211,33 @@ emit_row() {
   local status="${20}"
   local encoder_mode
   encoder_mode="$(encoder_mode_label)"
+  local velocity_bank_mrr_start_value="${velocity_bank_mrr_start:-na}"
+  local velocity_bank_mrr_end_value="${velocity_bank_mrr_end:-na}"
+  local velocity_bank_top1_start_value="${velocity_bank_top1_start:-na}"
+  local velocity_bank_top1_end_value="${velocity_bank_top1_end:-na}"
+  local velocity_bank_mean_rank_start_value="${velocity_bank_mean_rank_start:-na}"
+  local velocity_bank_mean_rank_end_value="${velocity_bank_mean_rank_end:-na}"
+  local velocity_bank_samples_value="${velocity_bank_samples:-na}"
+  local velocity_bank_candidates_value="${velocity_bank_candidates:-na}"
 
-  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s status=%s\n' \
+  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s status=%s\n' \
     "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
     "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" \
     "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" \
     "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" \
-    "$pred_min_std" "$target_min_std" "$proj_var_mean" "$target_drift_end" "$status"
+    "$pred_min_std" "$target_min_std" "$proj_var_mean" "$target_drift_end" \
+    "$velocity_bank_mrr_start_value" "$velocity_bank_mrr_end_value" "$velocity_bank_top1_start_value" "$velocity_bank_top1_end_value" \
+    "$velocity_bank_mean_rank_start_value" "$velocity_bank_mean_rank_end_value" "$velocity_bank_samples_value" "$velocity_bank_candidates_value" "$status"
 
   if [[ -n "$REPORT_PATH" ]]; then
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
       "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
       "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" \
       "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" \
       "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" \
-      "$pred_min_std" "$target_min_std" "$proj_var_mean" "$target_drift_end" "$status" >> "$REPORT_PATH"
+      "$pred_min_std" "$target_min_std" "$proj_var_mean" "$target_drift_end" \
+      "$velocity_bank_mrr_start_value" "$velocity_bank_mrr_end_value" "$velocity_bank_top1_start_value" "$velocity_bank_top1_end_value" \
+      "$velocity_bank_mean_rank_start_value" "$velocity_bank_mean_rank_end_value" "$velocity_bank_samples_value" "$velocity_bank_candidates_value" "$status" >> "$REPORT_PATH"
   fi
 }
 
@@ -230,6 +252,14 @@ run_one() {
   local target_momentum_warmup_steps="na"
   local log_file
   local -a extra_args=()
+  local velocity_bank_mrr_start="na"
+  local velocity_bank_mrr_end="na"
+  local velocity_bank_top1_start="na"
+  local velocity_bank_top1_end="na"
+  local velocity_bank_mean_rank_start="na"
+  local velocity_bank_mean_rank_end="na"
+  local velocity_bank_samples="na"
+  local velocity_bank_candidates="na"
 
   if [[ "$path" == "unprojected" ]]; then
     example="train_vision_jepa_random_temporal"
@@ -293,6 +323,7 @@ run_one() {
   local target_drift_end="na"
   local parsed initial_train_line initial_val_line final_train_line final_val_line
   local pred_health_line target_health_line
+  local initial_velocity_bank_line final_velocity_bank_line
 
   pred_health_line="$(grep -m1 '^final prediction health |' "$log_file" || true)"
   target_health_line="$(grep -m1 '^final target health |' "$log_file" || true)"
@@ -337,6 +368,26 @@ run_one() {
 
     if ! proj_var_mean="$(parse_projected_var_line "$(grep -m1 '^final | proj mean_abs ' "$log_file" || true)")"; then proj_var_mean="na"; fi
     if ! target_drift_end="$(parse_target_drift_line "$(grep -m1 '^final | target drift ' "$log_file" || true)")"; then target_drift_end="na"; fi
+    if [[ "$TEMPORAL_TASK" == "velocity-trail" ]]; then
+      initial_velocity_bank_line="$(grep -m1 '^initial | velocity bank mrr ' "$log_file" || true)"
+      final_velocity_bank_line="$(grep -m1 '^final | velocity bank mrr ' "$log_file" || true)"
+
+      if ! parsed="$(parse_velocity_bank_line "$initial_velocity_bank_line")"; then
+        failures=$((failures + 1))
+        emit_row "$path" "$predictor" "$seed" "$encoder_lr" "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" "na" "na" "$proj_var_mean" "$target_drift_end" "parse_failed"
+        rm -f "$log_file"
+        return 0
+      fi
+      read -r velocity_bank_mrr_start velocity_bank_top1_start velocity_bank_mean_rank_start velocity_bank_samples velocity_bank_candidates <<< "$parsed"
+
+      if ! parsed="$(parse_velocity_bank_line "$final_velocity_bank_line")"; then
+        failures=$((failures + 1))
+        emit_row "$path" "$predictor" "$seed" "$encoder_lr" "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" "na" "na" "$proj_var_mean" "$target_drift_end" "parse_failed"
+        rm -f "$log_file"
+        return 0
+      fi
+      read -r velocity_bank_mrr_end velocity_bank_top1_end velocity_bank_mean_rank_end velocity_bank_samples velocity_bank_candidates <<< "$parsed"
+    fi
   fi
 
   if ! parsed="$(parse_health_line "$pred_health_line")"; then

@@ -1,4 +1,7 @@
-use super::temporal_vision::{BATCH_SIZE, TemporalTaskMode, make_temporal_batch_for_task};
+use super::temporal_vision::{
+    BATCH_SIZE, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX, make_temporal_batch_for_task,
+    make_velocity_trail_candidate_target_batch, motion_dx_for_sample,
+};
 use jepra_core::{
     EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa, Tensor,
     gaussian_moment_regularizer, mse_loss,
@@ -8,6 +11,16 @@ pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
 pub const PROJECTED_VALIDATION_BATCHES: usize = 8;
 pub const PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 pub const PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
+const VELOCITY_BANK_TIE_EPSILON: f32 = 1e-7;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedVelocityBankRanking {
+    pub mrr: f32,
+    pub top1: f32,
+    pub mean_rank: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
 
 #[allow(dead_code)]
 pub fn projected_target(
@@ -142,4 +155,144 @@ where
         validation_batches,
         |seed| make_temporal_batch_for_task(BATCH_SIZE, seed, temporal_task_mode),
     )
+}
+
+pub fn projected_velocity_bank_ranking<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> ProjectedVelocityBankRanking
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "velocity-bank ranking expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "velocity-bank ranking expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = VELOCITY_BANK_CANDIDATE_DX
+        .iter()
+        .map(|candidate_dx| {
+            let candidate_x_t1 = make_velocity_trail_candidate_target_batch(x_t, *candidate_dx);
+            model.target_projection(&candidate_x_t1)
+        })
+        .collect::<Vec<_>>();
+    let batch_size = x_t.shape[0];
+    let mut reciprocal_rank_total = 0.0f32;
+    let mut top1_total = 0usize;
+    let mut rank_total = 0usize;
+
+    for sample in 0..batch_size {
+        let true_dx = motion_dx_for_sample(x_t, x_t1, sample) as isize;
+        let true_index = VELOCITY_BANK_CANDIDATE_DX
+            .iter()
+            .position(|candidate_dx| *candidate_dx == true_dx)
+            .unwrap_or_else(|| panic!("true dx {} is missing from velocity bank", true_dx));
+        let distances = candidate_targets
+            .iter()
+            .map(|candidate_target| sample_squared_distance(&prediction, candidate_target, sample))
+            .collect::<Vec<_>>();
+        let true_distance = distances[true_index];
+        let mut rank = 1usize;
+
+        for (candidate_index, distance) in distances.iter().enumerate() {
+            if candidate_index != true_index
+                && *distance <= true_distance + VELOCITY_BANK_TIE_EPSILON
+            {
+                rank += 1;
+            }
+        }
+
+        if rank == 1 {
+            top1_total += 1;
+        }
+        rank_total += rank;
+        reciprocal_rank_total += 1.0 / rank as f32;
+    }
+
+    ProjectedVelocityBankRanking {
+        mrr: reciprocal_rank_total / batch_size as f32,
+        top1: top1_total as f32 / batch_size as f32,
+        mean_rank: rank_total as f32 / batch_size as f32,
+        samples: batch_size,
+        candidates: VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
+}
+
+pub fn projected_velocity_bank_ranking_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    temporal_task_mode: TemporalTaskMode,
+) -> ProjectedVelocityBankRanking
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        temporal_task_mode,
+        TemporalTaskMode::VelocityTrail,
+        "velocity-bank ranking only supports velocity-trail task"
+    );
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut reciprocal_rank_total = 0.0f32;
+    let mut top1_total = 0.0f32;
+    let mut rank_total = 0.0f32;
+    let mut sample_total = 0usize;
+    let mut candidate_count = VELOCITY_BANK_CANDIDATE_DX.len();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            temporal_task_mode,
+        );
+        let ranking = projected_velocity_bank_ranking(model, &x_t, &x_t1);
+
+        reciprocal_rank_total += ranking.mrr * ranking.samples as f32;
+        top1_total += ranking.top1 * ranking.samples as f32;
+        rank_total += ranking.mean_rank * ranking.samples as f32;
+        sample_total += ranking.samples;
+        candidate_count = ranking.candidates;
+    }
+
+    ProjectedVelocityBankRanking {
+        mrr: reciprocal_rank_total / sample_total as f32,
+        top1: top1_total / sample_total as f32,
+        mean_rank: rank_total / sample_total as f32,
+        samples: sample_total,
+        candidates: candidate_count,
+    }
+}
+
+fn sample_squared_distance(lhs: &Tensor, rhs: &Tensor, sample: usize) -> f32 {
+    assert_eq!(
+        lhs.shape, rhs.shape,
+        "distance expects matching shapes, got {:?} and {:?}",
+        lhs.shape, rhs.shape
+    );
+    assert!(
+        lhs.shape.len() == 2,
+        "distance expects projected rank-2 tensors, got {:?}",
+        lhs.shape
+    );
+
+    let dim = lhs.shape[1];
+    let mut distance = 0.0f32;
+
+    for feature_idx in 0..dim {
+        let diff = lhs.get(&[sample, feature_idx]) - rhs.get(&[sample, feature_idx]);
+        distance += diff * diff;
+    }
+
+    distance
 }

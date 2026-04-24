@@ -32,7 +32,7 @@ Current high-value implementation path:
 2. Treat `residual-bottleneck` as the current projected-path candidate, not a default, because 300-step frozen-base evidence is strong for projected but not unprojected.
 3. Compact-stronger evidence is healthy but drift-confounded; residual delta scaling is now the explicit control knob for ablations, not a hidden topology change.
 4. Treat the `velocity-trail` sweep as blocking residual promotion: baseline wins validation on all three compact-stronger projected seeds and residual has much higher target drift.
-5. Build velocity-bank ranking/MRR as the next diagnostic before adding depthwise or spatial primitives.
+5. Treat velocity-bank ranking/MRR as implemented: both baseline and residual rank speed above random, but residual remains blocked by validation loss and drift.
 6. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
 7. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
@@ -72,7 +72,8 @@ Velocity-trail task axis:
 - `random-speed` remains the default and the historical evidence baseline.
 - Current compact-stronger projected evidence (`2026-04-24`, seeds `11000..11002`, 300 steps): baseline mean validation prediction loss `0.119354`, residual-bottleneck mean `0.178396`; baseline wins 3/3.
 - Residual-bottleneck remains health-ok but drift-confounded on this task: mean target drift `0.159557` vs baseline `0.002187`.
-- Use velocity-bank ranking/MRR next to decide whether the model predicts ordered motion structure; do not promote architecture changes from loss-only wins.
+- Velocity-bank ranking/MRR (`2026-04-24`, same sweep): baseline mean MRR `0.817708`, top1 `0.635417`; residual mean MRR `0.835938`, top1 `0.671875`. Two-candidate random reference is MRR `0.75`, top1 `0.5`.
+- Decision: current models learn some ordered speed structure; residual's ranking edge does not override worse validation loss and much higher drift. Do not promote residual, depthwise, or spatial primitives from this result.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -83,7 +84,7 @@ Velocity-trail task axis:
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v4`, emits `temporal_task`, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v5`, emits `temporal_task`, velocity-bank fields for projected `velocity-trail`, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
@@ -145,7 +146,7 @@ Velocity-trail task axis:
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use velocity-bank ranking/MRR on `velocity-trail` as the next proof diagnostic before widening the model.
+2. Use a harder signed/bounce temporal task or objective diagnostic as the next proof step before widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed` and `velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.

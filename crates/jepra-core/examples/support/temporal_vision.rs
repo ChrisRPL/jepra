@@ -16,6 +16,8 @@ pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
 pub const VELOCITY_TRAIL_INTENSITY_RATIO: f32 = 0.35;
 pub const VELOCITY_TRAIL_DECAY: f32 = 0.82;
+#[allow(dead_code)]
+pub const VELOCITY_BANK_CANDIDATE_DX: [isize; 2] = [1, 2];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactEncoderMode {
@@ -752,6 +754,51 @@ fn make_velocity_trail_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, 
     }
 
     (x_t, x_t1)
+}
+
+#[allow(dead_code)]
+pub fn make_velocity_trail_candidate_target_batch(x_t: &Tensor, candidate_dx: isize) -> Tensor {
+    assert!(
+        VELOCITY_BANK_CANDIDATE_DX.contains(&candidate_dx),
+        "velocity-trail candidate dx must be one of {:?}, got {}",
+        VELOCITY_BANK_CANDIDATE_DX,
+        candidate_dx
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "velocity-trail candidate target expects rank-4 input, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        x_t.shape[1] == CHANNELS && x_t.shape[2] == IMAGE_SIZE && x_t.shape[3] == IMAGE_SIZE,
+        "velocity-trail candidate target expects shape [batch, {}, {}, {}], got {:?}",
+        CHANNELS,
+        IMAGE_SIZE,
+        IMAGE_SIZE,
+        x_t.shape
+    );
+
+    let batch_size = x_t.shape[0];
+    let mut candidate = Tensor::zeros(x_t.shape.clone());
+
+    for sample in 0..batch_size {
+        for row in 0..IMAGE_SIZE {
+            for col in 0..IMAGE_SIZE {
+                let shifted_col = col as isize + candidate_dx;
+                if !(0..IMAGE_SIZE as isize).contains(&shifted_col) {
+                    continue;
+                }
+
+                let value = x_t.get(&[sample, 0, row, col]);
+                candidate.set(
+                    &[sample, 0, row, shifted_col as usize],
+                    value * VELOCITY_TRAIL_DECAY,
+                );
+            }
+        }
+    }
+
+    candidate
 }
 
 #[allow(dead_code)]

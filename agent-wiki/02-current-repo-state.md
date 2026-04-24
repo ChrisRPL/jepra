@@ -11,6 +11,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Projected path now has an opt-in L2 online-projector drift regularizer. It reduces target drift on a seed-level probe, but current weights are a tradeoff rather than a default-ready fix.
 - Temporal examples now expose a task axis: default `random-speed` plus opt-in `velocity-trail`, which adds previous-position trail cues without changing model defaults.
 - Latest `velocity-trail` compact-stronger projected sweep: baseline beats residual-bottleneck on validation across seeds `11000..11002`; residual remains health-ok but target drift is ~73x higher.
+- Velocity-bank ranking/MRR is now implemented for projected `velocity-trail`; both baseline and residual rank speed above random, but residual is still blocked by validation loss and drift.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -18,7 +19,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - add and compare opt-in Rust-native predictor variants without changing defaults,
   - use lightweight representation-health stats to compare prediction and target behavior,
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
-  - use velocity-bank ranking/MRR as the next harder diagnostic before depthwise/spatial primitive work,
+  - use a harder signed/bounce temporal task or objective diagnostic before depthwise/spatial primitive work,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.

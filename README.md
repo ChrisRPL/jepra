@@ -88,18 +88,18 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v4 temporal_task=<random-speed|velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v5 temporal_task=<random-speed|velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
 
 ```text
-schema=jepra_predictor_compare_v4 temporal_task=random-speed path=unprojected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.040150 pred_min_std_final=1.254614 status=ok
-schema=jepra_predictor_compare_v4 temporal_task=random-speed path=unprojected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.127445 pred_min_std_final=1.245264 status=ok
-schema=jepra_predictor_compare_v4 temporal_task=random-speed path=unprojected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.074866 pred_min_std_final=1.063676 status=ok
-schema=jepra_predictor_compare_v4 temporal_task=random-speed path=projected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.216322 pred_min_std_final=0.990177 target_drift_end=0.036044 status=ok
-schema=jepra_predictor_compare_v4 temporal_task=random-speed path=projected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=5.042953 pred_min_std_final=0.000000 target_drift_end=0.002192 status=accept_failed
-schema=jepra_predictor_compare_v4 temporal_task=random-speed path=projected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.045684 pred_min_std_final=0.972417 target_drift_end=0.031384 status=ok
+schema=jepra_predictor_compare_v5 temporal_task=random-speed path=unprojected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.040150 pred_min_std_final=1.254614 velocity_bank_mrr_end=na status=ok
+schema=jepra_predictor_compare_v5 temporal_task=random-speed path=unprojected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.127445 pred_min_std_final=1.245264 velocity_bank_mrr_end=na status=ok
+schema=jepra_predictor_compare_v5 temporal_task=random-speed path=unprojected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.074866 pred_min_std_final=1.063676 velocity_bank_mrr_end=na status=ok
+schema=jepra_predictor_compare_v5 temporal_task=random-speed path=projected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.216322 pred_min_std_final=0.990177 target_drift_end=0.036044 velocity_bank_mrr_end=na status=ok
+schema=jepra_predictor_compare_v5 temporal_task=random-speed path=projected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=5.042953 pred_min_std_final=0.000000 target_drift_end=0.002192 velocity_bank_mrr_end=na status=accept_failed
+schema=jepra_predictor_compare_v5 temporal_task=random-speed path=projected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.045684 pred_min_std_final=0.972417 target_drift_end=0.031384 velocity_bank_mrr_end=na status=ok
 ```
 
 Interpretation: residual-bottleneck is the current projected-path candidate because it keeps prediction health close to target health and materially beats projected baseline on this seed. It is not promoted as a default because unprojected baseline still has the lower final validation loss.
@@ -138,9 +138,11 @@ Velocity-trail compact-stronger projected evidence (`2026-04-24`, 300 steps, see
 ```text
 baseline mean val_pred_end=0.119354 | mean pred_min_std=0.101571 | mean target_drift=0.002187 | status=ok all seeds
 residual-bottleneck mean val_pred_end=0.178396 | mean pred_min_std=0.226671 | mean target_drift=0.159557 | status=ok all seeds
+baseline mean velocity_bank_mrr=0.817708 | mean velocity_bank_top1=0.635417 | mean velocity_bank_rank=1.364583
+residual-bottleneck mean velocity_bank_mrr=0.835938 | mean velocity_bank_top1=0.671875 | mean velocity_bank_rank=1.328125
 ```
 
-Interpretation: baseline wins the harder `velocity-trail` task on all three seeds. Residual-bottleneck stays healthy but is validation-worse and drift-confounded, so this evidence blocks residual promotion and blocks depthwise/spatial primitive work. The next useful implementation is a velocity-bank ranking/MRR diagnostic to prove motion-structure prediction before more architecture.
+Interpretation: baseline wins the harder `velocity-trail` task on all three seeds and ranks the two-speed bank above random (`MRR=0.75`, `top1=0.5`). Residual-bottleneck has slightly higher speed-bank ranking but remains validation-worse and drift-confounded, so this evidence still blocks residual promotion and depthwise/spatial primitive work. The next useful implementation is a harder signed/bounce temporal task or objective diagnostic, not architecture widening.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

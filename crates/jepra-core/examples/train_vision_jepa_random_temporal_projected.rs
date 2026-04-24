@@ -10,11 +10,12 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_validation_batch_losses_from_base_seed_for_task,
+    ProjectedVelocityBankRanking, projected_validation_batch_losses_from_base_seed_for_task,
+    projected_velocity_bank_ranking_from_base_seed,
 };
 use temporal_vision::{
-    CompactEncoderMode, MIN_MIXED_MODE_COUNT, PredictorMode, assert_temporal_contract,
-    assert_temporal_experiment_improved, make_compact_frozen_encoder,
+    CompactEncoderMode, MIN_MIXED_MODE_COUNT, PredictorMode, TemporalTaskMode,
+    assert_temporal_contract, assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch_for_config,
     make_validation_batch_for_config, make_validation_batch_with_both_motion_modes_for_config,
     motion_mode_counts, print_batch_summary, print_representation_stats,
@@ -206,6 +207,7 @@ where
     let initial_projection_drift = model.target_projection_drift();
     let (initial_projection_mean_abs, initial_projection_var_mean) =
         projection_stats(&initial_projection_t);
+    let initial_velocity_bank_ranking = maybe_projected_velocity_bank_ranking(&model, run_config);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
@@ -230,6 +232,7 @@ where
         initial_val_prediction_loss, initial_val_regularizer_loss, initial_val_total_loss
     );
     println!("initial | target drift {:.6}", initial_projection_drift);
+    print_velocity_bank_ranking("initial", initial_velocity_bank_ranking);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -322,6 +325,7 @@ where
         );
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);
+    let final_velocity_bank_ranking = maybe_projected_velocity_bank_ranking(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
         reduction_thresholds_for_run_config(run_config);
 
@@ -372,4 +376,33 @@ where
         final_val_prediction_loss, final_val_regularizer_loss, final_val_total_loss
     );
     println!("final | target drift {:.6}", final_projection_drift);
+    print_velocity_bank_ranking("final", final_velocity_bank_ranking);
+}
+
+fn maybe_projected_velocity_bank_ranking<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedVelocityBankRanking>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::VelocityTrail {
+        return None;
+    }
+
+    Some(projected_velocity_bank_ranking_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+        run_config.temporal_task_mode,
+    ))
+}
+
+fn print_velocity_bank_ranking(tag: &str, ranking: Option<ProjectedVelocityBankRanking>) {
+    if let Some(ranking) = ranking {
+        println!(
+            "{} | velocity bank mrr {:.6} | top1 {:.6} | mean_rank {:.6} | samples {} | candidates {}",
+            tag, ranking.mrr, ranking.top1, ranking.mean_rank, ranking.samples, ranking.candidates
+        );
+    }
 }
