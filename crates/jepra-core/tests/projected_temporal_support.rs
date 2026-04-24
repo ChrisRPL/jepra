@@ -16,6 +16,7 @@ use projected_temporal::{
     projected_batch_losses, projected_signed_margin_objective_loss_and_grad,
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
+    projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
     projected_validation_batch_losses, projected_validation_batch_losses_from_base_seed,
@@ -654,6 +655,45 @@ fn projected_signed_velocity_bank_breakdown_is_finite_and_balanced() {
         breakdown.true_fast_best_slow + breakdown.true_fast_best_fast,
         breakdown.fast_samples
     );
+}
+
+#[test]
+fn projected_signed_state_separability_is_finite_and_bounded() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let separability = projected_signed_state_separability_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for value in [
+        separability.latent_mrr,
+        separability.latent_top1,
+        separability.latent_sign_top1,
+        separability.latent_mean_rank,
+        separability.projection_mrr,
+        separability.projection_top1,
+        separability.projection_sign_top1,
+        separability.projection_mean_rank,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!((0.25..=1.0).contains(&separability.latent_mrr));
+    assert!((0.0..=1.0).contains(&separability.latent_top1));
+    assert!((0.0..=1.0).contains(&separability.latent_sign_top1));
+    assert!((1.0..=4.0).contains(&separability.latent_mean_rank));
+    assert!((0.25..=1.0).contains(&separability.projection_mrr));
+    assert!((0.0..=1.0).contains(&separability.projection_top1));
+    assert!((0.0..=1.0).contains(&separability.projection_sign_top1));
+    assert!((1.0..=4.0).contains(&separability.projection_mean_rank));
+    assert_eq!(separability.support_samples, BATCH_SIZE);
+    assert_eq!(separability.query_samples, BATCH_SIZE);
+    assert_eq!(separability.candidates, 4);
 }
 
 #[test]

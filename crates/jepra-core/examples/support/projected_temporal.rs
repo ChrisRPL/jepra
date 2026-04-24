@@ -25,6 +25,21 @@ pub struct ProjectedVelocityBankRanking {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedStateSeparability {
+    pub latent_mrr: f32,
+    pub latent_top1: f32,
+    pub latent_sign_top1: f32,
+    pub latent_mean_rank: f32,
+    pub projection_mrr: f32,
+    pub projection_top1: f32,
+    pub projection_sign_top1: f32,
+    pub projection_mean_rank: f32,
+    pub support_samples: usize,
+    pub query_samples: usize,
+    pub candidates: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedVelocityBankBreakdown {
     pub negative_mrr: f32,
     pub positive_mrr: f32,
@@ -135,6 +150,13 @@ struct SignedPredictionBankMarginSampleOutcome {
     speed_margin: f32,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SignedStateSeparabilitySampleOutcome {
+    true_dx: isize,
+    best_dx: isize,
+    rank: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Default)]
 struct SignedObjectiveErrorBreakdownTotals {
@@ -212,6 +234,22 @@ struct SignedPredictionBankMarginTotals {
     fast_samples: usize,
 }
 
+#[derive(Debug)]
+struct SignedStateCentroids {
+    sums: Vec<Vec<f32>>,
+    counts: Vec<usize>,
+    dim: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedStateSeparabilityTotals {
+    reciprocal_rank: f32,
+    top1: usize,
+    sign_top1: usize,
+    rank: usize,
+    samples: usize,
+}
+
 #[allow(dead_code)]
 impl SignedObjectiveErrorBreakdownTotals {
     fn observe(&mut self, true_dx: isize, loss: f32) {
@@ -285,6 +323,146 @@ impl SignedObjectiveErrorBreakdownTotals {
             dx_pos1_samples: self.dx_pos1_samples,
             dx_pos2_samples: self.dx_pos2_samples,
         }
+    }
+}
+
+impl SignedStateCentroids {
+    fn new(dim: usize) -> Self {
+        assert!(dim > 0, "signed state centroid dim must be non-empty");
+
+        Self {
+            sums: vec![vec![0.0; dim]; SIGNED_VELOCITY_BANK_CANDIDATE_DX.len()],
+            counts: vec![0; SIGNED_VELOCITY_BANK_CANDIDATE_DX.len()],
+            dim,
+        }
+    }
+
+    fn observe(&mut self, features: &Tensor, sample: usize, true_dx: isize) {
+        assert!(
+            features.shape.len() == 2,
+            "signed state centroids expect rank-2 features, got {:?}",
+            features.shape
+        );
+        assert_eq!(
+            features.shape[1], self.dim,
+            "signed state centroid dim mismatch"
+        );
+
+        let class_index = signed_velocity_candidate_index(true_dx);
+        self.counts[class_index] += 1;
+
+        for feature_idx in 0..self.dim {
+            self.sums[class_index][feature_idx] += features.get(&[sample, feature_idx]);
+        }
+    }
+
+    fn finalize(mut self) -> Self {
+        self.assert_all_classes_present("support");
+
+        for class_index in 0..self.sums.len() {
+            let count = self.counts[class_index] as f32;
+            for feature in &mut self.sums[class_index] {
+                *feature /= count;
+            }
+        }
+
+        self
+    }
+
+    fn distance_to_class(&self, features: &Tensor, sample: usize, class_index: usize) -> f32 {
+        assert!(
+            features.shape.len() == 2,
+            "signed state separability expects rank-2 features, got {:?}",
+            features.shape
+        );
+        assert_eq!(
+            features.shape[1], self.dim,
+            "signed state separability dim mismatch"
+        );
+
+        let mut distance = 0.0f32;
+
+        for feature_idx in 0..self.dim {
+            let diff = features.get(&[sample, feature_idx]) - self.sums[class_index][feature_idx];
+            distance += diff * diff;
+        }
+
+        distance
+    }
+
+    fn sample_outcome(
+        &self,
+        features: &Tensor,
+        sample: usize,
+        true_dx: isize,
+    ) -> SignedStateSeparabilitySampleOutcome {
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let distances = (0..SIGNED_VELOCITY_BANK_CANDIDATE_DX.len())
+            .map(|class_index| self.distance_to_class(features, sample, class_index))
+            .collect::<Vec<_>>();
+        let true_distance = distances[true_index];
+        let mut rank = 1usize;
+        let mut best_index = 0usize;
+        let mut best_distance = distances[0];
+
+        for (class_index, distance) in distances.iter().enumerate() {
+            if class_index != true_index && *distance <= true_distance + VELOCITY_BANK_TIE_EPSILON {
+                rank += 1;
+            }
+            if *distance < best_distance - VELOCITY_BANK_TIE_EPSILON {
+                best_index = class_index;
+                best_distance = *distance;
+            }
+        }
+
+        SignedStateSeparabilitySampleOutcome {
+            true_dx,
+            best_dx: SIGNED_VELOCITY_BANK_CANDIDATE_DX[best_index],
+            rank,
+        }
+    }
+
+    fn assert_all_classes_present(&self, label: &str) {
+        for (class_index, count) in self.counts.iter().enumerate() {
+            assert!(
+                *count > 0,
+                "{} signed state separability is missing dx {}",
+                label,
+                SIGNED_VELOCITY_BANK_CANDIDATE_DX[class_index]
+            );
+        }
+    }
+}
+
+impl SignedStateSeparabilityTotals {
+    fn observe(&mut self, outcome: SignedStateSeparabilitySampleOutcome) {
+        assert!(outcome.rank > 0, "signed state rank must be positive");
+
+        self.samples += 1;
+        self.reciprocal_rank += 1.0 / outcome.rank as f32;
+        self.top1 += usize::from(outcome.rank == 1);
+        self.sign_top1 += usize::from(outcome.best_dx.signum() == outcome.true_dx.signum());
+        self.rank += outcome.rank;
+    }
+
+    fn mrr(&self) -> f32 {
+        assert!(self.samples > 0, "signed state separability has no samples");
+        self.reciprocal_rank / self.samples as f32
+    }
+
+    fn top1(&self) -> f32 {
+        assert!(self.samples > 0, "signed state separability has no samples");
+        self.top1 as f32 / self.samples as f32
+    }
+
+    fn sign_top1(&self) -> f32 {
+        assert!(self.samples > 0, "signed state separability has no samples");
+        self.sign_top1 as f32 / self.samples as f32
+    }
+
+    fn mean_rank(&self) -> f32 {
+        assert!(self.samples > 0, "signed state separability has no samples");
+        self.rank as f32 / self.samples as f32
     }
 }
 
@@ -659,6 +837,110 @@ where
         validation_batches,
         |seed| make_temporal_batch_for_task(BATCH_SIZE, seed, temporal_task_mode),
     )
+}
+
+pub fn projected_signed_state_separability_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedStateSeparability
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches >= 2,
+        "signed state separability requires at least one support and one query batch"
+    );
+
+    let support_batches = validation_batches / 2;
+    let (support_x_t, support_x_t1) = make_temporal_batch_for_task(
+        BATCH_SIZE,
+        validation_base_seed,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let support_latent = model.encode(&support_x_t);
+    let support_projection = model.project_latent(&support_x_t);
+    let mut latent_centroids = SignedStateCentroids::new(support_latent.shape[1]);
+    let mut projection_centroids = SignedStateCentroids::new(support_projection.shape[1]);
+    let mut support_samples = 0usize;
+
+    observe_signed_state_centroids(
+        &support_x_t,
+        &support_x_t1,
+        &support_latent,
+        &support_projection,
+        &mut latent_centroids,
+        &mut projection_centroids,
+        &mut support_samples,
+    );
+
+    for batch_idx in 1..support_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let latent = model.encode(&x_t);
+        let projection = model.project_latent(&x_t);
+
+        observe_signed_state_centroids(
+            &x_t,
+            &x_t1,
+            &latent,
+            &projection,
+            &mut latent_centroids,
+            &mut projection_centroids,
+            &mut support_samples,
+        );
+    }
+
+    let latent_centroids = latent_centroids.finalize();
+    let projection_centroids = projection_centroids.finalize();
+    let mut latent_totals = SignedStateSeparabilityTotals::default();
+    let mut projection_totals = SignedStateSeparabilityTotals::default();
+    let mut query_counts = vec![0usize; SIGNED_VELOCITY_BANK_CANDIDATE_DX.len()];
+
+    for batch_idx in support_batches..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let latent = model.encode(&x_t);
+        let projection = model.project_latent(&x_t);
+
+        observe_signed_state_query(
+            &x_t,
+            &x_t1,
+            &latent,
+            &projection,
+            &latent_centroids,
+            &projection_centroids,
+            &mut latent_totals,
+            &mut projection_totals,
+            &mut query_counts,
+        );
+    }
+
+    assert_all_signed_state_query_classes_present(&query_counts);
+    assert_eq!(
+        latent_totals.samples, projection_totals.samples,
+        "latent/projection query sample mismatch"
+    );
+
+    ProjectedSignedStateSeparability {
+        latent_mrr: latent_totals.mrr(),
+        latent_top1: latent_totals.top1(),
+        latent_sign_top1: latent_totals.sign_top1(),
+        latent_mean_rank: latent_totals.mean_rank(),
+        projection_mrr: projection_totals.mrr(),
+        projection_top1: projection_totals.top1(),
+        projection_sign_top1: projection_totals.sign_top1(),
+        projection_mean_rank: projection_totals.mean_rank(),
+        support_samples,
+        query_samples: latent_totals.samples,
+        candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
 }
 
 #[allow(dead_code)]
@@ -1152,12 +1434,76 @@ fn signed_velocity_true_candidate_indices(x_t: &Tensor, x_t1: &Tensor) -> Vec<us
     (0..x_t.shape[0])
         .map(|sample| {
             let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
-            SIGNED_VELOCITY_BANK_CANDIDATE_DX
-                .iter()
-                .position(|candidate_dx| *candidate_dx == true_dx)
-                .unwrap_or_else(|| panic!("true dx {} is missing from signed target bank", true_dx))
+            signed_velocity_candidate_index(true_dx)
         })
         .collect()
+}
+
+fn signed_velocity_candidate_index(true_dx: isize) -> usize {
+    SIGNED_VELOCITY_BANK_CANDIDATE_DX
+        .iter()
+        .position(|candidate_dx| *candidate_dx == true_dx)
+        .unwrap_or_else(|| panic!("true dx {} is missing from signed target bank", true_dx))
+}
+
+fn observe_signed_state_centroids(
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    latent: &Tensor,
+    projection: &Tensor,
+    latent_centroids: &mut SignedStateCentroids,
+    projection_centroids: &mut SignedStateCentroids,
+    support_samples: &mut usize,
+) {
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed state separability expects matching pair shapes"
+    );
+
+    for sample in 0..x_t.shape[0] {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+
+        latent_centroids.observe(latent, sample, true_dx);
+        projection_centroids.observe(projection, sample, true_dx);
+        *support_samples += 1;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn observe_signed_state_query(
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    latent: &Tensor,
+    projection: &Tensor,
+    latent_centroids: &SignedStateCentroids,
+    projection_centroids: &SignedStateCentroids,
+    latent_totals: &mut SignedStateSeparabilityTotals,
+    projection_totals: &mut SignedStateSeparabilityTotals,
+    query_counts: &mut [usize],
+) {
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed state separability expects matching pair shapes"
+    );
+
+    for sample in 0..x_t.shape[0] {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let class_index = signed_velocity_candidate_index(true_dx);
+
+        latent_totals.observe(latent_centroids.sample_outcome(latent, sample, true_dx));
+        projection_totals.observe(projection_centroids.sample_outcome(projection, sample, true_dx));
+        query_counts[class_index] += 1;
+    }
+}
+
+fn assert_all_signed_state_query_classes_present(query_counts: &[usize]) {
+    for (class_index, count) in query_counts.iter().enumerate() {
+        assert!(
+            *count > 0,
+            "query signed state separability is missing dx {}",
+            SIGNED_VELOCITY_BANK_CANDIDATE_DX[class_index]
+        );
+    }
 }
 
 fn projected_velocity_bank_sample_outcomes<P>(

@@ -12,11 +12,13 @@ use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
-    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, projected_signed_margin_objective_loss_and_grad,
+    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
+    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
+    projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
@@ -240,6 +242,8 @@ where
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
+    let initial_signed_state_separability =
+        maybe_projected_signed_state_separability(&model, run_config);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
@@ -269,6 +273,7 @@ where
     print_signed_target_bank_separability("initial", initial_signed_target_bank_separability);
     print_signed_prediction_bank_margin("initial", initial_signed_prediction_bank_margin);
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
+    print_signed_state_separability("initial", initial_signed_state_separability);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -393,6 +398,8 @@ where
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let final_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
+    let final_signed_state_separability =
+        maybe_projected_signed_state_separability(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
         reduction_thresholds_for_run_config(run_config);
 
@@ -449,6 +456,7 @@ where
     print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
+    print_signed_state_separability("final", final_signed_state_separability);
 }
 
 fn scale_tensor(tensor: &Tensor, scale: f32) -> Tensor {
@@ -685,6 +693,24 @@ where
     ))
 }
 
+fn maybe_projected_signed_state_separability<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedStateSeparability>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(projected_signed_state_separability_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+    ))
+}
+
 fn print_signed_objective_error_breakdown(
     tag: &str,
     breakdown: Option<ProjectedSignedObjectiveErrorBreakdown>,
@@ -709,6 +735,29 @@ fn print_signed_objective_error_breakdown(
             breakdown.dx_neg1_samples,
             breakdown.dx_pos1_samples,
             breakdown.dx_pos2_samples,
+        );
+    }
+}
+
+fn print_signed_state_separability(
+    tag: &str,
+    separability: Option<ProjectedSignedStateSeparability>,
+) {
+    if let Some(separability) = separability {
+        println!(
+            "{} | signed state separability latent_mrr {:.6} | latent_top1 {:.6} | latent_sign_top1 {:.6} | latent_mean_rank {:.6} | projection_mrr {:.6} | projection_top1 {:.6} | projection_sign_top1 {:.6} | projection_mean_rank {:.6} | support_samples {} | query_samples {} | candidates {}",
+            tag,
+            separability.latent_mrr,
+            separability.latent_top1,
+            separability.latent_sign_top1,
+            separability.latent_mean_rank,
+            separability.projection_mrr,
+            separability.projection_top1,
+            separability.projection_sign_top1,
+            separability.projection_mean_rank,
+            separability.support_samples,
+            separability.query_samples,
+            separability.candidates,
         );
     }
 }

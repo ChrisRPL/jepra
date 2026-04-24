@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_PATH="${JEPRA_MANIFEST_PATH:-$ROOT_DIR/crates/jepra-core/Cargo.toml}"
-SCHEMA="jepra_predictor_compare_v10"
+SCHEMA="jepra_predictor_compare_v11"
 TRAIN_STEPS="${JEPRA_TRAIN_STEPS:-300}"
 LOG_EVERY="${JEPRA_LOG_EVERY:-25}"
 TEMPORAL_TASK="${JEPRA_TEMPORAL_TASK:-random-speed}"
@@ -86,7 +86,7 @@ fi
 
 if [[ -n "$REPORT_PATH" ]]; then
   mkdir -p "$(dirname "$REPORT_PATH")"
-  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,signed_margin_weight,signed_margin_bank_gap,signed_margin_sign_gap,signed_margin_speed_gap,signed_margin_bank_weight,signed_margin_sign_weight,signed_margin_speed_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,signed_bank_neg_mrr_end,signed_bank_pos_mrr_end,signed_bank_slow_mrr_end,signed_bank_fast_mrr_end,signed_bank_sign_top1_end,signed_bank_speed_top1_end,signed_bank_samples,signed_bank_true_neg_best_neg,signed_bank_true_neg_best_pos,signed_bank_true_pos_best_neg,signed_bank_true_pos_best_pos,signed_bank_true_slow_best_slow,signed_bank_true_slow_best_fast,signed_bank_true_fast_best_slow,signed_bank_true_fast_best_fast,target_bank_oracle_mrr_end,target_bank_oracle_top1_end,target_bank_true_distance_end,target_bank_true_distance_max_end,target_bank_nearest_wrong_end,target_bank_nearest_wrong_min_end,target_bank_margin_end,target_bank_margin_min_end,target_bank_neg_nearest_wrong_end,target_bank_pos_nearest_wrong_end,target_bank_slow_nearest_wrong_end,target_bank_fast_nearest_wrong_end,target_bank_sign_margin_end,target_bank_speed_margin_end,target_bank_samples,prediction_bank_true_distance_end,prediction_bank_nearest_wrong_distance_end,prediction_bank_margin_end,prediction_bank_min_margin_end,prediction_bank_positive_margin_rate_end,prediction_bank_sign_margin_end,prediction_bank_speed_margin_end,prediction_bank_samples,signed_objective_all_loss_end,signed_objective_dx_neg2_loss_end,signed_objective_dx_neg1_loss_end,signed_objective_dx_pos1_loss_end,signed_objective_dx_pos2_loss_end,signed_objective_neg_loss_end,signed_objective_pos_loss_end,signed_objective_slow_loss_end,signed_objective_fast_loss_end,signed_objective_sign_gap_end,signed_objective_speed_gap_end,signed_objective_samples,signed_objective_dx_neg2_samples,signed_objective_dx_neg1_samples,signed_objective_dx_pos1_samples,signed_objective_dx_pos2_samples,signed_margin_bank_loss_end,signed_margin_sign_loss_end,signed_margin_speed_loss_end,signed_margin_weighted_loss_end,signed_margin_active_bank_rate_end,signed_margin_active_sign_rate_end,signed_margin_active_speed_rate_end,signed_margin_samples,status\n' > "$REPORT_PATH"
+  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,signed_margin_weight,signed_margin_bank_gap,signed_margin_sign_gap,signed_margin_speed_gap,signed_margin_bank_weight,signed_margin_sign_weight,signed_margin_speed_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,signed_bank_neg_mrr_end,signed_bank_pos_mrr_end,signed_bank_slow_mrr_end,signed_bank_fast_mrr_end,signed_bank_sign_top1_end,signed_bank_speed_top1_end,signed_bank_samples,signed_bank_true_neg_best_neg,signed_bank_true_neg_best_pos,signed_bank_true_pos_best_neg,signed_bank_true_pos_best_pos,signed_bank_true_slow_best_slow,signed_bank_true_slow_best_fast,signed_bank_true_fast_best_slow,signed_bank_true_fast_best_fast,target_bank_oracle_mrr_end,target_bank_oracle_top1_end,target_bank_true_distance_end,target_bank_true_distance_max_end,target_bank_nearest_wrong_end,target_bank_nearest_wrong_min_end,target_bank_margin_end,target_bank_margin_min_end,target_bank_neg_nearest_wrong_end,target_bank_pos_nearest_wrong_end,target_bank_slow_nearest_wrong_end,target_bank_fast_nearest_wrong_end,target_bank_sign_margin_end,target_bank_speed_margin_end,target_bank_samples,prediction_bank_true_distance_end,prediction_bank_nearest_wrong_distance_end,prediction_bank_margin_end,prediction_bank_min_margin_end,prediction_bank_positive_margin_rate_end,prediction_bank_sign_margin_end,prediction_bank_speed_margin_end,prediction_bank_samples,signed_objective_all_loss_end,signed_objective_dx_neg2_loss_end,signed_objective_dx_neg1_loss_end,signed_objective_dx_pos1_loss_end,signed_objective_dx_pos2_loss_end,signed_objective_neg_loss_end,signed_objective_pos_loss_end,signed_objective_slow_loss_end,signed_objective_fast_loss_end,signed_objective_sign_gap_end,signed_objective_speed_gap_end,signed_objective_samples,signed_objective_dx_neg2_samples,signed_objective_dx_neg1_samples,signed_objective_dx_pos1_samples,signed_objective_dx_pos2_samples,signed_margin_bank_loss_end,signed_margin_sign_loss_end,signed_margin_speed_loss_end,signed_margin_weighted_loss_end,signed_margin_active_bank_rate_end,signed_margin_active_sign_rate_end,signed_margin_active_speed_rate_end,signed_margin_samples,state_latent_mrr_end,state_latent_top1_end,state_latent_sign_top1_end,state_latent_mean_rank_end,state_projection_mrr_end,state_projection_top1_end,state_projection_sign_top1_end,state_projection_mean_rank_end,state_support_samples,state_query_samples,state_candidates,status\n' > "$REPORT_PATH"
 fi
 
 encoder_mode_label() {
@@ -250,6 +250,21 @@ parse_signed_margin_objective_line() {
   ' <<< "$line"
 }
 
+parse_signed_state_separability_line() {
+  local line="$1"
+  if [[ ! "$line" =~ ^(initial|final)[[:space:]]+\|[[:space:]]+signed[[:space:]]+state[[:space:]]+separability[[:space:]]+latent_mrr[[:space:]] ]]; then
+    return 1
+  fi
+  awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        values[$i] = $(i + 1)
+      }
+      print values["latent_mrr"], values["latent_top1"], values["latent_sign_top1"], values["latent_mean_rank"], values["projection_mrr"], values["projection_top1"], values["projection_sign_top1"], values["projection_mean_rank"], values["support_samples"], values["query_samples"], values["candidates"]
+    }
+  ' <<< "$line"
+}
+
 row_status() {
   local train_pred_start="$1"
   local train_pred_end="$2"
@@ -375,8 +390,19 @@ emit_row() {
   local signed_margin_active_sign_rate_end_value="${signed_margin_active_sign_rate_end:-na}"
   local signed_margin_active_speed_rate_end_value="${signed_margin_active_speed_rate_end:-na}"
   local signed_margin_samples_value="${signed_margin_samples:-na}"
+  local state_latent_mrr_end_value="${state_latent_mrr_end:-na}"
+  local state_latent_top1_end_value="${state_latent_top1_end:-na}"
+  local state_latent_sign_top1_end_value="${state_latent_sign_top1_end:-na}"
+  local state_latent_mean_rank_end_value="${state_latent_mean_rank_end:-na}"
+  local state_projection_mrr_end_value="${state_projection_mrr_end:-na}"
+  local state_projection_top1_end_value="${state_projection_top1_end:-na}"
+  local state_projection_sign_top1_end_value="${state_projection_sign_top1_end:-na}"
+  local state_projection_mean_rank_end_value="${state_projection_mean_rank_end:-na}"
+  local state_support_samples_value="${state_support_samples:-na}"
+  local state_query_samples_value="${state_query_samples:-na}"
+  local state_candidates_value="${state_candidates:-na}"
 
-  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s signed_margin_weight=%s signed_margin_bank_gap=%s signed_margin_sign_gap=%s signed_margin_speed_gap=%s signed_margin_bank_weight=%s signed_margin_sign_weight=%s signed_margin_speed_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s signed_bank_neg_mrr_end=%s signed_bank_pos_mrr_end=%s signed_bank_slow_mrr_end=%s signed_bank_fast_mrr_end=%s signed_bank_sign_top1_end=%s signed_bank_speed_top1_end=%s signed_bank_samples=%s signed_bank_true_neg_best_neg=%s signed_bank_true_neg_best_pos=%s signed_bank_true_pos_best_neg=%s signed_bank_true_pos_best_pos=%s signed_bank_true_slow_best_slow=%s signed_bank_true_slow_best_fast=%s signed_bank_true_fast_best_slow=%s signed_bank_true_fast_best_fast=%s target_bank_oracle_mrr_end=%s target_bank_oracle_top1_end=%s target_bank_true_distance_end=%s target_bank_true_distance_max_end=%s target_bank_nearest_wrong_end=%s target_bank_nearest_wrong_min_end=%s target_bank_margin_end=%s target_bank_margin_min_end=%s target_bank_neg_nearest_wrong_end=%s target_bank_pos_nearest_wrong_end=%s target_bank_slow_nearest_wrong_end=%s target_bank_fast_nearest_wrong_end=%s target_bank_sign_margin_end=%s target_bank_speed_margin_end=%s target_bank_samples=%s prediction_bank_true_distance_end=%s prediction_bank_nearest_wrong_distance_end=%s prediction_bank_margin_end=%s prediction_bank_min_margin_end=%s prediction_bank_positive_margin_rate_end=%s prediction_bank_sign_margin_end=%s prediction_bank_speed_margin_end=%s prediction_bank_samples=%s signed_objective_all_loss_end=%s signed_objective_dx_neg2_loss_end=%s signed_objective_dx_neg1_loss_end=%s signed_objective_dx_pos1_loss_end=%s signed_objective_dx_pos2_loss_end=%s signed_objective_neg_loss_end=%s signed_objective_pos_loss_end=%s signed_objective_slow_loss_end=%s signed_objective_fast_loss_end=%s signed_objective_sign_gap_end=%s signed_objective_speed_gap_end=%s signed_objective_samples=%s signed_objective_dx_neg2_samples=%s signed_objective_dx_neg1_samples=%s signed_objective_dx_pos1_samples=%s signed_objective_dx_pos2_samples=%s signed_margin_bank_loss_end=%s signed_margin_sign_loss_end=%s signed_margin_speed_loss_end=%s signed_margin_weighted_loss_end=%s signed_margin_active_bank_rate_end=%s signed_margin_active_sign_rate_end=%s signed_margin_active_speed_rate_end=%s signed_margin_samples=%s status=%s\n' \
+  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s signed_margin_weight=%s signed_margin_bank_gap=%s signed_margin_sign_gap=%s signed_margin_speed_gap=%s signed_margin_bank_weight=%s signed_margin_sign_weight=%s signed_margin_speed_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s signed_bank_neg_mrr_end=%s signed_bank_pos_mrr_end=%s signed_bank_slow_mrr_end=%s signed_bank_fast_mrr_end=%s signed_bank_sign_top1_end=%s signed_bank_speed_top1_end=%s signed_bank_samples=%s signed_bank_true_neg_best_neg=%s signed_bank_true_neg_best_pos=%s signed_bank_true_pos_best_neg=%s signed_bank_true_pos_best_pos=%s signed_bank_true_slow_best_slow=%s signed_bank_true_slow_best_fast=%s signed_bank_true_fast_best_slow=%s signed_bank_true_fast_best_fast=%s target_bank_oracle_mrr_end=%s target_bank_oracle_top1_end=%s target_bank_true_distance_end=%s target_bank_true_distance_max_end=%s target_bank_nearest_wrong_end=%s target_bank_nearest_wrong_min_end=%s target_bank_margin_end=%s target_bank_margin_min_end=%s target_bank_neg_nearest_wrong_end=%s target_bank_pos_nearest_wrong_end=%s target_bank_slow_nearest_wrong_end=%s target_bank_fast_nearest_wrong_end=%s target_bank_sign_margin_end=%s target_bank_speed_margin_end=%s target_bank_samples=%s prediction_bank_true_distance_end=%s prediction_bank_nearest_wrong_distance_end=%s prediction_bank_margin_end=%s prediction_bank_min_margin_end=%s prediction_bank_positive_margin_rate_end=%s prediction_bank_sign_margin_end=%s prediction_bank_speed_margin_end=%s prediction_bank_samples=%s signed_objective_all_loss_end=%s signed_objective_dx_neg2_loss_end=%s signed_objective_dx_neg1_loss_end=%s signed_objective_dx_pos1_loss_end=%s signed_objective_dx_pos2_loss_end=%s signed_objective_neg_loss_end=%s signed_objective_pos_loss_end=%s signed_objective_slow_loss_end=%s signed_objective_fast_loss_end=%s signed_objective_sign_gap_end=%s signed_objective_speed_gap_end=%s signed_objective_samples=%s signed_objective_dx_neg2_samples=%s signed_objective_dx_neg1_samples=%s signed_objective_dx_pos1_samples=%s signed_objective_dx_pos2_samples=%s signed_margin_bank_loss_end=%s signed_margin_sign_loss_end=%s signed_margin_speed_loss_end=%s signed_margin_weighted_loss_end=%s signed_margin_active_bank_rate_end=%s signed_margin_active_sign_rate_end=%s signed_margin_active_speed_rate_end=%s signed_margin_samples=%s state_latent_mrr_end=%s state_latent_top1_end=%s state_latent_sign_top1_end=%s state_latent_mean_rank_end=%s state_projection_mrr_end=%s state_projection_top1_end=%s state_projection_sign_top1_end=%s state_projection_mean_rank_end=%s state_support_samples=%s state_query_samples=%s state_candidates=%s status=%s\n' \
     "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" \
     "$SIGNED_MARGIN_WEIGHT" "$SIGNED_MARGIN_BANK_GAP" "$SIGNED_MARGIN_SIGN_GAP" "$SIGNED_MARGIN_SPEED_GAP" \
     "$SIGNED_MARGIN_BANK_WEIGHT" "$SIGNED_MARGIN_SIGN_WEIGHT" "$SIGNED_MARGIN_SPEED_WEIGHT" \
@@ -407,10 +433,14 @@ emit_row() {
     "$signed_objective_dx_pos2_samples_value" \
     "$signed_margin_bank_loss_end_value" "$signed_margin_sign_loss_end_value" "$signed_margin_speed_loss_end_value" \
     "$signed_margin_weighted_loss_end_value" "$signed_margin_active_bank_rate_end_value" "$signed_margin_active_sign_rate_end_value" \
-    "$signed_margin_active_speed_rate_end_value" "$signed_margin_samples_value" "$status"
+    "$signed_margin_active_speed_rate_end_value" "$signed_margin_samples_value" \
+    "$state_latent_mrr_end_value" "$state_latent_top1_end_value" "$state_latent_sign_top1_end_value" \
+    "$state_latent_mean_rank_end_value" "$state_projection_mrr_end_value" "$state_projection_top1_end_value" \
+    "$state_projection_sign_top1_end_value" "$state_projection_mean_rank_end_value" "$state_support_samples_value" \
+    "$state_query_samples_value" "$state_candidates_value" "$status"
 
   if [[ -n "$REPORT_PATH" ]]; then
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    local row_values=(
       "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" \
       "$SIGNED_MARGIN_WEIGHT" "$SIGNED_MARGIN_BANK_GAP" "$SIGNED_MARGIN_SIGN_GAP" "$SIGNED_MARGIN_SPEED_GAP" \
       "$SIGNED_MARGIN_BANK_WEIGHT" "$SIGNED_MARGIN_SIGN_WEIGHT" "$SIGNED_MARGIN_SPEED_WEIGHT" \
@@ -441,7 +471,14 @@ emit_row() {
       "$signed_objective_dx_pos2_samples_value" \
       "$signed_margin_bank_loss_end_value" "$signed_margin_sign_loss_end_value" "$signed_margin_speed_loss_end_value" \
       "$signed_margin_weighted_loss_end_value" "$signed_margin_active_bank_rate_end_value" "$signed_margin_active_sign_rate_end_value" \
-      "$signed_margin_active_speed_rate_end_value" "$signed_margin_samples_value" "$status" >> "$REPORT_PATH"
+      "$signed_margin_active_speed_rate_end_value" "$signed_margin_samples_value" \
+      "$state_latent_mrr_end_value" "$state_latent_top1_end_value" "$state_latent_sign_top1_end_value" \
+      "$state_latent_mean_rank_end_value" "$state_projection_mrr_end_value" "$state_projection_top1_end_value" \
+      "$state_projection_sign_top1_end_value" "$state_projection_mean_rank_end_value" "$state_support_samples_value" \
+      "$state_query_samples_value" "$state_candidates_value" "$status"
+    )
+    local IFS=,
+    printf '%s\n' "${row_values[*]}" >> "$REPORT_PATH"
   fi
 }
 
@@ -526,6 +563,17 @@ run_one() {
   local signed_margin_active_sign_rate_end="na"
   local signed_margin_active_speed_rate_end="na"
   local signed_margin_samples="na"
+  local state_latent_mrr_end="na"
+  local state_latent_top1_end="na"
+  local state_latent_sign_top1_end="na"
+  local state_latent_mean_rank_end="na"
+  local state_projection_mrr_end="na"
+  local state_projection_top1_end="na"
+  local state_projection_sign_top1_end="na"
+  local state_projection_mean_rank_end="na"
+  local state_support_samples="na"
+  local state_query_samples="na"
+  local state_candidates="na"
 
   if [[ "$path" == "unprojected" ]]; then
     example="train_vision_jepa_random_temporal"
@@ -604,6 +652,7 @@ run_one() {
   local final_prediction_bank_margin_line
   local final_signed_objective_error_breakdown_line
   local final_signed_margin_objective_line
+  local final_signed_state_separability_line
 
   pred_health_line="$(grep -m1 '^final prediction health |' "$log_file" || true)"
   target_health_line="$(grep -m1 '^final target health |' "$log_file" || true)"
@@ -720,6 +769,16 @@ run_one() {
         fi
         read -r signed_margin_bank_loss_end signed_margin_sign_loss_end signed_margin_speed_loss_end signed_margin_weighted_loss_end signed_margin_active_bank_rate_end signed_margin_active_sign_rate_end signed_margin_active_speed_rate_end signed_margin_samples <<< "$parsed"
       fi
+
+      final_signed_state_separability_line="$(grep -m1 '^final | signed state separability latent_mrr ' "$log_file" || true)"
+
+      if ! parsed="$(parse_signed_state_separability_line "$final_signed_state_separability_line")"; then
+        failures=$((failures + 1))
+        emit_row "$path" "$predictor" "$seed" "$encoder_lr" "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" "na" "na" "$proj_var_mean" "$target_drift_end" "parse_failed"
+        rm -f "$log_file"
+        return 0
+      fi
+      read -r state_latent_mrr_end state_latent_top1_end state_latent_sign_top1_end state_latent_mean_rank_end state_projection_mrr_end state_projection_top1_end state_projection_sign_top1_end state_projection_mean_rank_end state_support_samples state_query_samples state_candidates <<< "$parsed"
     fi
   fi
 
