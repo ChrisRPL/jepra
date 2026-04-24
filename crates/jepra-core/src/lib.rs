@@ -12,7 +12,10 @@ pub use conv::{Conv2d, Conv2dGrads};
 pub use encoder::{ConvEncoder, ConvEncoderGrads, EmbeddingEncoder, EmbeddingEncoderGrads};
 pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
-pub use losses::{mse_loss, mse_loss_grad};
+pub use losses::{
+    SignedMarginObjectiveConfig, SignedMarginObjectiveReport, mse_loss, mse_loss_grad,
+    signed_margin_objective_loss_and_grad,
+};
 pub use predictor::{
     BottleneckPredictor, BottleneckPredictorGrads, Predictor, PredictorGrads, PredictorModule,
     ResidualBottleneckPredictor, ResidualBottleneckPredictorGrads,

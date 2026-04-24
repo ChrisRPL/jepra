@@ -250,7 +250,38 @@ where
         projector_lr: f32,
         encoder_lr: f32,
     ) -> (f32, f32, f32, f32) {
+        self.step_with_extra_prediction_grad(
+            x_t,
+            x_t1,
+            regularizer_weight,
+            projector_drift_weight,
+            0.0,
+            None,
+            predictor_lr,
+            projector_lr,
+            encoder_lr,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn step_with_extra_prediction_grad(
+        &mut self,
+        x_t: &Tensor,
+        x_t1: &Tensor,
+        regularizer_weight: f32,
+        projector_drift_weight: f32,
+        extra_prediction_loss: f32,
+        extra_prediction_grad: Option<&Tensor>,
+        predictor_lr: f32,
+        projector_lr: f32,
+        encoder_lr: f32,
+    ) -> (f32, f32, f32, f32) {
         assert_projector_drift_weight(projector_drift_weight);
+        assert!(
+            extra_prediction_loss.is_finite() && extra_prediction_loss >= 0.0,
+            "extra prediction loss must be finite and non-negative, got {}",
+            extra_prediction_loss
+        );
 
         let z_t = self.encoder.forward(x_t);
         let projection_t = self.projector.forward(&z_t);
@@ -263,9 +294,18 @@ where
             projector_drift_regularizer(&self.projector, &self.target_projector);
         let total_loss = prediction_loss
             + regularizer_weight * regularizer_loss
-            + projector_drift_weight * projector_drift_loss;
+            + projector_drift_weight * projector_drift_loss
+            + extra_prediction_loss;
 
-        let prediction_grad = mse_loss_grad(&pred, &target);
+        let mut prediction_grad = mse_loss_grad(&pred, &target);
+        if let Some(extra_prediction_grad) = extra_prediction_grad {
+            assert_eq!(
+                extra_prediction_grad.shape, prediction_grad.shape,
+                "extra prediction grad shape mismatch: got {:?}, expected {:?}",
+                extra_prediction_grad.shape, prediction_grad.shape
+            );
+            prediction_grad.add_inplace(extra_prediction_grad);
+        }
         let reg_grad = gaussian_moment_regularizer_grad(&projection_t);
         let pred_grads = self.predictor.backward(&projection_t, &prediction_grad);
         let projection_grad =

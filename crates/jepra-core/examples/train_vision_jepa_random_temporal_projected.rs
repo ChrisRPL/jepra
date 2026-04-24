@@ -5,14 +5,17 @@ mod temporal_vision;
 
 use jepra_core::{
     BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
-    ResidualBottleneckPredictor, Tensor, projection_stats, representation_stats,
+    ResidualBottleneckPredictor, SignedMarginObjectiveReport, Tensor, projection_stats,
+    representation_stats,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
     ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, projected_signed_objective_error_breakdown_from_base_seed,
+    ProjectedVelocityBankRanking, projected_signed_margin_objective_loss_and_grad,
+    projected_signed_margin_objective_report_from_base_seed,
+    projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
@@ -124,6 +127,16 @@ fn main() {
         "temporal run config | projector drift weight {}",
         run_config.projector_drift_weight
     );
+    println!(
+        "temporal run config | signed margin weight {} | bank_gap {} | sign_gap {} | speed_gap {} | bank_weight {} | sign_weight {} | speed_weight {}",
+        run_config.signed_margin_weight,
+        run_config.signed_margin_config.bank_gap,
+        run_config.signed_margin_config.sign_gap,
+        run_config.signed_margin_config.speed_gap,
+        run_config.signed_margin_config.bank_weight,
+        run_config.signed_margin_config.sign_weight,
+        run_config.signed_margin_config.speed_weight
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
@@ -225,6 +238,8 @@ where
         maybe_projected_signed_target_bank_separability(&model, run_config);
     let initial_signed_prediction_bank_margin =
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
+    let initial_signed_margin_objective_report =
+        maybe_projected_signed_margin_objective_report(&model, run_config);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
@@ -253,6 +268,7 @@ where
     print_signed_velocity_bank_breakdown("initial", initial_signed_velocity_bank_breakdown);
     print_signed_target_bank_separability("initial", initial_signed_target_bank_separability);
     print_signed_prediction_bank_margin("initial", initial_signed_prediction_bank_margin);
+    print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -263,25 +279,40 @@ where
             let (x_t, x_t1) = make_train_batch_for_config(run_config, step as u64);
             let momentum = run_config.target_projection_momentum_at_step(step);
             model.set_target_projection_momentum(momentum);
+            let signed_margin_step = maybe_projected_signed_margin_objective_loss_and_grad(
+                model, run_config, &x_t, &x_t1,
+            );
+            let signed_margin_extra_loss = signed_margin_step
+                .as_ref()
+                .map(|(report, _)| run_config.signed_margin_weight * report.weighted_loss)
+                .unwrap_or(0.0);
+            let signed_margin_extra_grad = signed_margin_step
+                .as_ref()
+                .map(|(_, grad)| scale_tensor(grad, run_config.signed_margin_weight));
             let (prediction_loss, regularizer_loss, projector_drift_loss, total_loss) =
                 if run_config.encoder_learning_rate > 0.0 {
-                    model.step_with_trainable_encoder_and_projector_drift_regularizer(
+                    model.step_with_extra_prediction_grad(
                         &x_t,
                         &x_t1,
                         REGULARIZER_WEIGHT,
                         run_config.projector_drift_weight,
+                        signed_margin_extra_loss,
+                        signed_margin_extra_grad.as_ref(),
                         PREDICTOR_LR,
                         PROJECTOR_LR,
                         run_config.encoder_learning_rate,
                     )
                 } else {
-                    model.step_with_projector_drift_regularizer(
+                    model.step_with_extra_prediction_grad(
                         &x_t,
                         &x_t1,
                         REGULARIZER_WEIGHT,
                         run_config.projector_drift_weight,
+                        signed_margin_extra_loss,
+                        signed_margin_extra_grad.as_ref(),
                         PREDICTOR_LR,
                         PROJECTOR_LR,
+                        0.0,
                     )
                 };
 
@@ -311,6 +342,12 @@ where
                     println!(
                         "step {:03} | projector drift regularizer {:.6}",
                         step, projector_drift_loss
+                    );
+                }
+                if let Some((report, _)) = signed_margin_step {
+                    print_signed_margin_objective_report(
+                        &format!("step {:03} train", step),
+                        Some(report),
                     );
                 }
             }
@@ -354,6 +391,8 @@ where
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let final_signed_objective_error_breakdown =
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
+    let final_signed_margin_objective_report =
+        maybe_projected_signed_margin_objective_report(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
         reduction_thresholds_for_run_config(run_config);
 
@@ -409,6 +448,14 @@ where
     print_signed_target_bank_separability("final", final_signed_target_bank_separability);
     print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
+    print_signed_margin_objective_report("final", final_signed_margin_objective_report);
+}
+
+fn scale_tensor(tensor: &Tensor, scale: f32) -> Tensor {
+    Tensor {
+        data: tensor.data.iter().map(|value| value * scale).collect(),
+        shape: tensor.shape.clone(),
+    }
 }
 
 fn maybe_projected_velocity_bank_ranking<P>(
@@ -588,6 +635,56 @@ where
     ))
 }
 
+fn maybe_projected_signed_margin_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<(SignedMarginObjectiveReport, Tensor)>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_margin_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed margin objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(projected_signed_margin_objective_loss_and_grad(
+        model,
+        x_t,
+        x_t1,
+        run_config.signed_margin_config,
+    ))
+}
+
+fn maybe_projected_signed_margin_objective_report<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<SignedMarginObjectiveReport>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_margin_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed margin objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(projected_signed_margin_objective_report_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+        run_config.signed_margin_config,
+    ))
+}
+
 fn print_signed_objective_error_breakdown(
     tag: &str,
     breakdown: Option<ProjectedSignedObjectiveErrorBreakdown>,
@@ -612,6 +709,23 @@ fn print_signed_objective_error_breakdown(
             breakdown.dx_neg1_samples,
             breakdown.dx_pos1_samples,
             breakdown.dx_pos2_samples,
+        );
+    }
+}
+
+fn print_signed_margin_objective_report(tag: &str, report: Option<SignedMarginObjectiveReport>) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed margin objective bank_loss {:.6} | sign_loss {:.6} | speed_loss {:.6} | weighted_loss {:.6} | active_bank_rate {:.6} | active_sign_rate {:.6} | active_speed_rate {:.6} | samples {}",
+            tag,
+            report.bank_loss,
+            report.sign_loss,
+            report.speed_loss,
+            report.weighted_loss,
+            report.active_bank_pairs as f32 / report.bank_pairs as f32,
+            report.active_sign_pairs as f32 / report.sign_pairs as f32,
+            report.active_speed_pairs as f32 / report.speed_pairs as f32,
+            report.samples,
         );
     }
 }

@@ -140,6 +140,10 @@ pub fn main() {
         LOG_EVERY,
         ENCODER_LR,
     );
+    assert!(
+        run_config.signed_margin_weight == 0.0,
+        "signed margin objective is only supported by projected signed-velocity-trail runs"
+    );
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",

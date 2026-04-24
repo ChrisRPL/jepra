@@ -37,8 +37,9 @@ Current high-value implementation path:
 7. Treat target-bank v7 oracle diagnostics as implemented: candidate-target construction is clean, so signed failure is a predictor/objective problem under drift rather than target-bank ambiguity.
 8. Treat prediction-bank v8 margin diagnostics as implemented: predictions sit closer to wrong signed futures than true targets on most samples.
 9. Treat signed objective v9 decomposition as implemented: the dominant signed loss is negative-direction error, not missing candidate construction or raw speed ranking.
-10. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
-11. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+10. Treat signed-margin objective v10 as implemented but default-off: run the narrow weight grid before any architecture or task widening.
+11. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
+12. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
 
@@ -86,7 +87,8 @@ Velocity-trail task axis:
 - Signed target-bank v7 oracle diagnostics (`2026-04-24`, same sweep): `oracle_mrr=1.000000`, `oracle_top1=1.000000`, `true_distance=0.000000`, mean margin `1.463823`, minimum margin `0.001335`, target sign margin `7.331476`, target speed margin `-12.402091`.
 - Signed prediction-bank v8 diagnostics (`2026-04-24`, same sweep): baseline prediction margin `-4.159113`, positive margin rate `0.239583`, sign margin `-0.981234`; residual prediction margin `-4.688569`, positive margin rate `0.203125`, sign margin `-1.366664`.
 - Signed objective v9 diagnostics (`2026-04-24`, same sweep): baseline `all=1.305638`, `neg=2.118653`, `pos=0.492622`, `slow=1.349482`, `fast=1.261794`, `sign_gap=-1.626031`, `speed_gap=-0.087688`; residual `all=1.385723`, `neg=2.204694`, `pos=0.566752`, `slow=1.327650`, `fast=1.443796`, `sign_gap=-1.637942`, `speed_gap=0.116146`.
-- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show the current objective places predictions closer to wrong signed futures than true targets on most samples, and v9 shows negative-direction loss dominates. Next valid build step: default-off signed-margin objective probe, not bounce or architecture widening.
+- Signed-margin objective v10 status: default-off hinge objective is wired for projected `signed-velocity-trail` only. Disabled rows keep signed-margin report fields `na`; enabled rows emit signed-margin loss and active hinge rates.
+- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show the current objective places predictions closer to wrong signed futures than true targets on most samples, and v9 shows negative-direction loss dominates. Next valid step: run the v10 weight grid, not bounce or architecture widening.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -97,7 +99,7 @@ Velocity-trail task axis:
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v9`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, prediction-bank margin fields, signed objective error decomposition fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v10`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, prediction-bank margin fields, signed objective error decomposition fields, signed-margin objective fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate

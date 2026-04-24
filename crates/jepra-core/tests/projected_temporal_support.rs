@@ -6,14 +6,15 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{
-    Linear, LinearGrads, Predictor, ProjectedVisionJepa, Tensor, combine_projection_grads,
-    gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projection_stats,
-    projector_drift_regularizer, projector_drift_regularizer_grads,
+    Linear, LinearGrads, Predictor, ProjectedVisionJepa, SignedMarginObjectiveConfig, Tensor,
+    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
+    projection_stats, projector_drift_regularizer, projector_drift_regularizer_grads,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_batch_losses, projected_signed_objective_error_breakdown_from_base_seed,
+    projected_batch_losses, projected_signed_margin_objective_loss_and_grad,
+    projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
@@ -231,6 +232,8 @@ fn projected_run_with_encoder(
         predictor_mode: PredictorMode::Baseline,
         residual_delta_scale: 1.0,
         projector_drift_weight: 0.0,
+        signed_margin_weight: 0.0,
+        signed_margin_config: SignedMarginObjectiveConfig::default(),
         target_projection_momentum: 0.5,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.5,
@@ -463,6 +466,68 @@ fn projected_signed_objective_error_breakdown_reconciles_signed_validation_predi
             breakdown.fast_loss - breakdown.slow_loss
         ) < 1e-6
     );
+}
+
+#[test]
+fn projected_signed_margin_objective_grad_is_finite_for_signed_batch() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+    let (x_t, x_t1) = temporal_vision::make_temporal_batch_for_task(
+        BATCH_SIZE,
+        PROJECTED_VALIDATION_BASE_SEED,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    let (report, grad) = projected_signed_margin_objective_loss_and_grad(
+        &model,
+        &x_t,
+        &x_t1,
+        SignedMarginObjectiveConfig::default(),
+    );
+
+    assert!(report.bank_loss.is_finite() && report.bank_loss >= 0.0);
+    assert!(report.sign_loss.is_finite() && report.sign_loss >= 0.0);
+    assert!(report.speed_loss.is_finite() && report.speed_loss >= 0.0);
+    assert!(report.weighted_loss.is_finite() && report.weighted_loss >= 0.0);
+    assert_eq!(report.samples, BATCH_SIZE);
+    assert_eq!(grad.shape, vec![BATCH_SIZE, PROJECTION_DIM]);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
+}
+
+#[test]
+fn projected_extra_prediction_grad_zero_path_matches_existing_step() {
+    let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+    let mut existing_step_model = model.clone();
+    let mut extra_step_model = model;
+
+    let existing_losses = existing_step_model.step_with_projector_drift_regularizer(
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+        0.0,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+    );
+    let extra_losses = extra_step_model.step_with_extra_prediction_grad(
+        &x_t,
+        &x_t1,
+        REGULARIZER_WEIGHT,
+        0.0,
+        0.0,
+        None,
+        PREDICTOR_LR,
+        PROJECTOR_LR,
+        0.0,
+    );
+
+    assert_eq!(existing_losses, extra_losses);
+    assert_eq!(existing_step_model, extra_step_model);
 }
 
 #[test]
@@ -1007,6 +1072,8 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         predictor_mode: PredictorMode::Baseline,
         residual_delta_scale: 1.0,
         projector_drift_weight: 0.0,
+        signed_margin_weight: 0.0,
+        signed_margin_config: SignedMarginObjectiveConfig::default(),
         target_projection_momentum: 0.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.0,
@@ -1652,6 +1719,8 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             predictor_mode: PredictorMode::Baseline,
             residual_delta_scale: 1.0,
             projector_drift_weight: 0.0,
+            signed_margin_weight: 0.0,
+            signed_margin_config: SignedMarginObjectiveConfig::default(),
             target_projection_momentum: momentum,
             target_projection_momentum_start: momentum,
             target_projection_momentum_end: momentum,

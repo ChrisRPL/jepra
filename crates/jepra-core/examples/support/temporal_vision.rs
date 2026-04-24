@@ -1,6 +1,9 @@
 #![allow(clippy::items_after_test_module)]
 
-use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, RepresentationHealthStats, Tensor};
+use jepra_core::{
+    Conv2d, ConvEncoder, EmbeddingEncoder, RepresentationHealthStats, SignedMarginObjectiveConfig,
+    Tensor,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -84,6 +87,8 @@ pub struct TemporalRunConfig {
     pub predictor_mode: PredictorMode,
     pub residual_delta_scale: f32,
     pub projector_drift_weight: f32,
+    pub signed_margin_weight: f32,
+    pub signed_margin_config: SignedMarginObjectiveConfig,
     pub target_projection_momentum: f32,
     pub target_projection_momentum_start: f32,
     pub target_projection_momentum_end: f32,
@@ -133,6 +138,13 @@ impl TemporalRunConfig {
         let temporal_task_mode = temporal_task_mode_from_args(&args);
         let residual_delta_scale = residual_delta_scale_from_args(&args);
         let projector_drift_weight = projector_drift_weight_from_args(&args);
+        let signed_margin_weight = signed_margin_weight_from_args(&args);
+        let signed_margin_config = signed_margin_config_from_args(&args);
+        assert!(
+            signed_margin_weight == 0.0
+                || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+            "signed margin objective is only supported for signed-velocity-trail task"
+        );
         assert_target_projection_momentum(target_projection_momentum_end);
         assert_target_projection_momentum(target_projection_momentum_start);
 
@@ -157,6 +169,8 @@ impl TemporalRunConfig {
             predictor_mode,
             residual_delta_scale,
             projector_drift_weight,
+            signed_margin_weight,
+            signed_margin_config,
             target_projection_momentum: target_projection_momentum_end,
             target_projection_momentum_start,
             target_projection_momentum_end,
@@ -269,6 +283,86 @@ fn projector_drift_weight_from_args(args: &[String]) -> f32 {
                 .map(|value| parse_finite_nonnegative_f32(&value, "JEPRA_PROJECTOR_DRIFT_WEIGHT"))
         })
         .unwrap_or(0.0)
+}
+
+fn signed_margin_weight_from_args(args: &[String]) -> f32 {
+    parse_arg_value(args, "--signed-margin-weight")
+        .or_else(|| parse_arg_value(args, "--margin-objective-weight"))
+        .map(|value| parse_finite_nonnegative_f32(value, "--signed-margin-weight"))
+        .or_else(|| {
+            std::env::var("JEPRA_SIGNED_MARGIN_WEIGHT")
+                .or_else(|_| std::env::var("JEPRA_MARGIN_OBJECTIVE_WEIGHT"))
+                .ok()
+                .map(|value| parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_MARGIN_WEIGHT"))
+        })
+        .unwrap_or(0.0)
+}
+
+fn signed_margin_config_from_args(args: &[String]) -> SignedMarginObjectiveConfig {
+    let config = SignedMarginObjectiveConfig {
+        bank_gap: parse_arg_value(args, "--signed-margin-bank-gap")
+            .map(|value| parse_finite_nonnegative_f32(value, "--signed-margin-bank-gap"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_MARGIN_BANK_GAP")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_MARGIN_BANK_GAP")
+                    })
+            })
+            .unwrap_or(SignedMarginObjectiveConfig::default().bank_gap),
+        sign_gap: parse_arg_value(args, "--signed-margin-sign-gap")
+            .map(|value| parse_finite_nonnegative_f32(value, "--signed-margin-sign-gap"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_MARGIN_SIGN_GAP")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_MARGIN_SIGN_GAP")
+                    })
+            })
+            .unwrap_or(SignedMarginObjectiveConfig::default().sign_gap),
+        speed_gap: parse_arg_value(args, "--signed-margin-speed-gap")
+            .map(|value| parse_finite_nonnegative_f32(value, "--signed-margin-speed-gap"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_MARGIN_SPEED_GAP")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_MARGIN_SPEED_GAP")
+                    })
+            })
+            .unwrap_or(SignedMarginObjectiveConfig::default().speed_gap),
+        bank_weight: parse_arg_value(args, "--signed-margin-bank-weight")
+            .map(|value| parse_finite_nonnegative_f32(value, "--signed-margin-bank-weight"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_MARGIN_BANK_WEIGHT")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_MARGIN_BANK_WEIGHT")
+                    })
+            })
+            .unwrap_or(SignedMarginObjectiveConfig::default().bank_weight),
+        sign_weight: parse_arg_value(args, "--signed-margin-sign-weight")
+            .map(|value| parse_finite_nonnegative_f32(value, "--signed-margin-sign-weight"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_MARGIN_SIGN_WEIGHT")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_MARGIN_SIGN_WEIGHT")
+                    })
+            })
+            .unwrap_or(SignedMarginObjectiveConfig::default().sign_weight),
+        speed_weight: parse_arg_value(args, "--signed-margin-speed-weight")
+            .map(|value| parse_finite_nonnegative_f32(value, "--signed-margin-speed-weight"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_MARGIN_SPEED_WEIGHT")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_MARGIN_SPEED_WEIGHT")
+                    })
+            })
+            .unwrap_or(SignedMarginObjectiveConfig::default().speed_weight),
+    };
+    config.assert_valid();
+    config
 }
 
 pub fn training_steps(default_steps: usize) -> usize {
@@ -440,9 +534,11 @@ pub fn assert_temporal_experiment_improved(
 #[cfg(test)]
 mod temporal_vision_config_tests {
     use super::{
-        CompactEncoderMode, PredictorMode, TemporalRunConfig, TemporalTaskMode,
-        compact_encoder_mode_from_args, predictor_mode_from_args, projector_drift_weight_from_args,
-        residual_delta_scale_from_args, temporal_task_mode_from_args,
+        CompactEncoderMode, PredictorMode, SignedMarginObjectiveConfig, TemporalRunConfig,
+        TemporalTaskMode, compact_encoder_mode_from_args, predictor_mode_from_args,
+        projector_drift_weight_from_args, residual_delta_scale_from_args,
+        signed_margin_config_from_args, signed_margin_weight_from_args,
+        temporal_task_mode_from_args,
     };
 
     fn args_with(values: &[&str]) -> Vec<String> {
@@ -621,6 +717,46 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn signed_margin_weight_defaults_to_disabled() {
+        assert!((signed_margin_weight_from_args(&args_with(&[])) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn signed_margin_weight_parses_explicit_weight() {
+        assert!(
+            (signed_margin_weight_from_args(&args_with(&["--signed-margin-weight", "0.03"]))
+                - 0.03)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn signed_margin_config_parses_explicit_gaps_and_weights() {
+        let config = signed_margin_config_from_args(&args_with(&[
+            "--signed-margin-bank-gap",
+            "0.1",
+            "--signed-margin-sign-gap",
+            "0.2",
+            "--signed-margin-speed-gap",
+            "0.3",
+            "--signed-margin-bank-weight",
+            "0.4",
+            "--signed-margin-sign-weight",
+            "0.5",
+            "--signed-margin-speed-weight",
+            "0.6",
+        ]));
+
+        assert!((config.bank_gap - 0.1).abs() < 1e-6);
+        assert!((config.sign_gap - 0.2).abs() < 1e-6);
+        assert!((config.speed_gap - 0.3).abs() < 1e-6);
+        assert!((config.bank_weight - 0.4).abs() < 1e-6);
+        assert!((config.sign_weight - 0.5).abs() < 1e-6);
+        assert!((config.speed_weight - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
     fn target_projection_momentum_warms_linearly_to_end() {
         let config = TemporalRunConfig {
             train_base_seed: 0,
@@ -632,6 +768,8 @@ mod temporal_vision_config_tests {
             predictor_mode: PredictorMode::Baseline,
             residual_delta_scale: 1.0,
             projector_drift_weight: 0.0,
+            signed_margin_weight: 0.0,
+            signed_margin_config: SignedMarginObjectiveConfig::default(),
             target_projection_momentum: 0.5,
             target_projection_momentum_start: 1.0,
             target_projection_momentum_end: 0.5,

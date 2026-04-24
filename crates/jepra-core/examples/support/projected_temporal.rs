@@ -4,8 +4,9 @@ use super::temporal_vision::{
     make_velocity_trail_candidate_target_batch, signed_motion_dx_for_sample,
 };
 use jepra_core::{
-    EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa, Tensor,
-    gaussian_moment_regularizer, mse_loss,
+    EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa, SignedMarginObjectiveConfig,
+    SignedMarginObjectiveReport, Tensor, gaussian_moment_regularizer, mse_loss,
+    signed_margin_objective_loss_and_grad,
 };
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -984,6 +985,121 @@ where
     totals.into_breakdown()
 }
 
+pub fn projected_signed_margin_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    config: SignedMarginObjectiveConfig,
+) -> (SignedMarginObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed margin objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "signed margin objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+
+    signed_margin_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_candidate_indices,
+        &SIGNED_VELOCITY_BANK_CANDIDATE_DX,
+        config,
+    )
+}
+
+pub fn projected_signed_margin_objective_report_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    config: SignedMarginObjectiveConfig,
+) -> SignedMarginObjectiveReport
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedMarginObjectiveReportTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let (report, _) =
+            projected_signed_margin_objective_loss_and_grad(model, &x_t, &x_t1, config);
+        totals.observe(report);
+    }
+
+    totals.into_report()
+}
+
+#[derive(Debug, Default)]
+struct SignedMarginObjectiveReportTotals {
+    bank_loss: f32,
+    sign_loss: f32,
+    speed_loss: f32,
+    weighted_loss: f32,
+    samples: usize,
+    bank_pairs: usize,
+    sign_pairs: usize,
+    speed_pairs: usize,
+    active_bank_pairs: usize,
+    active_sign_pairs: usize,
+    active_speed_pairs: usize,
+}
+
+impl SignedMarginObjectiveReportTotals {
+    fn observe(&mut self, report: SignedMarginObjectiveReport) {
+        self.bank_loss += report.bank_loss * report.bank_pairs as f32;
+        self.sign_loss += report.sign_loss * report.sign_pairs as f32;
+        self.speed_loss += report.speed_loss * report.speed_pairs as f32;
+        self.weighted_loss += report.weighted_loss * report.samples as f32;
+        self.samples += report.samples;
+        self.bank_pairs += report.bank_pairs;
+        self.sign_pairs += report.sign_pairs;
+        self.speed_pairs += report.speed_pairs;
+        self.active_bank_pairs += report.active_bank_pairs;
+        self.active_sign_pairs += report.active_sign_pairs;
+        self.active_speed_pairs += report.active_speed_pairs;
+    }
+
+    fn into_report(self) -> SignedMarginObjectiveReport {
+        assert!(self.samples > 0, "signed margin objective has no samples");
+        assert!(
+            self.bank_pairs > 0 && self.sign_pairs > 0 && self.speed_pairs > 0,
+            "signed margin objective has empty pair counts"
+        );
+
+        SignedMarginObjectiveReport {
+            bank_loss: self.bank_loss / self.bank_pairs as f32,
+            sign_loss: self.sign_loss / self.sign_pairs as f32,
+            speed_loss: self.speed_loss / self.speed_pairs as f32,
+            weighted_loss: self.weighted_loss / self.samples as f32,
+            samples: self.samples,
+            bank_pairs: self.bank_pairs,
+            sign_pairs: self.sign_pairs,
+            speed_pairs: self.speed_pairs,
+            active_bank_pairs: self.active_bank_pairs,
+            active_sign_pairs: self.active_sign_pairs,
+            active_speed_pairs: self.active_speed_pairs,
+        }
+    }
+}
+
 #[allow(dead_code)]
 fn observe_signed_objective_error_batch<P>(
     model: &ProjectedVisionJepa<P>,
@@ -1013,6 +1129,35 @@ fn observe_signed_objective_error_batch<P>(
 
         totals.observe(true_dx, loss);
     }
+}
+
+fn signed_velocity_candidate_target_projections<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+) -> Vec<Tensor>
+where
+    P: PredictorModule,
+{
+    SIGNED_VELOCITY_BANK_CANDIDATE_DX
+        .iter()
+        .map(|candidate_dx| {
+            let candidate_x_t1 =
+                make_signed_velocity_trail_candidate_target_batch(x_t, *candidate_dx);
+            model.target_projection(&candidate_x_t1)
+        })
+        .collect()
+}
+
+fn signed_velocity_true_candidate_indices(x_t: &Tensor, x_t1: &Tensor) -> Vec<usize> {
+    (0..x_t.shape[0])
+        .map(|sample| {
+            let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+            SIGNED_VELOCITY_BANK_CANDIDATE_DX
+                .iter()
+                .position(|candidate_dx| *candidate_dx == true_dx)
+                .unwrap_or_else(|| panic!("true dx {} is missing from signed target bank", true_dx))
+        })
+        .collect()
 }
 
 fn projected_velocity_bank_sample_outcomes<P>(
