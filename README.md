@@ -44,6 +44,7 @@ JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --ex
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal -- --encoder-lr 0.005 --train-steps 60 --train-base-seed 1400
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --seed 21000 --steps 80 --log 20
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --target-momentum 0.95 --train-steps 120
+./run-predictor-mode-comparison.sh all # compare baseline/bottleneck/residual predictor modes
 ```
 
 ### Temporal Example CLI
@@ -67,6 +68,32 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
+
+Predictor-mode comparison protocol:
+
+```bash
+./run-predictor-mode-comparison.sh all
+JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predictor-mode-comparison.sh all
+```
+
+The script prints one structured row per path/seed/predictor:
+
+```text
+schema=jepra_predictor_compare_v1 path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> status=<ok|accept_failed|run_failed|parse_failed>
+```
+
+Latest predictor comparison evidence (`2026-04-24`, 300 steps, frozen-base encoder, projected target momentum `1.0`):
+
+```text
+schema=jepra_predictor_compare_v1 path=unprojected predictor=baseline seed=1000 steps=300 val_pred_end=0.040150 pred_min_std_final=1.254614 status=ok
+schema=jepra_predictor_compare_v1 path=unprojected predictor=bottleneck seed=1000 steps=300 val_pred_end=0.127445 pred_min_std_final=1.245264 status=ok
+schema=jepra_predictor_compare_v1 path=unprojected predictor=residual-bottleneck seed=1000 steps=300 val_pred_end=0.074866 pred_min_std_final=1.063676 status=ok
+schema=jepra_predictor_compare_v1 path=projected predictor=baseline seed=11000 steps=300 val_pred_end=0.216322 pred_min_std_final=0.990177 target_drift_end=0.036044 status=ok
+schema=jepra_predictor_compare_v1 path=projected predictor=bottleneck seed=11000 steps=300 val_pred_end=5.042953 pred_min_std_final=0.000000 target_drift_end=0.002192 status=accept_failed
+schema=jepra_predictor_compare_v1 path=projected predictor=residual-bottleneck seed=11000 steps=300 val_pred_end=0.045684 pred_min_std_final=0.972417 target_drift_end=0.031384 status=ok
+```
+
+Interpretation: residual-bottleneck is the current projected-path candidate because it keeps prediction health close to target health and materially beats projected baseline on this seed. It is not promoted as a default because unprojected baseline still has the lower final validation loss.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

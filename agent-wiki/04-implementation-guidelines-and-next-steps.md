@@ -25,9 +25,20 @@ Read with `VISION.md`.
 
 Current high-value implementation path:
 
-1. Compare `baseline`, `bottleneck`, and `residual-bottleneck` with identical temporal seeds.
-2. Promote no defaults yet; use health telemetry to decide whether residual is stable enough for stronger compact encoder runs.
-3. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+1. Run `run-predictor-mode-comparison.sh` before predictor-topology policy changes.
+2. Treat `residual-bottleneck` as the current projected-path candidate, not a default, because 300-step frozen-base evidence is strong for projected but not unprojected.
+3. Next build step: compare residual-bottleneck on `compact-stronger` projected runs before adding new spatial primitives.
+4. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+
+## Predictor Evidence Snapshot
+
+Latest paired evidence (`2026-04-24`, 300 steps, frozen-base encoder):
+
+- Unprojected baseline remains best on final validation prediction loss: `0.040150` vs residual `0.074866` vs bottleneck `0.127445`.
+- Projected residual-bottleneck is strongest and healthy: final validation prediction loss `0.045684`, prediction `min_std=0.972417`, target `min_std=0.941715`, target drift `0.031384`.
+- Projected baseline is healthy but worse: final validation prediction loss `0.216322`.
+- Projected bottleneck collapses prediction spread: final validation prediction loss `5.042953`, prediction `min_std=0.000000`, `status=accept_failed`.
+- Decision: residual is worth building on for projected compact-capacity work; bottleneck alone should not drive projected topology.
 
 ## Focused Review (Projected Path Hardening)
 

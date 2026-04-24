@@ -6,12 +6,14 @@ Snapshot from local files only. Internal working note for the repo state today.
 - JEPA proof currently uses temporal random-video tasks as the forcing function.
 - Projected path now has EMA target projector + optional encoder training (`step_with_trainable_encoder`).
 - Regression coverage is in `crates/jepra-core/tests/projected_temporal_support.rs`; fixed-seed hardening evidence is captured in README and reproducible via `run-projected-momentum-sweep.sh`.
+- Predictor comparison evidence is reproducible via `run-predictor-mode-comparison.sh`; current 300-step evidence favors residual-bottleneck only on the projected path.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
   - keep default path conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`, `--predictor-mode=baseline`),
   - add and compare opt-in Rust-native predictor variants without changing defaults,
   - use lightweight representation-health stats to compare prediction and target behavior,
+  - validate residual-bottleneck on stronger compact projected runs before any new primitive work,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.
 
 ## Anti-Goals
