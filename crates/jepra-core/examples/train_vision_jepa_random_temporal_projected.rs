@@ -10,8 +10,9 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    ProjectedSignedPredictionBankMargin, ProjectedSignedTargetBankSeparability,
-    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
+    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
+    ProjectedVelocityBankRanking, projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
@@ -351,6 +352,8 @@ where
         maybe_projected_signed_target_bank_separability(&model, run_config);
     let final_signed_prediction_bank_margin =
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
+    let final_signed_objective_error_breakdown =
+        maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
         reduction_thresholds_for_run_config(run_config);
 
@@ -405,6 +408,7 @@ where
     print_signed_velocity_bank_breakdown("final", final_signed_velocity_bank_breakdown);
     print_signed_target_bank_separability("final", final_signed_target_bank_separability);
     print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
+    print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
 }
 
 fn maybe_projected_velocity_bank_ranking<P>(
@@ -562,6 +566,52 @@ fn print_signed_prediction_bank_margin(
             margin.sign_margin,
             margin.speed_margin,
             margin.samples,
+        );
+    }
+}
+
+fn maybe_projected_signed_objective_error_breakdown<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedObjectiveErrorBreakdown>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(projected_signed_objective_error_breakdown_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+    ))
+}
+
+fn print_signed_objective_error_breakdown(
+    tag: &str,
+    breakdown: Option<ProjectedSignedObjectiveErrorBreakdown>,
+) {
+    if let Some(breakdown) = breakdown {
+        println!(
+            "{} | signed objective error breakdown all_loss {:.6} | dx_neg2_loss {:.6} | dx_neg1_loss {:.6} | dx_pos1_loss {:.6} | dx_pos2_loss {:.6} | neg_loss {:.6} | pos_loss {:.6} | slow_loss {:.6} | fast_loss {:.6} | sign_gap {:.6} | speed_gap {:.6} | samples {} | dx_neg2_samples {} | dx_neg1_samples {} | dx_pos1_samples {} | dx_pos2_samples {}",
+            tag,
+            breakdown.all_loss,
+            breakdown.dx_neg2_loss,
+            breakdown.dx_neg1_loss,
+            breakdown.dx_pos1_loss,
+            breakdown.dx_pos2_loss,
+            breakdown.neg_loss,
+            breakdown.pos_loss,
+            breakdown.slow_loss,
+            breakdown.fast_loss,
+            breakdown.sign_gap,
+            breakdown.speed_gap,
+            breakdown.samples,
+            breakdown.dx_neg2_samples,
+            breakdown.dx_neg1_samples,
+            breakdown.dx_pos1_samples,
+            breakdown.dx_pos2_samples,
         );
     }
 }

@@ -90,7 +90,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v8 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> signed_bank_neg_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> signed_bank_speed_top1_end=<n|na> target_bank_oracle_mrr_end=<n|na> target_bank_margin_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v9 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> signed_bank_neg_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> signed_bank_speed_top1_end=<n|na> target_bank_oracle_mrr_end=<n|na> target_bank_margin_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_objective_sign_gap_end=<n|na> signed_objective_speed_gap_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -159,9 +159,11 @@ target bank oracle_mrr=1.000000 | oracle_top1=1.000000 | true_distance=0.000000 
 target bank neg_nearest_wrong=1.938479 | pos_nearest_wrong=0.989167 | sign_margin=7.331476 | speed_margin=-12.402091
 baseline prediction margin true_distance=5.222552 | nearest_wrong=1.063438 | margin=-4.159113 | positive_margin_rate=0.239583 | sign_margin=-0.981234 | speed_margin=0.185016
 residual prediction margin true_distance=5.542892 | nearest_wrong=0.854323 | margin=-4.688569 | positive_margin_rate=0.203125 | sign_margin=-1.366664 | speed_margin=0.422940
+baseline signed objective all=1.305638 | neg=2.118653 | pos=0.492622 | slow=1.349482 | fast=1.261794 | sign_gap=-1.626031 | speed_gap=-0.087688
+residual signed objective all=1.385723 | neg=2.204694 | pos=0.566752 | slow=1.327650 | fast=1.443796 | sign_gap=-1.637942 | speed_gap=0.116146
 ```
 
-Interpretation: baseline wins validation on all three signed-task seeds. Residual-bottleneck has higher prediction spread but ~16x higher target drift and weaker four-candidate signed velocity-bank ranking. The v7 target-bank oracle is clean (`oracle_mrr=1.0`, true distance `0.0`), so signed failure is not candidate-target construction. The v8 prediction-margin diagnostic shows the actual prediction is much closer to wrong signed candidates than the true target on most samples (`positive_margin_rate` near top1). This blocks residual promotion, depthwise convolution, and spatial predictor work. The next useful implementation is signed objective error decomposition before any opt-in margin objective probe.
+Interpretation: baseline wins validation on all three signed-task seeds. Residual-bottleneck has higher prediction spread but ~16x higher target drift and weaker four-candidate signed velocity-bank ranking. The v7 target-bank oracle is clean (`oracle_mrr=1.0`, true distance `0.0`), so signed failure is not candidate-target construction. The v8 prediction-margin diagnostic shows the actual prediction is much closer to wrong signed candidates than the true target on most samples (`positive_margin_rate` near top1). The v9 objective decomposition shows the main signed loss is negative-direction error (`neg` is ~4x `pos`) and residual does not fix it. This blocks residual promotion, depthwise convolution, and spatial predictor work; the next valid build step is a default-off signed-margin objective probe.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 
