@@ -31,9 +31,10 @@ Current high-value implementation path:
 1. Run `run-predictor-mode-comparison.sh` before predictor-topology policy changes.
 2. Treat `residual-bottleneck` as the current projected-path candidate, not a default, because 300-step frozen-base evidence is strong for projected but not unprojected.
 3. Compact-stronger evidence is healthy but drift-confounded; residual delta scaling is now the explicit control knob for ablations, not a hidden topology change.
-4. Run the same compact-stronger projected comparisons on `velocity-trail` before adding depthwise or spatial primitives.
-5. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
-6. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+4. Treat the `velocity-trail` sweep as blocking residual promotion: baseline wins validation on all three compact-stronger projected seeds and residual has much higher target drift.
+5. Build velocity-bank ranking/MRR as the next diagnostic before adding depthwise or spatial primitives.
+6. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
+7. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
 
@@ -69,7 +70,9 @@ Velocity-trail task axis:
 
 - `--temporal-task velocity-trail` adds a previous-position trail to each moving square while preserving deterministic mass decay and motion-mode contracts.
 - `random-speed` remains the default and the historical evidence baseline.
-- Use `velocity-trail` to decide whether residual/depthwise/spatial capacity is actually needed; do not promote architecture changes from loss-only wins.
+- Current compact-stronger projected evidence (`2026-04-24`, seeds `11000..11002`, 300 steps): baseline mean validation prediction loss `0.119354`, residual-bottleneck mean `0.178396`; baseline wins 3/3.
+- Residual-bottleneck remains health-ok but drift-confounded on this task: mean target drift `0.159557` vs baseline `0.002187`.
+- Use velocity-bank ranking/MRR next to decide whether the model predicts ordered motion structure; do not promote architecture changes from loss-only wins.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -142,7 +145,7 @@ Velocity-trail task axis:
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use the harder `velocity-trail` temporal task as the next proof diagnostic before widening the model.
+2. Use velocity-bank ranking/MRR on `velocity-trail` as the next proof diagnostic before widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed` and `velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.

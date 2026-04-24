@@ -131,7 +131,16 @@ projector_drift_weight=5.0 val_pred_end=1.165685 | pred_min_std=0.462189 | targe
 projector_drift_weight=10.0 val_pred_end=1.216697 | pred_min_std=0.502000 | target_drift=0.113993 | status=ok
 ```
 
-Interpretation: parameter-space projector drift regularization is a valid opt-in control knob and reduces drift monotonically on this seed, but the observed tradeoff is not yet good enough for promotion. Keep it as evidence tooling while the next step searches for a better residual/projector stabilization mechanism.
+Interpretation: parameter-space projector drift regularization is a valid opt-in control knob and reduces drift monotonically on this seed, but the observed tradeoff is not yet good enough for promotion. Keep it as evidence tooling; the active next gate is motion-structure diagnostics on `velocity-trail`.
+
+Velocity-trail compact-stronger projected evidence (`2026-04-24`, 300 steps, seeds `11000..11002`, target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
+
+```text
+baseline mean val_pred_end=0.119354 | mean pred_min_std=0.101571 | mean target_drift=0.002187 | status=ok all seeds
+residual-bottleneck mean val_pred_end=0.178396 | mean pred_min_std=0.226671 | mean target_drift=0.159557 | status=ok all seeds
+```
+
+Interpretation: baseline wins the harder `velocity-trail` task on all three seeds. Residual-bottleneck stays healthy but is validation-worse and drift-confounded, so this evidence blocks residual promotion and blocks depthwise/spatial primitive work. The next useful implementation is a velocity-bank ranking/MRR diagnostic to prove motion-structure prediction before more architecture.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 
