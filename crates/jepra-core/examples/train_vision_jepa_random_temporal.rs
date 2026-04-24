@@ -3,7 +3,10 @@ mod temporal_validation;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use jepra_core::{BottleneckPredictor, Linear, Predictor, PredictorModule, Tensor, VisionJepa};
+use jepra_core::{
+    BottleneckPredictor, Linear, Predictor, PredictorModule, Tensor, VisionJepa,
+    representation_stats,
+};
 use temporal_validation::{
     UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, UNPROJECTED_VALIDATION_BASE_SEED,
     UNPROJECTED_VALIDATION_BATCHES, UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
@@ -14,7 +17,7 @@ use temporal_vision::{
     assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch,
     make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary,
+    print_batch_summary, print_representation_stats,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -179,6 +182,7 @@ where
 
     let initial_z_t = model.encode(&train_probe_t);
     let initial_z_t1 = model.target_latent(&train_probe_t1);
+    let initial_pred = model.predict_next_latent(&train_probe_t);
     let initial_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
     let initial_val_loss = temporal_validation_batch_loss_from_base_seed(
         &model,
@@ -195,6 +199,8 @@ where
         "initial | probe train {:.6} | val {:.6}",
         initial_train_loss, initial_val_loss
     );
+    print_representation_stats("initial prediction", &representation_stats(&initial_pred));
+    print_representation_stats("initial target", &representation_stats(&initial_z_t1));
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -261,6 +267,8 @@ where
         &final_pred.data[0..3],
         &final_target.data[0..3]
     );
+    print_representation_stats("final prediction", &representation_stats(&final_pred));
+    print_representation_stats("final target", &representation_stats(&final_target));
     println!(
         "final | probe train {:.6} | val {:.6}",
         final_train_loss, final_val_loss

@@ -11,6 +11,7 @@ Read with `VISION.md`.
   - optional encoder update mode (`step_with_trainable_encoder(..., encoder_lr)`).
   - CLI/env control via `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, `--target-momentum-warmup-steps`, optional projection aliases (`--target-projection-momentum`, `--target-projection-momentum-end`), and `JEPRA_TARGET_MOMENTUM`.
 - Projection regularization utilities now live in core (`regularizers.rs`) instead of example-only support code.
+- Representation-health telemetry now lives in core and is printed by both temporal examples for prediction/target comparison.
 - Current defaults preserve hard target-projector behavior (`momentum = 1.0`) unless explicit tuning is passed.
 - Regression posture:
   - one-step projected loss reduction,
@@ -23,8 +24,8 @@ Read with `VISION.md`.
 
 Current high-value implementation path:
 
-1. Finish `BottleneckPredictor` as an opt-in Rust-native predictor variant.
-2. Compare `baseline` vs `bottleneck` with the current temporal examples using identical seeds.
+1. Use representation-health telemetry to compare `baseline` vs `bottleneck` with identical temporal seeds.
+2. Add an opt-in residual predictor only if compact predictor evidence shows it is needed.
 3. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Focused Review (Projected Path Hardening)
@@ -91,7 +92,8 @@ Current high-value implementation path:
 - no hidden target-projector training bypass (all projected encoder updates stay explicit)
 
 ## Stale Guidance Audit
-- `VISION.md` alignment is now up to date for the active projected-hardening phase; no immediate-step framing patch is pending.
+- `VISION.md` now frames compact predictor-capacity work as the active implementation path.
+- Projected hardening remains a regression gate, not the main build loop.
 
 ## Approved Implementation Sequence
 

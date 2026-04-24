@@ -17,8 +17,9 @@ pub use predictor::{
     BottleneckPredictor, BottleneckPredictorGrads, Predictor, PredictorGrads, PredictorModule,
 };
 pub use regularizers::{
-    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
-    projection_stats,
+    RepresentationHealthStats, combine_projection_grads, gaussian_moment_regularizer,
+    gaussian_moment_regularizer_grad, projection_stats, representation_health_stats,
+    representation_stats,
 };
 pub use tensor::Tensor;
 pub use vision_jepa::{ProjectedVisionJepa, VisionJepa};

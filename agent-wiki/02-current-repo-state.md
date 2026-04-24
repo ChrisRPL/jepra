@@ -11,6 +11,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Current phase focus has shifted from projected hardening to compact model capacity:
   - keep default path conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`, `--predictor-mode=baseline`),
   - add and compare opt-in Rust-native predictor variants without changing defaults,
+  - use lightweight representation-health stats to compare prediction and target behavior,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.
 
 ## Anti-Goals
@@ -33,7 +34,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - `predictor.rs`: baseline two-layer predictor plus bottleneck predictor, both with ReLU, backward pass, and SGD step.
 - `conv.rs`: `Conv2d` with forward, backward, and SGD step APIs.
 - `encoder.rs`: `ConvEncoder` and `EmbeddingEncoder` on top of conv + global average pooling.
-- `regularizers.rs`: JEPA projection regularizer utilities (`gaussian_moment_regularizer`, gradient, projection stats, projection-grad combination).
+- `regularizers.rs`: JEPA projection regularizer utilities (`gaussian_moment_regularizer`, gradient, projection stats, representation stats, projection-grad combination).
 - `vision_jepa.rs`: `VisionJepa` and `ProjectedVisionJepa` wrappers that compose encoders + predictor/projector and expose core encode/predict/loss/update entry points.
 - `losses.rs` and `init.rs`: MSE loss/grad and deterministic random init helpers.
 
@@ -63,7 +64,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - `train_vision_jepa.rs` is intentionally a compatibility wrapper that delegates to the canonical random-temporal training flow.
 - A dedicated example entrypoint regression test now enforces that delegation in `crates/jepra-core/tests/example_entrypoint_guard.rs`.
 - Temporal data uses mixed-speed synthetic motion, with deterministic mixed-mode validation probes and held-out schedules.
-- CLI/env config for runs lives in `examples/support/temporal_vision.rs` and now includes `--target-momentum`/`--target-momentum-start`/`--target-momentum-end` plus `--target-momentum-warmup-steps` and `JEPRA_TARGET_MOMENTUM`.
+- CLI/env config for runs lives in `examples/support/temporal_vision.rs` and now includes `--predictor-mode`, `--target-momentum`/`--target-momentum-start`/`--target-momentum-end` plus `--target-momentum-warmup-steps` and `JEPRA_TARGET_MOMENTUM`.
 - `Conv2d` has backprop support and optimizer updates; encoder-level backward/grad plumbing is now in place.
 - There is no real evaluation harness, no benchmark runner, and no model checkpointing or serialization path.
 

@@ -7,6 +7,7 @@ The crate is published as `jepra-core`.
 
 - `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline, a compact frozen-encoder option, and optional trainable-encoder updates in temporal JEPA examples
 - baseline two-layer predictors plus an opt-in `BottleneckPredictor` for compact-capacity experiments
+- lightweight representation-health telemetry for predictor/target comparisons (`mean_abs`, `mean_std`, `min_std`, mean/max off-diagonal covariance)
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - core JEPA projection regularizer utilities for Gaussian moment regularization and projection statistics

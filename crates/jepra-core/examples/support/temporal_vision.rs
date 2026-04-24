@@ -1,6 +1,6 @@
 #![allow(clippy::items_after_test_module)]
 
-use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, Tensor};
+use jepra_core::{Conv2d, ConvEncoder, EmbeddingEncoder, RepresentationHealthStats, Tensor};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -672,6 +672,19 @@ pub fn print_batch_summary(name: &str, x_t: &Tensor, x_t1: &Tensor) {
         square_center_x(x_t1, 0),
         total_mass(x_t, 0),
         total_mass(x_t1, 0)
+    );
+}
+
+#[allow(dead_code)]
+pub fn print_representation_stats(name: &str, stats: &RepresentationHealthStats) {
+    println!(
+        "{} health | mean_abs {:.6} | mean_std {:.6} | min_std {:.6} | offdiag_cov_abs {:.6} | offdiag_cov_max {:.6}",
+        name,
+        stats.mean_abs,
+        stats.mean_std,
+        stats.min_std,
+        stats.mean_abs_offdiag_cov,
+        stats.max_abs_offdiag_cov
     );
 }
 

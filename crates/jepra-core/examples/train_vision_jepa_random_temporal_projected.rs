@@ -5,7 +5,7 @@ mod temporal_vision;
 
 use jepra_core::{
     BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa, Tensor,
-    projection_stats,
+    projection_stats, representation_stats,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -17,7 +17,7 @@ use temporal_vision::{
     assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch,
     make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary,
+    print_batch_summary, print_representation_stats,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -154,6 +154,7 @@ where
 
     let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
+    let initial_prediction = model.predict_next_projection(&train_probe_t);
     let initial_target = model.target_projection(&train_probe_t1);
     let (initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss) =
         model.losses(&train_probe_t, &train_probe_t1, REGULARIZER_WEIGHT);
@@ -177,6 +178,11 @@ where
         "initial | proj mean_abs {:.6} | var_mean {:.6}",
         initial_projection_mean_abs, initial_projection_var_mean
     );
+    print_representation_stats(
+        "initial prediction",
+        &representation_stats(&initial_prediction),
+    );
+    print_representation_stats("initial target", &representation_stats(&initial_target));
     println!(
         "initial | train pred {:.6} | reg {:.6} | total {:.6}",
         initial_train_prediction_loss, initial_train_regularizer_loss, initial_train_total_loss
@@ -300,6 +306,8 @@ where
         "final | proj mean_abs {:.6} | var_mean {:.6}",
         final_projection_mean_abs, final_projection_var_mean
     );
+    print_representation_stats("final prediction", &representation_stats(&final_pred));
+    print_representation_stats("final target", &representation_stats(&final_target));
     println!(
         "final | train pred {:.6} | reg {:.6} | total {:.6}",
         final_train_prediction_loss, final_train_regularizer_loss, final_train_total_loss
