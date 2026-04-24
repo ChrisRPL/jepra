@@ -161,6 +161,10 @@ pub fn main() {
         "temporal run config | residual delta scale {}",
         run_config.residual_delta_scale
     );
+    println!(
+        "temporal run config | projector drift weight {}",
+        run_config.projector_drift_weight
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),

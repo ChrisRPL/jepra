@@ -1,3 +1,4 @@
+use crate::linear::{Linear, LinearGrads};
 use crate::tensor::Tensor;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -204,6 +205,128 @@ pub fn projection_stats(latents: &Tensor) -> (f32, f32) {
     }
 
     (mean_abs_acc / dim_scale, variance_acc / dim_scale)
+}
+
+pub fn projector_drift_regularizer(online_projector: &Linear, target_projector: &Linear) -> f32 {
+    assert_projector_shapes_match(online_projector, target_projector);
+
+    let parameter_count = projector_parameter_count(online_projector);
+    if parameter_count == 0 {
+        return 0.0;
+    }
+
+    let weight_loss = online_projector
+        .weight
+        .data
+        .iter()
+        .zip(target_projector.weight.data.iter())
+        .map(|(online, target)| {
+            let diff = online - target;
+            diff * diff
+        })
+        .sum::<f32>();
+    let bias_loss = online_projector
+        .bias
+        .data
+        .iter()
+        .zip(target_projector.bias.data.iter())
+        .map(|(online, target)| {
+            let diff = online - target;
+            diff * diff
+        })
+        .sum::<f32>();
+
+    0.5 * (weight_loss + bias_loss) / parameter_count as f32
+}
+
+pub fn projector_drift_regularizer_grads(
+    online_projector: &Linear,
+    target_projector: &Linear,
+) -> (Tensor, Tensor) {
+    assert_projector_shapes_match(online_projector, target_projector);
+
+    let parameter_count = projector_parameter_count(online_projector);
+    if parameter_count == 0 {
+        return (
+            online_projector.weight.zeros_like(),
+            online_projector.bias.zeros_like(),
+        );
+    }
+
+    let grad_scale = 1.0 / parameter_count as f32;
+    let grad_weight = Tensor::new(
+        online_projector
+            .weight
+            .data
+            .iter()
+            .zip(target_projector.weight.data.iter())
+            .map(|(online, target)| grad_scale * (online - target))
+            .collect(),
+        online_projector.weight.shape.clone(),
+    );
+    let grad_bias = Tensor::new(
+        online_projector
+            .bias
+            .data
+            .iter()
+            .zip(target_projector.bias.data.iter())
+            .map(|(online, target)| grad_scale * (online - target))
+            .collect(),
+        online_projector.bias.shape.clone(),
+    );
+
+    (grad_weight, grad_bias)
+}
+
+pub fn add_projector_drift_regularizer_grad(
+    grads: &mut LinearGrads,
+    online_projector: &Linear,
+    target_projector: &Linear,
+    weight: f32,
+) {
+    assert!(
+        weight.is_finite() && weight >= 0.0,
+        "projector drift regularizer weight must be finite and non-negative, got {}",
+        weight
+    );
+
+    if weight == 0.0 {
+        return;
+    }
+
+    let (grad_weight, grad_bias) =
+        projector_drift_regularizer_grads(online_projector, target_projector);
+    add_scaled_tensor_inplace(&mut grads.grad_weight, &grad_weight, weight);
+    add_scaled_tensor_inplace(&mut grads.grad_bias, &grad_bias, weight);
+}
+
+fn assert_projector_shapes_match(online_projector: &Linear, target_projector: &Linear) {
+    assert_eq!(
+        online_projector.weight.shape, target_projector.weight.shape,
+        "projector drift weight shape mismatch: online {:?}, target {:?}",
+        online_projector.weight.shape, target_projector.weight.shape
+    );
+    assert_eq!(
+        online_projector.bias.shape, target_projector.bias.shape,
+        "projector drift bias shape mismatch: online {:?}, target {:?}",
+        online_projector.bias.shape, target_projector.bias.shape
+    );
+}
+
+fn projector_parameter_count(projector: &Linear) -> usize {
+    projector.weight.len() + projector.bias.len()
+}
+
+fn add_scaled_tensor_inplace(target: &mut Tensor, source: &Tensor, scale: f32) {
+    assert_eq!(
+        target.shape, source.shape,
+        "add_scaled_tensor_inplace shape mismatch: target {:?}, source {:?}",
+        target.shape, source.shape
+    );
+
+    for (target_value, source_value) in target.data.iter_mut().zip(source.data.iter()) {
+        *target_value += scale * source_value;
+    }
 }
 
 pub fn combine_projection_grads(

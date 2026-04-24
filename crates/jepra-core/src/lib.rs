@@ -18,8 +18,9 @@ pub use predictor::{
     ResidualBottleneckPredictor, ResidualBottleneckPredictorGrads,
 };
 pub use regularizers::{
-    RepresentationHealthStats, combine_projection_grads, gaussian_moment_regularizer,
-    gaussian_moment_regularizer_grad, projection_stats, representation_health_stats,
+    RepresentationHealthStats, add_projector_drift_regularizer_grad, combine_projection_grads,
+    gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projection_stats,
+    projector_drift_regularizer, projector_drift_regularizer_grads, representation_health_stats,
     representation_stats,
 };
 pub use tensor::Tensor;

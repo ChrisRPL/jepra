@@ -3,7 +3,8 @@ use crate::linear::Linear;
 use crate::losses::{mse_loss, mse_loss_grad};
 use crate::predictor::{Predictor, PredictorModule};
 use crate::regularizers::{
-    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
+    add_projector_drift_regularizer_grad, combine_projection_grads, gaussian_moment_regularizer,
+    gaussian_moment_regularizer_grad, projector_drift_regularizer,
 };
 use crate::tensor::Tensor;
 
@@ -204,6 +205,53 @@ where
         projector_lr: f32,
         encoder_lr: f32,
     ) -> (f32, f32, f32) {
+        let (prediction_loss, regularizer_loss, _, total_loss) = self
+            .step_with_trainable_encoder_and_projector_drift_regularizer(
+                x_t,
+                x_t1,
+                regularizer_weight,
+                0.0,
+                predictor_lr,
+                projector_lr,
+                encoder_lr,
+            );
+        (prediction_loss, regularizer_loss, total_loss)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn step_with_projector_drift_regularizer(
+        &mut self,
+        x_t: &Tensor,
+        x_t1: &Tensor,
+        regularizer_weight: f32,
+        projector_drift_weight: f32,
+        predictor_lr: f32,
+        projector_lr: f32,
+    ) -> (f32, f32, f32, f32) {
+        self.step_with_trainable_encoder_and_projector_drift_regularizer(
+            x_t,
+            x_t1,
+            regularizer_weight,
+            projector_drift_weight,
+            predictor_lr,
+            projector_lr,
+            0.0,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn step_with_trainable_encoder_and_projector_drift_regularizer(
+        &mut self,
+        x_t: &Tensor,
+        x_t1: &Tensor,
+        regularizer_weight: f32,
+        projector_drift_weight: f32,
+        predictor_lr: f32,
+        projector_lr: f32,
+        encoder_lr: f32,
+    ) -> (f32, f32, f32, f32) {
+        assert_projector_drift_weight(projector_drift_weight);
+
         let z_t = self.encoder.forward(x_t);
         let projection_t = self.projector.forward(&z_t);
         let target = self.target_projector.forward(&self.encoder.forward(x_t1));
@@ -211,14 +259,24 @@ where
 
         let prediction_loss = mse_loss(&pred, &target);
         let regularizer_loss = gaussian_moment_regularizer(&projection_t);
-        let total_loss = prediction_loss + regularizer_weight * regularizer_loss;
+        let projector_drift_loss =
+            projector_drift_regularizer(&self.projector, &self.target_projector);
+        let total_loss = prediction_loss
+            + regularizer_weight * regularizer_loss
+            + projector_drift_weight * projector_drift_loss;
 
         let prediction_grad = mse_loss_grad(&pred, &target);
         let reg_grad = gaussian_moment_regularizer_grad(&projection_t);
         let pred_grads = self.predictor.backward(&projection_t, &prediction_grad);
         let projection_grad =
             combine_projection_grads(P::grad_input(&pred_grads), &reg_grad, regularizer_weight);
-        let projector_grads = self.projector.backward(&z_t, &projection_grad);
+        let mut projector_grads = self.projector.backward(&z_t, &projection_grad);
+        add_projector_drift_regularizer_grad(
+            &mut projector_grads,
+            &self.projector,
+            &self.target_projector,
+            projector_drift_weight,
+        );
         let encoder_grads = self.encoder.backward(x_t, &projector_grads.grad_input);
 
         self.predictor.sgd_step(&pred_grads, predictor_lr);
@@ -226,7 +284,12 @@ where
         self.encoder.sgd_step(&encoder_grads, encoder_lr);
         self.update_target_projector();
 
-        (prediction_loss, regularizer_loss, total_loss)
+        (
+            prediction_loss,
+            regularizer_loss,
+            projector_drift_loss,
+            total_loss,
+        )
     }
 
     fn assert_target_projection_momentum_in_range(momentum: f32) {
@@ -268,12 +331,43 @@ where
     }
 
     pub fn losses(&self, x_t: &Tensor, x_t1: &Tensor, regularizer_weight: f32) -> (f32, f32, f32) {
+        let (prediction_loss, regularizer_loss, _, total_loss) =
+            self.losses_with_projector_drift_regularizer(x_t, x_t1, regularizer_weight, 0.0);
+        (prediction_loss, regularizer_loss, total_loss)
+    }
+
+    pub fn losses_with_projector_drift_regularizer(
+        &self,
+        x_t: &Tensor,
+        x_t1: &Tensor,
+        regularizer_weight: f32,
+        projector_drift_weight: f32,
+    ) -> (f32, f32, f32, f32) {
+        assert_projector_drift_weight(projector_drift_weight);
+
         let prediction = self.predict_next_projection(x_t);
         let target = self.target_projection(x_t1);
         let prediction_loss = mse_loss(&prediction, &target);
         let regularizer_loss = gaussian_moment_regularizer(&self.project_latent(x_t));
-        let total_loss = prediction_loss + regularizer_weight * regularizer_loss;
+        let projector_drift_loss =
+            projector_drift_regularizer(&self.projector, &self.target_projector);
+        let total_loss = prediction_loss
+            + regularizer_weight * regularizer_loss
+            + projector_drift_weight * projector_drift_loss;
 
-        (prediction_loss, regularizer_loss, total_loss)
+        (
+            prediction_loss,
+            regularizer_loss,
+            projector_drift_loss,
+            total_loss,
+        )
     }
+}
+
+fn assert_projector_drift_weight(projector_drift_weight: f32) {
+    assert!(
+        projector_drift_weight.is_finite() && projector_drift_weight >= 0.0,
+        "projector drift weight must be finite and non-negative, got {}",
+        projector_drift_weight
+    );
 }

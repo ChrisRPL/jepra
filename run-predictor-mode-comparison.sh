@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_PATH="${JEPRA_MANIFEST_PATH:-$ROOT_DIR/crates/jepra-core/Cargo.toml}"
-SCHEMA="jepra_predictor_compare_v2"
+SCHEMA="jepra_predictor_compare_v3"
 TRAIN_STEPS="${JEPRA_TRAIN_STEPS:-300}"
 LOG_EVERY="${JEPRA_LOG_EVERY:-25}"
 PREDICTOR_MODES_CSV="${JEPRA_PREDICTOR_MODES:-baseline bottleneck residual-bottleneck}"
@@ -17,6 +17,7 @@ PROJECTED_TARGET_MOMENTUM_END="${JEPRA_PROJECTED_TARGET_MOMENTUM_END:-$PROJECTED
 PROJECTED_TARGET_MOMENTUM_WARMUP_STEPS="${JEPRA_PROJECTED_TARGET_MOMENTUM_WARMUP_STEPS:-0}"
 COMPACT_ENCODER_MODE="${JEPRA_COMPACT_ENCODER_MODE:-}"
 RESIDUAL_DELTA_SCALE="${JEPRA_RESIDUAL_DELTA_SCALE:-1.0}"
+PROJECTOR_DRIFT_WEIGHT="${JEPRA_PROJECTOR_DRIFT_WEIGHT:-${JEPRA_PROJECTOR_ANCHOR_WEIGHT:-0.0}}"
 MIN_STD_THRESHOLD="${JEPRA_MIN_STD_THRESHOLD:-0.05}"
 REPORT_PATH="${JEPRA_PREDICTOR_COMPARISON_REPORT:-}"
 SCENARIO="${1:-all}"
@@ -45,6 +46,7 @@ Environment:
   JEPRA_PROJECTED_TARGET_MOMENTUM_WARMUP_STEPS  Projected warmup steps (default: 0)
   JEPRA_COMPACT_ENCODER_MODE                    Optional compact encoder mode: base|stronger
   JEPRA_RESIDUAL_DELTA_SCALE                    Residual-bottleneck delta scale (default: 1.0)
+  JEPRA_PROJECTOR_DRIFT_WEIGHT                  Projected online-projector drift regularizer weight (default: 0.0)
   JEPRA_MIN_STD_THRESHOLD                       Minimum final prediction/target min-std for ok rows (default: 0.05)
   JEPRA_PREDICTOR_COMPARISON_REPORT             Optional CSV path for parsed rows
 EOF
@@ -68,7 +70,7 @@ fi
 
 if [[ -n "$REPORT_PATH" ]]; then
   mkdir -p "$(dirname "$REPORT_PATH")"
-  printf 'schema,path,predictor,residual_delta_scale,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,status\n' > "$REPORT_PATH"
+  printf 'schema,path,predictor,residual_delta_scale,projector_drift_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,status\n' > "$REPORT_PATH"
 fi
 
 encoder_mode_label() {
@@ -198,16 +200,16 @@ emit_row() {
   local encoder_mode
   encoder_mode="$(encoder_mode_label)"
 
-  printf 'schema=%s path=%s predictor=%s residual_delta_scale=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s status=%s\n' \
-    "$SCHEMA" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
+  printf 'schema=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s status=%s\n' \
+    "$SCHEMA" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
     "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" \
     "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" \
     "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" \
     "$pred_min_std" "$target_min_std" "$proj_var_mean" "$target_drift_end" "$status"
 
   if [[ -n "$REPORT_PATH" ]]; then
-    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
-      "$SCHEMA" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
+    printf '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+      "$SCHEMA" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" "$seed" "$TRAIN_STEPS" "$encoder_mode" "$encoder_lr" \
       "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" \
       "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" \
       "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" \
@@ -249,6 +251,7 @@ run_one() {
     extra_args+=(--compact-encoder-mode "$COMPACT_ENCODER_MODE")
   fi
   extra_args+=(--residual-delta-scale "$RESIDUAL_DELTA_SCALE")
+  extra_args+=(--projector-drift-weight "$PROJECTOR_DRIFT_WEIGHT")
 
   log_file="$(mktemp)"
   local run_failed="false"

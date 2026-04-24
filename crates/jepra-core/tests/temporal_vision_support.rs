@@ -228,6 +228,7 @@ fn unprojected_run_with_encoder(
         predictor_mode: PredictorMode::Baseline,
         encoder_learning_rate: encoder_lr,
         residual_delta_scale: 1.0,
+        projector_drift_weight: 0.0,
         target_projection_momentum: 1.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 1.0,

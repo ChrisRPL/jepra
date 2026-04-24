@@ -58,6 +58,7 @@ pub struct TemporalRunConfig {
     pub compact_encoder_mode: CompactEncoderMode,
     pub predictor_mode: PredictorMode,
     pub residual_delta_scale: f32,
+    pub projector_drift_weight: f32,
     pub target_projection_momentum: f32,
     pub target_projection_momentum_start: f32,
     pub target_projection_momentum_end: f32,
@@ -105,6 +106,7 @@ impl TemporalRunConfig {
         let compact_encoder_mode = compact_encoder_mode_from_args(&args);
         let predictor_mode = predictor_mode_from_args(&args);
         let residual_delta_scale = residual_delta_scale_from_args(&args);
+        let projector_drift_weight = projector_drift_weight_from_args(&args);
         assert_target_projection_momentum(target_projection_momentum_end);
         assert_target_projection_momentum(target_projection_momentum_start);
 
@@ -127,6 +129,7 @@ impl TemporalRunConfig {
             compact_encoder_mode,
             predictor_mode,
             residual_delta_scale,
+            projector_drift_weight,
             target_projection_momentum: target_projection_momentum_end,
             target_projection_momentum_start,
             target_projection_momentum_end,
@@ -201,6 +204,19 @@ fn residual_delta_scale_from_args(args: &[String]) -> f32 {
                 .map(|value| parse_finite_nonnegative_f32(&value, "JEPRA_RESIDUAL_DELTA_SCALE"))
         })
         .unwrap_or(1.0)
+}
+
+fn projector_drift_weight_from_args(args: &[String]) -> f32 {
+    parse_arg_value(args, "--projector-drift-weight")
+        .or_else(|| parse_arg_value(args, "--projector-anchor-weight"))
+        .map(|value| parse_finite_nonnegative_f32(value, "--projector-drift-weight"))
+        .or_else(|| {
+            std::env::var("JEPRA_PROJECTOR_DRIFT_WEIGHT")
+                .or_else(|_| std::env::var("JEPRA_PROJECTOR_ANCHOR_WEIGHT"))
+                .ok()
+                .map(|value| parse_finite_nonnegative_f32(&value, "JEPRA_PROJECTOR_DRIFT_WEIGHT"))
+        })
+        .unwrap_or(0.0)
 }
 
 pub fn training_steps(default_steps: usize) -> usize {
@@ -373,7 +389,7 @@ pub fn assert_temporal_experiment_improved(
 mod temporal_vision_config_tests {
     use super::{
         CompactEncoderMode, PredictorMode, TemporalRunConfig, compact_encoder_mode_from_args,
-        predictor_mode_from_args, residual_delta_scale_from_args,
+        predictor_mode_from_args, projector_drift_weight_from_args, residual_delta_scale_from_args,
     };
 
     fn args_with(values: &[&str]) -> Vec<String> {
@@ -489,6 +505,27 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn projector_drift_weight_defaults_to_disabled() {
+        assert!((projector_drift_weight_from_args(&args_with(&[])) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn projector_drift_weight_parses_explicit_weight() {
+        assert!(
+            (projector_drift_weight_from_args(&args_with(&["--projector-drift-weight", "2.5"]))
+                - 2.5)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "--projector-drift-weight must be finite and non-negative")]
+    fn projector_drift_weight_panics_on_negative_value() {
+        projector_drift_weight_from_args(&args_with(&["--projector-drift-weight", "-0.1"]));
+    }
+
+    #[test]
     fn target_projection_momentum_warms_linearly_to_end() {
         let config = TemporalRunConfig {
             train_base_seed: 0,
@@ -498,6 +535,7 @@ mod temporal_vision_config_tests {
             compact_encoder_mode: CompactEncoderMode::Disabled,
             predictor_mode: PredictorMode::Baseline,
             residual_delta_scale: 1.0,
+            projector_drift_weight: 0.0,
             target_projection_momentum: 0.5,
             target_projection_momentum_start: 1.0,
             target_projection_momentum_end: 0.5,

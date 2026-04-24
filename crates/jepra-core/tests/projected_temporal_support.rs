@@ -6,8 +6,9 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{
-    Linear, Predictor, ProjectedVisionJepa, Tensor, combine_projection_grads,
+    Linear, LinearGrads, Predictor, ProjectedVisionJepa, Tensor, combine_projection_grads,
     gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projection_stats,
+    projector_drift_regularizer, projector_drift_regularizer_grads,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -223,6 +224,7 @@ fn projected_run_with_encoder(
         compact_encoder_mode,
         predictor_mode: PredictorMode::Baseline,
         residual_delta_scale: 1.0,
+        projector_drift_weight: 0.0,
         target_projection_momentum: 0.5,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.5,
@@ -367,6 +369,68 @@ fn projection_stats_report_feature_mean_abs_and_variance_mean() {
 
     assert!((mean_abs - 2.5).abs() < 1e-6);
     assert!((variance_mean - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn projector_drift_regularizer_is_half_mean_squared_parameter_drift() {
+    let online = Linear::new(
+        Tensor::new(vec![2.0, 0.0, -1.0, 3.0], vec![2, 2]),
+        Tensor::new(vec![1.0, -2.0], vec![2]),
+    );
+    let target = Linear::new(
+        Tensor::new(vec![1.0, 1.0, -1.0, 5.0], vec![2, 2]),
+        Tensor::new(vec![0.0, -4.0], vec![2]),
+    );
+
+    let loss = projector_drift_regularizer(&online, &target);
+
+    assert!((loss - (0.5 * 11.0 / 6.0)).abs() < 1e-6);
+}
+
+#[test]
+fn projector_drift_regularizer_grads_match_online_minus_target_over_parameter_count() {
+    let online = Linear::new(
+        Tensor::new(vec![2.0, 0.0, -1.0, 3.0], vec![2, 2]),
+        Tensor::new(vec![1.0, -2.0], vec![2]),
+    );
+    let target = Linear::new(
+        Tensor::new(vec![1.0, 1.0, -1.0, 5.0], vec![2, 2]),
+        Tensor::new(vec![0.0, -4.0], vec![2]),
+    );
+
+    let (grad_weight, grad_bias) = projector_drift_regularizer_grads(&online, &target);
+
+    assert_eq!(
+        grad_weight,
+        Tensor::new(vec![1.0 / 6.0, -1.0 / 6.0, 0.0, -2.0 / 6.0], vec![2, 2])
+    );
+    assert_eq!(grad_bias, Tensor::new(vec![1.0 / 6.0, 2.0 / 6.0], vec![2]));
+}
+
+#[test]
+fn projector_drift_regularizer_updates_projector_grads_without_touching_grad_input() {
+    let online = Linear::new(
+        Tensor::new(vec![2.0, 0.0, -1.0, 3.0], vec![2, 2]),
+        Tensor::new(vec![1.0, -2.0], vec![2]),
+    );
+    let target = Linear::new(
+        Tensor::new(vec![1.0, 1.0, -1.0, 5.0], vec![2, 2]),
+        Tensor::new(vec![0.0, -4.0], vec![2]),
+    );
+    let mut grads = LinearGrads {
+        grad_input: Tensor::new(vec![9.0, 8.0], vec![1, 2]),
+        grad_weight: Tensor::zeros(vec![2, 2]),
+        grad_bias: Tensor::zeros(vec![2]),
+    };
+
+    jepra_core::add_projector_drift_regularizer_grad(&mut grads, &online, &target, 3.0);
+
+    assert_eq!(grads.grad_input, Tensor::new(vec![9.0, 8.0], vec![1, 2]));
+    assert_eq!(
+        grads.grad_weight,
+        Tensor::new(vec![0.5, -0.5, 0.0, -1.0], vec![2, 2])
+    );
+    assert_eq!(grads.grad_bias, Tensor::new(vec![0.5, 1.0], vec![2]));
 }
 
 #[test]
@@ -569,6 +633,7 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         compact_encoder_mode: CompactEncoderMode::Disabled,
         predictor_mode: PredictorMode::Baseline,
         residual_delta_scale: 1.0,
+        projector_drift_weight: 0.0,
         target_projection_momentum: 0.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.0,
@@ -1212,6 +1277,7 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             compact_encoder_mode: CompactEncoderMode::Disabled,
             predictor_mode: PredictorMode::Baseline,
             residual_delta_scale: 1.0,
+            projector_drift_weight: 0.0,
             target_projection_momentum: momentum,
             target_projection_momentum_start: momentum,
             target_projection_momentum_end: momentum,

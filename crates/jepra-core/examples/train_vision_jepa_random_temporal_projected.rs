@@ -109,6 +109,10 @@ fn main() {
         "temporal run config | residual delta scale {}",
         run_config.residual_delta_scale
     );
+    println!(
+        "temporal run config | projector drift weight {}",
+        run_config.projector_drift_weight
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
@@ -226,18 +230,26 @@ where
             let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
             let momentum = run_config.target_projection_momentum_at_step(step);
             model.set_target_projection_momentum(momentum);
-            let (prediction_loss, regularizer_loss, total_loss) =
+            let (prediction_loss, regularizer_loss, projector_drift_loss, total_loss) =
                 if run_config.encoder_learning_rate > 0.0 {
-                    model.step_with_trainable_encoder(
+                    model.step_with_trainable_encoder_and_projector_drift_regularizer(
                         &x_t,
                         &x_t1,
                         REGULARIZER_WEIGHT,
+                        run_config.projector_drift_weight,
                         PREDICTOR_LR,
                         PROJECTOR_LR,
                         run_config.encoder_learning_rate,
                     )
                 } else {
-                    model.step(&x_t, &x_t1, REGULARIZER_WEIGHT, PREDICTOR_LR, PROJECTOR_LR)
+                    model.step_with_projector_drift_regularizer(
+                        &x_t,
+                        &x_t1,
+                        REGULARIZER_WEIGHT,
+                        run_config.projector_drift_weight,
+                        PREDICTOR_LR,
+                        PROJECTOR_LR,
+                    )
                 };
 
             if should_log {
@@ -261,6 +273,12 @@ where
                     val_regularizer_loss,
                     val_total_loss,
                 );
+                if run_config.projector_drift_weight > 0.0 {
+                    println!(
+                        "step {:03} | projector drift regularizer {:.6}",
+                        step, projector_drift_loss
+                    );
+                }
             }
 
             total_loss
