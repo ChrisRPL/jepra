@@ -30,6 +30,7 @@ pub enum CompactEncoderMode {
     Disabled,
     Base,
     Stronger,
+    SignedDirection,
 }
 
 impl CompactEncoderMode {
@@ -38,6 +39,7 @@ impl CompactEncoderMode {
             Self::Disabled => "frozen(base)",
             Self::Base => "compact(base)",
             Self::Stronger => "compact(stronger)",
+            Self::SignedDirection => "compact(signed-direction)",
         }
     }
 }
@@ -215,8 +217,9 @@ fn parse_compact_encoder_mode_flag(args: &[String]) -> Option<CompactEncoderMode
     parse_arg_value(args, "--compact-encoder-mode").map(|raw_mode| match raw_mode {
         "base" => CompactEncoderMode::Base,
         "stronger" => CompactEncoderMode::Stronger,
+        "signed-direction" => CompactEncoderMode::SignedDirection,
         _ => panic!(
-            "unsupported value for --compact-encoder-mode: {} (expected base|stronger)",
+            "unsupported value for --compact-encoder-mode: {} (expected base|stronger|signed-direction)",
             raw_mode
         ),
     })
@@ -593,6 +596,17 @@ mod temporal_vision_config_tests {
                 "base"
             ])),
             CompactEncoderMode::Base
+        );
+    }
+
+    #[test]
+    fn compact_encoder_signed_direction_mode_is_explicit() {
+        assert_eq!(
+            compact_encoder_mode_from_args(&args_with(&[
+                "--compact-encoder-mode",
+                "signed-direction"
+            ])),
+            CompactEncoderMode::SignedDirection
         );
     }
 
@@ -1532,6 +1546,9 @@ pub fn should_log_step(step: usize, log_every: usize) -> bool {
 
 const COMPACT_ENCODER_CHANNELS: usize = 6;
 const COMPACT_ENCODER_STRONGER_CHANNELS: usize = 8;
+const SIGNED_DIRECTION_ENCODER_CHANNELS: usize = 3;
+const SIGNED_DIRECTION_KERNEL_HEIGHT: usize = 2;
+const SIGNED_DIRECTION_KERNEL_WIDTH: usize = 5;
 
 fn compact_encoder_channel_weights(row: usize, col: usize) -> [f32; COMPACT_ENCODER_CHANNELS] {
     let center = (IMAGE_SIZE as f32 - 1.0) / 2.0;
@@ -1683,6 +1700,47 @@ pub fn make_compact_frozen_encoder_stronger() -> EmbeddingEncoder {
             vec![3, COMPACT_ENCODER_STRONGER_CHANNELS, 1, 1],
         ),
         Tensor::new(vec![0.0, 0.0, -FAST_MOTION_MASS_THRESHOLD], vec![3]),
+        1,
+        0,
+    );
+
+    EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2))
+}
+
+pub fn make_compact_frozen_encoder_signed_direction() -> EmbeddingEncoder {
+    let mut conv1_weight = Tensor::zeros(vec![
+        SIGNED_DIRECTION_ENCODER_CHANNELS,
+        1,
+        SIGNED_DIRECTION_KERNEL_HEIGHT,
+        SIGNED_DIRECTION_KERNEL_WIDTH,
+    ]);
+    let odd_x = [-1.0, -0.5, 0.0, 0.5, 1.0];
+    let fast_gap = [0.5, 0.0, -1.0, 0.0, 0.5];
+
+    for kh in 0..SIGNED_DIRECTION_KERNEL_HEIGHT {
+        for kw in 0..SIGNED_DIRECTION_KERNEL_WIDTH {
+            conv1_weight.set(&[0, 0, kh, kw], odd_x[kw]);
+            conv1_weight.set(&[1, 0, kh, kw], -odd_x[kw]);
+            conv1_weight.set(&[2, 0, kh, kw], fast_gap[kw]);
+        }
+    }
+
+    let conv1 = Conv2d::new(
+        conv1_weight,
+        Tensor::zeros(vec![SIGNED_DIRECTION_ENCODER_CHANNELS]),
+        1,
+        0,
+    );
+    let conv2 = Conv2d::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, //
+                0.0, 0.0, 1.0,
+            ],
+            vec![3, SIGNED_DIRECTION_ENCODER_CHANNELS, 1, 1],
+        ),
+        Tensor::zeros(vec![3]),
         1,
         0,
     );

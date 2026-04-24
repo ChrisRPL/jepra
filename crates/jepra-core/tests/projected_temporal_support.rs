@@ -27,8 +27,9 @@ use temporal_vision::{
     BATCH_SIZE, CompactEncoderMode, PredictorMode, TemporalExperimentSummary, TemporalRunConfig,
     TemporalTaskMode, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples,
-    assert_temporal_experiment_improved, make_compact_frozen_encoder, make_frozen_encoder,
-    make_temporal_batch, make_train_batch, run_temporal_experiment_with_summary,
+    assert_temporal_experiment_improved, make_compact_frozen_encoder,
+    make_compact_frozen_encoder_signed_direction, make_frozen_encoder, make_temporal_batch,
+    make_train_batch, run_temporal_experiment_with_summary,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -694,6 +695,30 @@ fn projected_signed_state_separability_is_finite_and_bounded() {
     assert_eq!(separability.support_samples, BATCH_SIZE);
     assert_eq!(separability.query_samples, BATCH_SIZE);
     assert_eq!(separability.candidates, 4);
+}
+
+#[test]
+fn signed_direction_compact_encoder_keeps_spatial_features_and_three_latents() {
+    let encoder = make_compact_frozen_encoder_signed_direction();
+    let (x_t, _) = temporal_vision::make_temporal_batch_for_task(
+        BATCH_SIZE,
+        PROJECTED_VALIDATION_BASE_SEED,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    let feature_map = encoder.backbone.forward(&x_t);
+    let latents = encoder.forward(&x_t);
+
+    assert_eq!(feature_map.shape[0], BATCH_SIZE);
+    assert_eq!(feature_map.shape[1], 3);
+    assert!(
+        feature_map.shape[2] > 1 && feature_map.shape[3] > 1,
+        "signed-direction encoder should preserve spatial maps before pooling, got {:?}",
+        feature_map.shape
+    );
+    assert_eq!(latents.shape, vec![BATCH_SIZE, 3]);
+    assert!(feature_map.data.iter().all(|value| value.is_finite()));
+    assert!(latents.data.iter().all(|value| value.is_finite()));
 }
 
 #[test]

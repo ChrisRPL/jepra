@@ -15,9 +15,10 @@ use temporal_validation::{
 use temporal_vision::{
     CompactEncoderMode, PredictorMode, assert_required_motion_modes_for_task,
     assert_temporal_contract, assert_temporal_experiment_improved, make_compact_frozen_encoder,
-    make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch_for_config,
-    make_validation_batch_for_config, make_validation_batch_with_required_motion_modes_for_config,
-    print_batch_summary_for_task, print_motion_mode_summary_for_task, print_representation_stats,
+    make_compact_frozen_encoder_signed_direction, make_compact_frozen_encoder_stronger,
+    make_frozen_encoder, make_train_batch_for_config, make_validation_batch_for_config,
+    make_validation_batch_with_required_motion_modes_for_config, print_batch_summary_for_task,
+    print_motion_mode_summary_for_task, print_representation_stats,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -243,6 +244,7 @@ where
         CompactEncoderMode::Disabled => make_frozen_encoder(),
         CompactEncoderMode::Base => make_compact_frozen_encoder(),
         CompactEncoderMode::Stronger => make_compact_frozen_encoder_stronger(),
+        CompactEncoderMode::SignedDirection => make_compact_frozen_encoder_signed_direction(),
     };
     let mut model = VisionJepa::new(encoder, predictor);
 

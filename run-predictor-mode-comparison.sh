@@ -53,7 +53,7 @@ Environment:
   JEPRA_PROJECTED_TARGET_MOMENTUM_START         Projected warmup start (default: target momentum)
   JEPRA_PROJECTED_TARGET_MOMENTUM_END           Projected warmup end (default: target momentum)
   JEPRA_PROJECTED_TARGET_MOMENTUM_WARMUP_STEPS  Projected warmup steps (default: 0)
-  JEPRA_COMPACT_ENCODER_MODE                    Optional compact encoder mode: base|stronger
+  JEPRA_COMPACT_ENCODER_MODE                    Optional compact encoder mode: base|stronger|signed-direction
   JEPRA_RESIDUAL_DELTA_SCALE                    Residual-bottleneck delta scale (default: 1.0)
   JEPRA_PROJECTOR_DRIFT_WEIGHT                  Projected online-projector drift regularizer weight (default: 0.0)
   JEPRA_SIGNED_MARGIN_WEIGHT                    Signed-margin objective weight (default: 0.0)
@@ -94,6 +94,7 @@ encoder_mode_label() {
     "") printf '%s' "frozen-base" ;;
     "base") printf '%s' "compact-base" ;;
     "stronger") printf '%s' "compact-stronger" ;;
+    "signed-direction") printf '%s' "compact-signed-direction" ;;
     *) printf '%s' "unknown-${COMPACT_ENCODER_MODE}" ;;
   esac
 }
