@@ -133,7 +133,7 @@ projector_drift_weight=5.0 val_pred_end=1.165685 | pred_min_std=0.462189 | targe
 projector_drift_weight=10.0 val_pred_end=1.216697 | pred_min_std=0.502000 | target_drift=0.113993 | status=ok
 ```
 
-Interpretation: parameter-space projector drift regularization is a valid opt-in control knob and reduces drift monotonically on this seed, but the observed tradeoff is not yet good enough for promotion. Keep it as evidence tooling; the active next gate is motion-structure diagnostics on trail tasks.
+Interpretation: parameter-space projector drift regularization is a valid opt-in control knob and reduces drift monotonically on this seed, but the observed tradeoff is not yet good enough for promotion. Keep it as evidence tooling; trail-task evidence remains the active architecture filter.
 
 Velocity-trail compact-stronger projected evidence (`2026-04-24`, 300 steps, seeds `11000..11002`, target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
 
@@ -146,13 +146,16 @@ residual-bottleneck mean velocity_bank_mrr=0.835938 | mean velocity_bank_top1=0.
 
 Interpretation: baseline wins the harder `velocity-trail` task on all three seeds and ranks the two-speed bank above random (`MRR=0.75`, `top1=0.5`). Residual-bottleneck has slightly higher speed-bank ranking but remains validation-worse and drift-confounded, so this evidence still blocks residual promotion and depthwise/spatial primitive work.
 
-Signed velocity-trail implementation smoke (`2026-04-24`, compact-stronger projected, baseline, seed `11000`, 20 steps, target momentum `1.0`):
+Signed velocity-trail compact-stronger projected evidence (`2026-04-24`, 300 steps, seeds `11000..11002`, target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
 
 ```text
-schema=jepra_predictor_compare_v5 temporal_task=signed-velocity-trail path=projected predictor=baseline seed=11000 steps=20 val_pred_start=2.995296 val_pred_end=2.079712 pred_min_std_final=0.145517 target_drift_end=0.002053 velocity_bank_mrr_end=0.536458 velocity_bank_top1_end=0.265625 velocity_bank_candidates=4 status=ok
+baseline mean val_pred_end=1.305638 | mean pred_min_std=0.177438 | mean target_drift=0.008615 | status=ok all seeds
+residual-bottleneck mean val_pred_end=1.385723 | mean pred_min_std=0.312411 | mean target_drift=0.136066 | status=ok all seeds
+baseline mean velocity_bank_mrr=0.519965 | mean velocity_bank_top1=0.239583 | mean velocity_bank_rank=2.484375
+residual-bottleneck mean velocity_bank_mrr=0.489583 | mean velocity_bank_top1=0.203125 | mean velocity_bank_rank=2.593750
 ```
 
-Interpretation: `signed-velocity-trail` is implemented as the current harder motion-structure diagnostic. It balances `dx ∈ {-2,-1,+1,+2}` per batch, keeps defaults unchanged, and extends velocity-bank ranking to four candidates for the signed task. This is a routing smoke, not promotion evidence. The next useful implementation step is a compact-stronger projected signed-task comparison across baseline vs residual-bottleneck, then bounce/objective hardening only if signed evidence is still inconclusive.
+Interpretation: baseline wins validation on all three signed-task seeds. Residual-bottleneck has higher prediction spread but ~16x higher target drift and weaker four-candidate signed velocity-bank ranking. The random four-candidate reference is `MRR≈0.520833`, `top1=0.25`, so neither model has credible signed-direction ranking yet. This blocks residual promotion, depthwise convolution, and spatial predictor work. The next useful implementation is a bounce/objective diagnostic or per-sign ranking breakdown, not architecture widening.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

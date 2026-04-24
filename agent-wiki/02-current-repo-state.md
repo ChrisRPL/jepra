@@ -12,7 +12,8 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Temporal examples now expose a task axis: default `random-speed` plus opt-in `velocity-trail` and `signed-velocity-trail`, which add previous-position trail cues without changing model defaults.
 - Latest `velocity-trail` compact-stronger projected sweep: baseline beats residual-bottleneck on validation across seeds `11000..11002`; residual remains health-ok but target drift is ~73x higher.
 - Velocity-bank ranking/MRR is now implemented for projected `velocity-trail`; both baseline and residual rank speed above random, but residual is still blocked by validation loss and drift.
-- `signed-velocity-trail` is implemented as the next motion-structure diagnostic: balanced signed velocities `dx ∈ {-2,-1,+1,+2}`, signed temporal contract support, and four-candidate velocity-bank ranking for projected runs.
+- Latest `signed-velocity-trail` compact-stronger projected sweep: baseline beats residual-bottleneck on validation across seeds `11000..11002`; residual remains health-ok but target drift is ~16x higher.
+- Signed velocity-bank ranking remains near or below the four-candidate random reference (`MRR≈0.520833`, `top1=0.25`), so signed-direction structure is not credible enough for residual promotion.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -20,8 +21,8 @@ Snapshot from local files only. Internal working note for the repo state today.
   - add and compare opt-in Rust-native predictor variants without changing defaults,
   - use lightweight representation-health stats to compare prediction and target behavior,
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
-  - run the signed velocity-trail compact-stronger comparison before depthwise/spatial primitive work,
-  - use bounce or objective diagnostics next only if signed-task evidence is still inconclusive,
+  - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
+  - build bounce/objective diagnostics or per-sign ranking breakdown before another architecture change,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.
