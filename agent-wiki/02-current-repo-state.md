@@ -21,6 +21,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - V10 signed-margin weight grid rejects all candidates. Best baseline weight `0.1` has small validation/sign gains but misses the margin, positive-rate, and MRR gates by a wide margin.
 - Signed state separability v11 is implemented as a report-only projected signed-task probe. It builds support/query nearest-centroid classifiers over current latent state and projected state.
 - V11 evidence shows state separability is near random for both baseline and residual: latent/projection MRR `0.518229` and sign-top1 `0.468750`, with a four-candidate random MRR reference of `0.520833`. This shifts the next build target from more loss shaping to representation/conditioning.
+- Opt-in compact encoder mode `signed-direction` now adds local horizontal trail-orientation filters while preserving the existing 3D latent interface. A 20-step projected signed smoke improves state MRR to `0.619792`, but prediction `min_std=0.001387` fails the health gate, so it is representation evidence only.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -30,7 +31,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
   - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
   - do not expand the signed-margin grid; v11 shows the current signed state representation is not direction-separable enough for another loss-only pass,
-  - next high-value build step is a narrow opt-in representation/conditioning probe for signed direction before bounce, depthwise convolution, or spatial predictor work,
+  - next high-value build step is to harden the signed-direction representation probe against prediction collapse before bounce, depthwise convolution, or spatial predictor work,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.

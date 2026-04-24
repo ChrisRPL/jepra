@@ -61,7 +61,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--temporal-task <random-speed|velocity-trail|signed-velocity-trail>` selects the synthetic temporal task (`random-speed` remains the default; trail tasks are opt-in diagnostics)
 - `--encoder-lr` (or `--encoder-learning-rate`) enables encoder updates in temporal JEPA runs; `0.0` keeps a frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
-- `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
+- `--compact-encoder-mode <base|stronger|signed-direction>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`; `signed-direction` is an opt-in local trail-orientation probe)
 - `--predictor-mode <baseline|bottleneck|residual-bottleneck>` selects the predictor topology (`baseline` is the default; the others are experimental and non-default)
 - `--residual-delta-scale <float>` scales only the residual-bottleneck delta branch (`1.0` preserves the unscaled identity-plus-delta predictor)
 - `--projector-drift-weight <float>` adds an opt-in L2 online-projector-to-target-projector drift regularizer in projected runs (`0.0` disables it)
@@ -181,6 +181,7 @@ Signed state separability probe (`jepra_predictor_compare_v11`):
 - It splits deterministic validation batches into support/query halves, builds nearest-centroid classifiers over true signed `dx` for current latent state `z_t` and online projected state, then reports MRR/top1/sign-top1/mean-rank.
 - Latest compact-stronger signed evidence (`2026-04-24`, seeds `11000..11002`, baseline and residual-bottleneck): latent and projection separability are both near random (`state_latent_mrr=0.518229`, `state_projection_mrr=0.518229`, `state_*_sign_top1=0.468750`; random references are MRR `0.520833`, top1 `0.25`).
 - Interpretation: signed failure is not only a prediction objective issue. The current state representation itself does not separate direction, so the next build step should add a narrow representation/conditioning probe before more loss shaping, residual promotion, depthwise convolution, or spatial predictor work.
+- Opt-in `--compact-encoder-mode signed-direction` adds local horizontal trail-orientation filters while preserving the existing 3D latent/projector interface. A 20-step smoke row improves state MRR to `0.619792`, but remains blocked by low prediction `min_std`; treat it as representation evidence, not a promoted mode.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 
