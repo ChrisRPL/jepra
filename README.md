@@ -58,6 +58,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
 - `--predictor-mode <baseline|bottleneck|residual-bottleneck>` selects the predictor topology (`baseline` is the default; the others are experimental and non-default)
+- `--residual-delta-scale <float>` scales only the residual-bottleneck delta branch (`1.0` preserves the unscaled identity-plus-delta predictor)
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -65,6 +66,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--target-momentum-warmup-steps` linearly interpolates momentum from start to end over the first N steps (alias: `--target-projection-warmup-steps`)
 - `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
+- `JEPRA_RESIDUAL_DELTA_SCALE` is an environment fallback for residual-bottleneck delta scale
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
@@ -79,18 +81,18 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v1 path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v2 path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
-Latest predictor comparison evidence (`2026-04-24`, 300 steps, frozen-base encoder, projected target momentum `1.0`):
+Latest predictor comparison evidence (`2026-04-24`, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`):
 
 ```text
-schema=jepra_predictor_compare_v1 path=unprojected predictor=baseline seed=1000 steps=300 val_pred_end=0.040150 pred_min_std_final=1.254614 status=ok
-schema=jepra_predictor_compare_v1 path=unprojected predictor=bottleneck seed=1000 steps=300 val_pred_end=0.127445 pred_min_std_final=1.245264 status=ok
-schema=jepra_predictor_compare_v1 path=unprojected predictor=residual-bottleneck seed=1000 steps=300 val_pred_end=0.074866 pred_min_std_final=1.063676 status=ok
-schema=jepra_predictor_compare_v1 path=projected predictor=baseline seed=11000 steps=300 val_pred_end=0.216322 pred_min_std_final=0.990177 target_drift_end=0.036044 status=ok
-schema=jepra_predictor_compare_v1 path=projected predictor=bottleneck seed=11000 steps=300 val_pred_end=5.042953 pred_min_std_final=0.000000 target_drift_end=0.002192 status=accept_failed
-schema=jepra_predictor_compare_v1 path=projected predictor=residual-bottleneck seed=11000 steps=300 val_pred_end=0.045684 pred_min_std_final=0.972417 target_drift_end=0.031384 status=ok
+schema=jepra_predictor_compare_v2 path=unprojected predictor=baseline residual_delta_scale=1.0 seed=1000 steps=300 val_pred_end=0.040150 pred_min_std_final=1.254614 status=ok
+schema=jepra_predictor_compare_v2 path=unprojected predictor=bottleneck residual_delta_scale=1.0 seed=1000 steps=300 val_pred_end=0.127445 pred_min_std_final=1.245264 status=ok
+schema=jepra_predictor_compare_v2 path=unprojected predictor=residual-bottleneck residual_delta_scale=1.0 seed=1000 steps=300 val_pred_end=0.074866 pred_min_std_final=1.063676 status=ok
+schema=jepra_predictor_compare_v2 path=projected predictor=baseline residual_delta_scale=1.0 seed=11000 steps=300 val_pred_end=0.216322 pred_min_std_final=0.990177 target_drift_end=0.036044 status=ok
+schema=jepra_predictor_compare_v2 path=projected predictor=bottleneck residual_delta_scale=1.0 seed=11000 steps=300 val_pred_end=5.042953 pred_min_std_final=0.000000 target_drift_end=0.002192 status=accept_failed
+schema=jepra_predictor_compare_v2 path=projected predictor=residual-bottleneck residual_delta_scale=1.0 seed=11000 steps=300 val_pred_end=0.045684 pred_min_std_final=0.972417 target_drift_end=0.031384 status=ok
 ```
 
 Interpretation: residual-bottleneck is the current projected-path candidate because it keeps prediction health close to target health and materially beats projected baseline on this seed. It is not promoted as a default because unprojected baseline still has the lower final validation loss.
@@ -104,6 +106,15 @@ residual-bottleneck mean val_pred_end=1.119540 | mean pred_min_std=0.473802 | me
 ```
 
 Interpretation: residual-bottleneck remains healthy and modestly improves compact-stronger projected validation on 2/3 seeds, but target drift is much higher than baseline. Treat it as a projected candidate with drift confound, not a default promotion or a trigger for depthwise work.
+
+Residual delta-scale hardening evidence (`2026-04-24`, compact-stronger projected, seeds `11000..11002`):
+
+```text
+scale=0.25 target_momentum=1.0 residual mean val_pred_end=1.137108 | mean pred_min_std=0.517087 | mean target_drift=0.133765
+scale=0.25 target_momentum=0.5 residual mean val_pred_end=0.004085 | mean pred_min_std=0.028745 | mean target_min_std=0.023829 | status=accept_failed by health gate
+```
+
+Interpretation: delta scaling is now an explicit experiment knob, not a promoted topology change. Scale `0.25` preserves compact-stronger prediction health under frozen target momentum but does not solve projector drift; pairing it with low target momentum creates a loss-only collapse. Defaults remain `--predictor-mode baseline`, residual scale `1.0`, `--target-momentum 1.0`.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

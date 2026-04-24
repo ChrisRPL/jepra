@@ -57,6 +57,7 @@ pub struct TemporalRunConfig {
     pub encoder_learning_rate: f32,
     pub compact_encoder_mode: CompactEncoderMode,
     pub predictor_mode: PredictorMode,
+    pub residual_delta_scale: f32,
     pub target_projection_momentum: f32,
     pub target_projection_momentum_start: f32,
     pub target_projection_momentum_end: f32,
@@ -103,6 +104,7 @@ impl TemporalRunConfig {
                 .unwrap_or(0);
         let compact_encoder_mode = compact_encoder_mode_from_args(&args);
         let predictor_mode = predictor_mode_from_args(&args);
+        let residual_delta_scale = residual_delta_scale_from_args(&args);
         assert_target_projection_momentum(target_projection_momentum_end);
         assert_target_projection_momentum(target_projection_momentum_start);
 
@@ -124,6 +126,7 @@ impl TemporalRunConfig {
             encoder_learning_rate,
             compact_encoder_mode,
             predictor_mode,
+            residual_delta_scale,
             target_projection_momentum: target_projection_momentum_end,
             target_projection_momentum_start,
             target_projection_momentum_end,
@@ -189,6 +192,17 @@ fn predictor_mode_from_args(args: &[String]) -> PredictorMode {
         .unwrap_or(PredictorMode::Baseline)
 }
 
+fn residual_delta_scale_from_args(args: &[String]) -> f32 {
+    parse_arg_value(args, "--residual-delta-scale")
+        .map(|value| parse_finite_nonnegative_f32(value, "--residual-delta-scale"))
+        .or_else(|| {
+            std::env::var("JEPRA_RESIDUAL_DELTA_SCALE")
+                .ok()
+                .map(|value| parse_finite_nonnegative_f32(&value, "JEPRA_RESIDUAL_DELTA_SCALE"))
+        })
+        .unwrap_or(1.0)
+}
+
 pub fn training_steps(default_steps: usize) -> usize {
     std::env::var("JEPRA_TRAIN_STEPS")
         .ok()
@@ -228,6 +242,19 @@ fn parse_f32_arg_env(flag: &str) -> Option<f32> {
         .ok()
         .and_then(|value| value.parse::<f32>().ok())
         .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
+fn parse_finite_nonnegative_f32(value: &str, source: &str) -> f32 {
+    let parsed = value
+        .parse::<f32>()
+        .unwrap_or_else(|_| panic!("{source} must be a finite non-negative float, got {value}"));
+    assert!(
+        parsed.is_finite() && parsed >= 0.0,
+        "{} must be finite and non-negative, got {}",
+        source,
+        parsed
+    );
+    parsed
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -346,7 +373,7 @@ pub fn assert_temporal_experiment_improved(
 mod temporal_vision_config_tests {
     use super::{
         CompactEncoderMode, PredictorMode, TemporalRunConfig, compact_encoder_mode_from_args,
-        predictor_mode_from_args,
+        predictor_mode_from_args, residual_delta_scale_from_args,
     };
 
     fn args_with(values: &[&str]) -> Vec<String> {
@@ -441,6 +468,27 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn residual_delta_scale_defaults_to_unscaled_delta() {
+        assert!((residual_delta_scale_from_args(&args_with(&[])) - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn residual_delta_scale_parses_explicit_scale() {
+        assert!(
+            (residual_delta_scale_from_args(&args_with(&["--residual-delta-scale", "0.25"]))
+                - 0.25)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "--residual-delta-scale must be finite and non-negative")]
+    fn residual_delta_scale_panics_on_negative_value() {
+        residual_delta_scale_from_args(&args_with(&["--residual-delta-scale", "-0.1"]));
+    }
+
+    #[test]
     fn target_projection_momentum_warms_linearly_to_end() {
         let config = TemporalRunConfig {
             train_base_seed: 0,
@@ -449,6 +497,7 @@ mod temporal_vision_config_tests {
             encoder_learning_rate: 0.0,
             compact_encoder_mode: CompactEncoderMode::Disabled,
             predictor_mode: PredictorMode::Baseline,
+            residual_delta_scale: 1.0,
             target_projection_momentum: 0.5,
             target_projection_momentum_start: 1.0,
             target_projection_momentum_end: 0.5,

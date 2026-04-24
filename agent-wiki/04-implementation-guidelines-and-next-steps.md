@@ -12,7 +12,8 @@ Read with `VISION.md`.
   - CLI/env control via `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, `--target-momentum-warmup-steps`, optional projection aliases (`--target-projection-momentum`, `--target-projection-momentum-end`), and `JEPRA_TARGET_MOMENTUM`.
 - Projection regularization utilities now live in core (`regularizers.rs`) instead of example-only support code.
 - Representation-health telemetry now lives in core and is printed by both temporal examples for prediction/target comparison.
-- `ResidualBottleneckPredictor` is available as the compact-capacity identity-skip variant: identity plus bottleneck delta, opt-in only.
+- `ResidualBottleneckPredictor` is available as the compact-capacity identity-skip variant: identity plus scaled bottleneck delta, opt-in only.
+- `TemporalRunConfig` exposes `--residual-delta-scale` / `JEPRA_RESIDUAL_DELTA_SCALE` for residual-delta ablations without changing defaults.
 - Current defaults preserve hard target-projector behavior (`momentum = 1.0`) unless explicit tuning is passed.
 - Regression posture:
   - one-step projected loss reduction,
@@ -27,7 +28,7 @@ Current high-value implementation path:
 
 1. Run `run-predictor-mode-comparison.sh` before predictor-topology policy changes.
 2. Treat `residual-bottleneck` as the current projected-path candidate, not a default, because 300-step frozen-base evidence is strong for projected but not unprojected.
-3. Compact-stronger evidence is healthy but drift-confounded; the next build step is controlling residual/projector drift, not adding depthwise primitives.
+3. Compact-stronger evidence is healthy but drift-confounded; residual delta scaling is now the explicit control knob for ablations, not a hidden topology change.
 4. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
@@ -47,6 +48,12 @@ Compact-stronger projected evidence (`2026-04-24`, 300 steps, seeds `11000..1100
 - Residual-bottleneck: mean final validation prediction loss `1.119540`, mean prediction `min_std=0.473802`, mean target drift `0.140347`, all rows `ok`.
 - Decision: residual is still the projected candidate, but the compact-stronger advantage is modest and drift-confounded. Do not promote defaults; do not implement depthwise yet.
 
+Residual delta-scale hardening evidence (`2026-04-24`, compact-stronger projected, seeds `11000..11002`):
+
+- Scale `0.25` with target momentum `1.0`: residual mean validation prediction loss `1.137108`, mean prediction `min_std=0.517087`, mean target drift `0.133765`.
+- Scale `0.25` with target momentum `0.5`: residual mean validation prediction loss `0.004085`, but mean prediction `min_std=0.028745` and mean target `min_std=0.023829`; treat as collapse, not a win.
+- Decision: keep `residual_delta_scale=1.0` as default, keep target momentum `1.0`, and use `--residual-delta-scale` only for explicit evidence runs. The next modeling step should control residual/projector drift through a better mechanism than low target momentum.
+
 ## Focused Review (Projected Path Hardening)
 
 - `TemporalRunConfig` already supports `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, and warmup args in `examples/support/temporal_vision.rs`, with a linear schedule tested in `target_projection_momentum_warms_linearly_to_end`.
@@ -56,6 +63,7 @@ Compact-stronger projected evidence (`2026-04-24`, 300 steps, seeds `11000..1100
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
+- Predictor comparison now uses schema `jepra_predictor_compare_v2`, emits `residual_delta_scale`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate

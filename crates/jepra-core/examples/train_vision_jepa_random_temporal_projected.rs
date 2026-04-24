@@ -57,15 +57,18 @@ fn make_bottleneck_predictor() -> BottleneckPredictor {
     )
 }
 
-fn make_residual_bottleneck_predictor() -> ResidualBottleneckPredictor {
-    ResidualBottleneckPredictor::new(BottleneckPredictor::new(
-        Linear::randn(PROJECTION_DIM, 8, 0.1, 21_100),
-        Linear::randn(8, 2, 0.1, 21_101),
-        Linear::new(
-            Tensor::zeros(vec![2, PROJECTION_DIM]),
-            Tensor::zeros(vec![PROJECTION_DIM]),
+fn make_residual_bottleneck_predictor(residual_delta_scale: f32) -> ResidualBottleneckPredictor {
+    ResidualBottleneckPredictor::new_scaled(
+        BottleneckPredictor::new(
+            Linear::randn(PROJECTION_DIM, 8, 0.1, 21_100),
+            Linear::randn(8, 2, 0.1, 21_101),
+            Linear::new(
+                Tensor::zeros(vec![2, PROJECTION_DIM]),
+                Tensor::zeros(vec![PROJECTION_DIM]),
+            ),
         ),
-    ))
+        residual_delta_scale,
+    )
 }
 
 fn reduction_thresholds_for_run_config(
@@ -102,13 +105,18 @@ fn main() {
         "temporal run config | predictor mode {}",
         run_config.predictor_mode.as_str()
     );
+    println!(
+        "temporal run config | residual delta scale {}",
+        run_config.residual_delta_scale
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
         PredictorMode::Bottleneck => run_with_predictor(run_config, make_bottleneck_predictor()),
-        PredictorMode::ResidualBottleneck => {
-            run_with_predictor(run_config, make_residual_bottleneck_predictor())
-        }
+        PredictorMode::ResidualBottleneck => run_with_predictor(
+            run_config,
+            make_residual_bottleneck_predictor(run_config.residual_delta_scale),
+        ),
     }
 }
 

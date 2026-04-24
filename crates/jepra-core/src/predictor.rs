@@ -100,6 +100,7 @@ pub struct BottleneckPredictorGrads {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ResidualBottleneckPredictor {
     pub delta: BottleneckPredictor,
+    pub residual_scale: f32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -181,6 +182,10 @@ impl PredictorModule for BottleneckPredictor {
 
 impl ResidualBottleneckPredictor {
     pub fn new(delta: BottleneckPredictor) -> Self {
+        Self::new_scaled(delta, 1.0)
+    }
+
+    pub fn new_scaled(delta: BottleneckPredictor, residual_scale: f32) -> Self {
         let input_dim = delta.fc1.weight.shape[0];
         let output_dim = delta.fc3.weight.shape[1];
         assert!(
@@ -189,16 +194,25 @@ impl ResidualBottleneckPredictor {
             input_dim,
             output_dim
         );
+        assert!(
+            residual_scale.is_finite() && residual_scale >= 0.0,
+            "ResidualBottleneckPredictor residual scale must be finite and non-negative, got {}",
+            residual_scale
+        );
 
-        Self { delta }
+        Self {
+            delta,
+            residual_scale,
+        }
     }
 
     pub fn forward(&self, x: &Tensor) -> Tensor {
-        x.add(&self.delta.forward(x))
+        x.add(&scaled_tensor(&self.delta.forward(x), self.residual_scale))
     }
 
     pub fn backward(&self, x: &Tensor, grad_out: &Tensor) -> ResidualBottleneckPredictorGrads {
-        let grad_delta = self.delta.backward(x, grad_out);
+        let scaled_grad_out = scaled_tensor(grad_out, self.residual_scale);
+        let grad_delta = self.delta.backward(x, &scaled_grad_out);
         let grad_input = grad_out.add(&grad_delta.grad_input);
 
         ResidualBottleneckPredictorGrads {
@@ -210,6 +224,13 @@ impl ResidualBottleneckPredictor {
     pub fn sgd_step(&mut self, grads: &ResidualBottleneckPredictorGrads, lr: f32) {
         self.delta.sgd_step(&grads.grad_delta, lr);
     }
+}
+
+fn scaled_tensor(tensor: &Tensor, scale: f32) -> Tensor {
+    Tensor::new(
+        tensor.data.iter().map(|value| value * scale).collect(),
+        tensor.shape.clone(),
+    )
 }
 
 impl PredictorModule for ResidualBottleneckPredictor {

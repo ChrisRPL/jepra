@@ -155,3 +155,29 @@ fn residual_bottleneck_predictor_backward_preserves_skip_gradient() {
 
     assert_eq!(grads.grad_input, grad_out);
 }
+
+#[test]
+fn residual_bottleneck_predictor_scale_controls_delta_path() {
+    let predictor = ResidualBottleneckPredictor::new_scaled(
+        BottleneckPredictor::new(
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::zeros(vec![2]),
+            ),
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::zeros(vec![2]),
+            ),
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::zeros(vec![2]),
+            ),
+        ),
+        0.25,
+    );
+    let x = Tensor::new(vec![1.0, 2.0], vec![1, 2]);
+
+    let out = predictor.forward(&x);
+
+    assert_eq!(out, Tensor::new(vec![1.25, 2.5], vec![1, 2]));
+}
