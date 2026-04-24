@@ -18,6 +18,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Signed prediction-bank v8 margin diagnostics show predictions are closer to wrong signed futures than true targets on most samples: baseline mean margin `-4.159113`, residual mean margin `-4.688569`.
 - Signed objective v9 diagnostics decompose validation loss by signed dx bucket: baseline mean `neg=2.118653`, `pos=0.492622`; residual mean `neg=2.204694`, `pos=0.566752`. The dominant error is negative-direction prediction, and residual does not fix it.
 - Default-off signed-margin objective v10 is implemented as an opt-in projected signed-task probe. Weight `0.0` avoids candidate-bank construction and emits `na` report fields; weight `>0` adds hinge gradients against wrong signed futures and emits margin-objective losses/active rates.
+- V10 signed-margin weight grid rejects all candidates. Best baseline weight `0.1` has small validation/sign gains but misses the margin, positive-rate, and MRR gates by a wide margin.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -26,7 +27,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - use lightweight representation-health stats to compare prediction and target behavior,
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
   - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
-  - run the default-off signed-margin objective probe grid before bounce or another architecture change,
+  - do not expand the signed-margin grid; inspect why the hinge objective is too weak before bounce or another architecture change,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.

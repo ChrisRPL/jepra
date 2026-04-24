@@ -172,6 +172,7 @@ Default-off signed-margin objective probe (`jepra_predictor_compare_v10`):
 - The component weights default to `1.0`: `JEPRA_SIGNED_MARGIN_BANK_WEIGHT`, `JEPRA_SIGNED_MARGIN_SIGN_WEIGHT`, `JEPRA_SIGNED_MARGIN_SPEED_WEIGHT`.
 - With weight `0.0`, signed-margin metrics remain `na` and the training path does not construct candidate target banks.
 - With weight `>0`, the comparison report emits signed-margin losses and active hinge rates; this is an experiment probe, not a default promotion.
+- Latest narrow grid (`2026-04-24`, weights `0,0.003,0.01,0.03,0.1`) rejects all candidates. Best baseline weight `0.1` improves validation slightly (`val_ratio=0.989425`) and sign top1 to `0.552083`, but margin gain is only `0.084920`, positive-margin-rate gain is only `0.010417`, and MRR remains `0.531250`. Do not expand the grid or promote the objective.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

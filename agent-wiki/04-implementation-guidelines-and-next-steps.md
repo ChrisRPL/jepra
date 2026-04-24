@@ -37,7 +37,7 @@ Current high-value implementation path:
 7. Treat target-bank v7 oracle diagnostics as implemented: candidate-target construction is clean, so signed failure is a predictor/objective problem under drift rather than target-bank ambiguity.
 8. Treat prediction-bank v8 margin diagnostics as implemented: predictions sit closer to wrong signed futures than true targets on most samples.
 9. Treat signed objective v9 decomposition as implemented: the dominant signed loss is negative-direction error, not missing candidate construction or raw speed ranking.
-10. Treat signed-margin objective v10 as implemented but default-off: run the narrow weight grid before any architecture or task widening.
+10. Treat signed-margin objective v10 as implemented and rejected by the narrow grid: do not expand weights or promote it.
 11. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
 12. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
@@ -88,7 +88,8 @@ Velocity-trail task axis:
 - Signed prediction-bank v8 diagnostics (`2026-04-24`, same sweep): baseline prediction margin `-4.159113`, positive margin rate `0.239583`, sign margin `-0.981234`; residual prediction margin `-4.688569`, positive margin rate `0.203125`, sign margin `-1.366664`.
 - Signed objective v9 diagnostics (`2026-04-24`, same sweep): baseline `all=1.305638`, `neg=2.118653`, `pos=0.492622`, `slow=1.349482`, `fast=1.261794`, `sign_gap=-1.626031`, `speed_gap=-0.087688`; residual `all=1.385723`, `neg=2.204694`, `pos=0.566752`, `slow=1.327650`, `fast=1.443796`, `sign_gap=-1.637942`, `speed_gap=0.116146`.
 - Signed-margin objective v10 status: default-off hinge objective is wired for projected `signed-velocity-trail` only. Disabled rows keep signed-margin report fields `na`; enabled rows emit signed-margin loss and active hinge rates.
-- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show the current objective places predictions closer to wrong signed futures than true targets on most samples, and v9 shows negative-direction loss dominates. Next valid step: run the v10 weight grid, not bounce or architecture widening.
+- Signed-margin objective v10 grid (`2026-04-24`, weights `0,0.003,0.01,0.03,0.1`): all candidates rejected. Best baseline weight `0.1` gives `val_ratio=0.989425`, `sign_top1=0.552083`, `mrr=0.531250`, `margin_gain=0.084920`, and `ppr_gain=0.010417`.
+- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show the current objective places predictions closer to wrong signed futures than true targets on most samples, v9 shows negative-direction loss dominates, and v10 shows uniform signed-margin shaping is too weak. Next valid step: inspect a stronger direction-aware objective or representation path before bounce/architecture widening.
 
 ## Focused Review (Projected Path Hardening)
 
