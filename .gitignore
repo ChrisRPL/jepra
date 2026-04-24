@@ -208,3 +208,18 @@ __marimo__/
 
 VISION.md
 agent-wiki/
+
+# External ML Intern scratch outputs.
+# Preserve useful content under agent-wiki/ml-intern/ before cleanup.
+session_logs/
+ml-intern-output/
+ml-intern-outputs/
+ARCHITECTURE_BRIEF.md
+jepa_benchmark_plan.md
+jepa_datasets.py
+jepra_recipes_research.md
+jepra_rust.md
+docs/metrics.md
+examples/metric_diagnostics.py
+jepra/metrics.py
+tests/test_metrics.py
