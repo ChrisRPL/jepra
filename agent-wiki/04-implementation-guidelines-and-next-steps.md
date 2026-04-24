@@ -35,8 +35,9 @@ Current high-value implementation path:
 5. Treat velocity-bank ranking/MRR as implemented: both baseline and residual rank speed above random, but residual remains blocked by validation loss and drift.
 6. Treat the `signed-velocity-trail` sweep as blocking residual promotion: baseline wins validation on all three compact-stronger projected seeds, residual has much higher target drift, and signed velocity-bank ranking is not above random.
 7. Treat target-bank v7 oracle diagnostics as implemented: candidate-target construction is clean, so signed failure is a predictor/objective problem under drift rather than target-bank ambiguity.
-8. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
-9. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+8. Treat prediction-bank v8 margin diagnostics as implemented: predictions sit closer to wrong signed futures than true targets on most samples.
+9. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
+10. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
 
@@ -82,7 +83,8 @@ Velocity-trail task axis:
 - Signed velocity-bank ranking/MRR (`2026-04-24`, same sweep): baseline mean MRR `0.519965`, top1 `0.239583`; residual mean MRR `0.489583`, top1 `0.203125`. Four-candidate random reference is MRR `0.520833`, top1 `0.25`.
 - Signed v6 breakdown (`2026-04-24`, same sweep): baseline `neg_mrr=0.386285`, `pos_mrr=0.653646`, `sign_top1=0.479167`, `speed_top1=0.494792`; residual `neg_mrr=0.309896`, `pos_mrr=0.669271`, `sign_top1=0.375000`, `speed_top1=0.635417`.
 - Signed target-bank v7 oracle diagnostics (`2026-04-24`, same sweep): `oracle_mrr=1.000000`, `oracle_top1=1.000000`, `true_distance=0.000000`, mean margin `1.463823`, minimum margin `0.001335`, target sign margin `7.331476`, target speed margin `-12.402091`.
-- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, so the remaining failure is predictor/objective learning under drift. The next valid implementation step is a narrow prediction-margin/objective diagnostic before bounce or architecture widening.
+- Signed prediction-bank v8 diagnostics (`2026-04-24`, same sweep): baseline prediction margin `-4.159113`, positive margin rate `0.239583`, sign margin `-0.981234`; residual prediction margin `-4.688569`, positive margin rate `0.203125`, sign margin `-1.366664`.
+- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, and prediction-bank margins show the current objective places predictions closer to wrong signed futures than true targets on most samples. The next valid implementation step is signed objective error decomposition before any opt-in margin objective probe, bounce task, or architecture widening.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -93,7 +95,7 @@ Velocity-trail task axis:
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v7`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v8`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, prediction-bank margin fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
@@ -155,7 +157,7 @@ Velocity-trail task axis:
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use prediction-margin/objective diagnostics as the next proof step before bounce or widening the model.
+2. Use signed objective error decomposition as the next proof step before bounce or widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed`, `velocity-trail`, and `signed-velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.

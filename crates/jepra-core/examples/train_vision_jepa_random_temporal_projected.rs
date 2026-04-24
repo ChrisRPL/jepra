@@ -10,8 +10,10 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, projected_signed_target_bank_separability_from_base_seed,
+    ProjectedSignedPredictionBankMargin, ProjectedSignedTargetBankSeparability,
+    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    projected_signed_prediction_bank_margin_from_base_seed,
+    projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed,
@@ -220,6 +222,8 @@ where
         maybe_projected_signed_velocity_bank_breakdown(&model, run_config);
     let initial_signed_target_bank_separability =
         maybe_projected_signed_target_bank_separability(&model, run_config);
+    let initial_signed_prediction_bank_margin =
+        maybe_projected_signed_prediction_bank_margin(&model, run_config);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
@@ -247,6 +251,7 @@ where
     print_velocity_bank_ranking("initial", initial_velocity_bank_ranking);
     print_signed_velocity_bank_breakdown("initial", initial_signed_velocity_bank_breakdown);
     print_signed_target_bank_separability("initial", initial_signed_target_bank_separability);
+    print_signed_prediction_bank_margin("initial", initial_signed_prediction_bank_margin);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -344,6 +349,8 @@ where
         maybe_projected_signed_velocity_bank_breakdown(&model, run_config);
     let final_signed_target_bank_separability =
         maybe_projected_signed_target_bank_separability(&model, run_config);
+    let final_signed_prediction_bank_margin =
+        maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
         reduction_thresholds_for_run_config(run_config);
 
@@ -397,6 +404,7 @@ where
     print_velocity_bank_ranking("final", final_velocity_bank_ranking);
     print_signed_velocity_bank_breakdown("final", final_signed_velocity_bank_breakdown);
     print_signed_target_bank_separability("final", final_signed_target_bank_separability);
+    print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
 }
 
 fn maybe_projected_velocity_bank_ranking<P>(
@@ -516,6 +524,44 @@ fn print_signed_target_bank_separability(
             separability.sign_margin,
             separability.speed_margin,
             separability.samples,
+        );
+    }
+}
+
+fn maybe_projected_signed_prediction_bank_margin<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedPredictionBankMargin>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(projected_signed_prediction_bank_margin_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+    ))
+}
+
+fn print_signed_prediction_bank_margin(
+    tag: &str,
+    margin: Option<ProjectedSignedPredictionBankMargin>,
+) {
+    if let Some(margin) = margin {
+        println!(
+            "{} | signed prediction bank margin true_distance {:.6} | nearest_wrong_distance {:.6} | margin {:.6} | min_margin {:.6} | positive_margin_rate {:.6} | sign_margin {:.6} | speed_margin {:.6} | samples {}",
+            tag,
+            margin.true_distance,
+            margin.nearest_wrong_distance,
+            margin.margin,
+            margin.min_margin,
+            margin.positive_margin_rate,
+            margin.sign_margin,
+            margin.speed_margin,
+            margin.samples,
         );
     }
 }
