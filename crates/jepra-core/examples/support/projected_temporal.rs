@@ -85,6 +85,27 @@ pub struct ProjectedSignedPredictionBankMargin {
     pub fast_samples: usize,
 }
 
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedObjectiveErrorBreakdown {
+    pub all_loss: f32,
+    pub dx_neg2_loss: f32,
+    pub dx_neg1_loss: f32,
+    pub dx_pos1_loss: f32,
+    pub dx_pos2_loss: f32,
+    pub neg_loss: f32,
+    pub pos_loss: f32,
+    pub slow_loss: f32,
+    pub fast_loss: f32,
+    pub sign_gap: f32,
+    pub speed_gap: f32,
+    pub samples: usize,
+    pub dx_neg2_samples: usize,
+    pub dx_neg1_samples: usize,
+    pub dx_pos1_samples: usize,
+    pub dx_pos2_samples: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct VelocityBankSampleOutcome {
     true_dx: isize,
@@ -111,6 +132,21 @@ struct SignedPredictionBankMarginSampleOutcome {
     nearest_wrong_distance: f32,
     sign_margin: f32,
     speed_margin: f32,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Default)]
+struct SignedObjectiveErrorBreakdownTotals {
+    all_loss: f32,
+    dx_neg2_loss: f32,
+    dx_neg1_loss: f32,
+    dx_pos1_loss: f32,
+    dx_pos2_loss: f32,
+    samples: usize,
+    dx_neg2_samples: usize,
+    dx_neg1_samples: usize,
+    dx_pos1_samples: usize,
+    dx_pos2_samples: usize,
 }
 
 #[derive(Debug, Default)]
@@ -173,6 +209,82 @@ struct SignedPredictionBankMarginTotals {
     positive_samples: usize,
     slow_samples: usize,
     fast_samples: usize,
+}
+
+#[allow(dead_code)]
+impl SignedObjectiveErrorBreakdownTotals {
+    fn observe(&mut self, true_dx: isize, loss: f32) {
+        assert!(
+            loss.is_finite(),
+            "signed objective error loss is non-finite"
+        );
+
+        self.all_loss += loss;
+        self.samples += 1;
+
+        match true_dx {
+            -2 => {
+                self.dx_neg2_loss += loss;
+                self.dx_neg2_samples += 1;
+            }
+            -1 => {
+                self.dx_neg1_loss += loss;
+                self.dx_neg1_samples += 1;
+            }
+            1 => {
+                self.dx_pos1_loss += loss;
+                self.dx_pos1_samples += 1;
+            }
+            2 => {
+                self.dx_pos2_loss += loss;
+                self.dx_pos2_samples += 1;
+            }
+            dx => panic!("unexpected signed objective error dx {}", dx),
+        }
+    }
+
+    fn into_breakdown(self) -> ProjectedSignedObjectiveErrorBreakdown {
+        assert!(self.samples > 0, "signed objective error has no samples");
+        assert!(
+            self.dx_neg2_samples > 0
+                && self.dx_neg1_samples > 0
+                && self.dx_pos1_samples > 0
+                && self.dx_pos2_samples > 0,
+            "signed objective error requires all signed dx buckets"
+        );
+
+        let dx_neg2_loss = self.dx_neg2_loss / self.dx_neg2_samples as f32;
+        let dx_neg1_loss = self.dx_neg1_loss / self.dx_neg1_samples as f32;
+        let dx_pos1_loss = self.dx_pos1_loss / self.dx_pos1_samples as f32;
+        let dx_pos2_loss = self.dx_pos2_loss / self.dx_pos2_samples as f32;
+        let neg_samples = self.dx_neg2_samples + self.dx_neg1_samples;
+        let pos_samples = self.dx_pos1_samples + self.dx_pos2_samples;
+        let slow_samples = self.dx_neg1_samples + self.dx_pos1_samples;
+        let fast_samples = self.dx_neg2_samples + self.dx_pos2_samples;
+        let neg_loss = (self.dx_neg2_loss + self.dx_neg1_loss) / neg_samples as f32;
+        let pos_loss = (self.dx_pos1_loss + self.dx_pos2_loss) / pos_samples as f32;
+        let slow_loss = (self.dx_neg1_loss + self.dx_pos1_loss) / slow_samples as f32;
+        let fast_loss = (self.dx_neg2_loss + self.dx_pos2_loss) / fast_samples as f32;
+
+        ProjectedSignedObjectiveErrorBreakdown {
+            all_loss: self.all_loss / self.samples as f32,
+            dx_neg2_loss,
+            dx_neg1_loss,
+            dx_pos1_loss,
+            dx_pos2_loss,
+            neg_loss,
+            pos_loss,
+            slow_loss,
+            fast_loss,
+            sign_gap: pos_loss - neg_loss,
+            speed_gap: fast_loss - slow_loss,
+            samples: self.samples,
+            dx_neg2_samples: self.dx_neg2_samples,
+            dx_neg1_samples: self.dx_neg1_samples,
+            dx_pos1_samples: self.dx_pos1_samples,
+            dx_pos2_samples: self.dx_pos2_samples,
+        }
+    }
 }
 
 impl SignedVelocityBankBreakdownTotals {
@@ -843,6 +955,66 @@ where
     totals.into_margin()
 }
 
+#[allow(dead_code)]
+pub fn projected_signed_objective_error_breakdown_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedObjectiveErrorBreakdown
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedObjectiveErrorBreakdownTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+
+        observe_signed_objective_error_batch(model, &x_t, &x_t1, &mut totals);
+    }
+
+    totals.into_breakdown()
+}
+
+#[allow(dead_code)]
+fn observe_signed_objective_error_batch<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    totals: &mut SignedObjectiveErrorBreakdownTotals,
+) where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed objective error expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "signed objective error expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let actual_target = model.target_projection(x_t1);
+    let batch_size = x_t.shape[0];
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let loss = sample_mean_squared_distance(&prediction, &actual_target, sample);
+
+        totals.observe(true_dx, loss);
+    }
+}
+
 fn projected_velocity_bank_sample_outcomes<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -1186,4 +1358,14 @@ fn sample_squared_distance(lhs: &Tensor, rhs: &Tensor, sample: usize) -> f32 {
     }
 
     distance
+}
+
+#[allow(dead_code)]
+fn sample_mean_squared_distance(lhs: &Tensor, rhs: &Tensor, sample: usize) -> f32 {
+    let distance = sample_squared_distance(lhs, rhs, sample);
+    let dim = lhs.shape[1];
+
+    assert!(dim > 0, "distance expects non-empty projection dim");
+
+    distance / dim as f32
 }

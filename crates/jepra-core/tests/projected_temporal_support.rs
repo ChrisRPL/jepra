@@ -13,7 +13,8 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_batch_losses, projected_signed_prediction_bank_margin_from_base_seed,
+    projected_batch_losses, projected_signed_objective_error_breakdown_from_base_seed,
+    projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
     projected_validation_batch_losses, projected_validation_batch_losses_from_base_seed,
@@ -379,6 +380,89 @@ fn projected_signed_velocity_trail_validation_losses_are_finite() {
     assert!(losses.0.is_finite() && losses.0 > 0.0);
     assert!(losses.1.is_finite() && losses.1 >= 0.0);
     assert!(losses.2.is_finite() && losses.2 > 0.0);
+}
+
+#[test]
+fn projected_signed_objective_error_breakdown_reconciles_signed_validation_prediction_loss() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let breakdown = projected_signed_objective_error_breakdown_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+    let validation_losses = projected_validation_batch_losses_from_base_seed_for_task(
+        &model,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    for value in [
+        breakdown.all_loss,
+        breakdown.dx_neg2_loss,
+        breakdown.dx_neg1_loss,
+        breakdown.dx_pos1_loss,
+        breakdown.dx_pos2_loss,
+        breakdown.neg_loss,
+        breakdown.pos_loss,
+        breakdown.slow_loss,
+        breakdown.fast_loss,
+        breakdown.sign_gap,
+        breakdown.speed_gap,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!(breakdown.all_loss > 0.0);
+    assert!(breakdown.dx_neg2_loss >= 0.0);
+    assert!(breakdown.dx_neg1_loss >= 0.0);
+    assert!(breakdown.dx_pos1_loss >= 0.0);
+    assert!(breakdown.dx_pos2_loss >= 0.0);
+    assert_eq!(breakdown.samples, BATCH_SIZE * 2);
+    assert_eq!(
+        breakdown.dx_neg2_samples
+            + breakdown.dx_neg1_samples
+            + breakdown.dx_pos1_samples
+            + breakdown.dx_pos2_samples,
+        breakdown.samples
+    );
+    assert_eq!(breakdown.dx_neg2_samples, breakdown.dx_neg1_samples);
+    assert_eq!(breakdown.dx_neg1_samples, breakdown.dx_pos1_samples);
+    assert_eq!(breakdown.dx_pos1_samples, breakdown.dx_pos2_samples);
+
+    let bucket_weighted_loss = (breakdown.dx_neg2_loss * breakdown.dx_neg2_samples as f32
+        + breakdown.dx_neg1_loss * breakdown.dx_neg1_samples as f32
+        + breakdown.dx_pos1_loss * breakdown.dx_pos1_samples as f32
+        + breakdown.dx_pos2_loss * breakdown.dx_pos2_samples as f32)
+        / breakdown.samples as f32;
+    let sign_weighted_loss = (breakdown.neg_loss
+        * (breakdown.dx_neg2_samples + breakdown.dx_neg1_samples) as f32
+        + breakdown.pos_loss * (breakdown.dx_pos1_samples + breakdown.dx_pos2_samples) as f32)
+        / breakdown.samples as f32;
+    let speed_weighted_loss = (breakdown.slow_loss
+        * (breakdown.dx_neg1_samples + breakdown.dx_pos1_samples) as f32
+        + breakdown.fast_loss * (breakdown.dx_neg2_samples + breakdown.dx_pos2_samples) as f32)
+        / breakdown.samples as f32;
+
+    assert!(symmetric_relative_difference(breakdown.all_loss, validation_losses.0) < 1e-5);
+    assert!(symmetric_relative_difference(breakdown.all_loss, bucket_weighted_loss) < 1e-6);
+    assert!(symmetric_relative_difference(breakdown.all_loss, sign_weighted_loss) < 1e-6);
+    assert!(symmetric_relative_difference(breakdown.all_loss, speed_weighted_loss) < 1e-6);
+    assert!(
+        symmetric_relative_difference(breakdown.sign_gap, breakdown.pos_loss - breakdown.neg_loss)
+            < 1e-6
+    );
+    assert!(
+        symmetric_relative_difference(
+            breakdown.speed_gap,
+            breakdown.fast_loss - breakdown.slow_loss
+        ) < 1e-6
+    );
 }
 
 #[test]
