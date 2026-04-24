@@ -1,6 +1,7 @@
 use super::temporal_vision::{
-    BATCH_SIZE, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX, make_temporal_batch_for_task,
-    make_velocity_trail_candidate_target_batch, motion_dx_for_sample,
+    BATCH_SIZE, SIGNED_VELOCITY_BANK_CANDIDATE_DX, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX,
+    make_signed_velocity_trail_candidate_target_batch, make_temporal_batch_for_task,
+    make_velocity_trail_candidate_target_batch, signed_motion_dx_for_sample,
 };
 use jepra_core::{
     EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa, Tensor,
@@ -157,10 +158,23 @@ where
     )
 }
 
+#[allow(dead_code)]
 pub fn projected_velocity_bank_ranking<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
     x_t1: &Tensor,
+) -> ProjectedVelocityBankRanking
+where
+    P: PredictorModule,
+{
+    projected_velocity_bank_ranking_for_task(model, x_t, x_t1, TemporalTaskMode::VelocityTrail)
+}
+
+pub fn projected_velocity_bank_ranking_for_task<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    temporal_task_mode: TemporalTaskMode,
 ) -> ProjectedVelocityBankRanking
 where
     P: PredictorModule,
@@ -175,11 +189,13 @@ where
         x_t.shape
     );
 
+    let candidate_dx_bank = velocity_bank_candidates_for_task(temporal_task_mode);
     let prediction = model.predict_next_projection(x_t);
-    let candidate_targets = VELOCITY_BANK_CANDIDATE_DX
+    let candidate_targets = candidate_dx_bank
         .iter()
         .map(|candidate_dx| {
-            let candidate_x_t1 = make_velocity_trail_candidate_target_batch(x_t, *candidate_dx);
+            let candidate_x_t1 =
+                make_velocity_bank_candidate_target_batch(x_t, *candidate_dx, temporal_task_mode);
             model.target_projection(&candidate_x_t1)
         })
         .collect::<Vec<_>>();
@@ -189,8 +205,8 @@ where
     let mut rank_total = 0usize;
 
     for sample in 0..batch_size {
-        let true_dx = motion_dx_for_sample(x_t, x_t1, sample) as isize;
-        let true_index = VELOCITY_BANK_CANDIDATE_DX
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = candidate_dx_bank
             .iter()
             .position(|candidate_dx| *candidate_dx == true_dx)
             .unwrap_or_else(|| panic!("true dx {} is missing from velocity bank", true_dx));
@@ -221,7 +237,7 @@ where
         top1: top1_total as f32 / batch_size as f32,
         mean_rank: rank_total as f32 / batch_size as f32,
         samples: batch_size,
-        candidates: VELOCITY_BANK_CANDIDATE_DX.len(),
+        candidates: candidate_dx_bank.len(),
     }
 }
 
@@ -234,10 +250,12 @@ pub fn projected_velocity_bank_ranking_from_base_seed<P>(
 where
     P: PredictorModule,
 {
-    assert_eq!(
-        temporal_task_mode,
-        TemporalTaskMode::VelocityTrail,
-        "velocity-bank ranking only supports velocity-trail task"
+    assert!(
+        matches!(
+            temporal_task_mode,
+            TemporalTaskMode::VelocityTrail | TemporalTaskMode::SignedVelocityTrail
+        ),
+        "velocity-bank ranking only supports velocity-trail or signed-velocity-trail task"
     );
     assert!(
         validation_batches > 0,
@@ -248,7 +266,7 @@ where
     let mut top1_total = 0.0f32;
     let mut rank_total = 0.0f32;
     let mut sample_total = 0usize;
-    let mut candidate_count = VELOCITY_BANK_CANDIDATE_DX.len();
+    let mut candidate_count = velocity_bank_candidates_for_task(temporal_task_mode).len();
 
     for batch_idx in 0..validation_batches {
         let (x_t, x_t1) = make_temporal_batch_for_task(
@@ -256,7 +274,8 @@ where
             validation_base_seed + batch_idx as u64,
             temporal_task_mode,
         );
-        let ranking = projected_velocity_bank_ranking(model, &x_t, &x_t1);
+        let ranking =
+            projected_velocity_bank_ranking_for_task(model, &x_t, &x_t1, temporal_task_mode);
 
         reciprocal_rank_total += ranking.mrr * ranking.samples as f32;
         top1_total += ranking.top1 * ranking.samples as f32;
@@ -271,6 +290,38 @@ where
         mean_rank: rank_total / sample_total as f32,
         samples: sample_total,
         candidates: candidate_count,
+    }
+}
+
+fn velocity_bank_candidates_for_task(temporal_task_mode: TemporalTaskMode) -> &'static [isize] {
+    match temporal_task_mode {
+        TemporalTaskMode::VelocityTrail => &VELOCITY_BANK_CANDIDATE_DX,
+        TemporalTaskMode::SignedVelocityTrail => &SIGNED_VELOCITY_BANK_CANDIDATE_DX,
+        TemporalTaskMode::RandomSpeed => {
+            panic!(
+                "velocity-bank ranking only supports velocity-trail or signed-velocity-trail task"
+            )
+        }
+    }
+}
+
+fn make_velocity_bank_candidate_target_batch(
+    x_t: &Tensor,
+    candidate_dx: isize,
+    temporal_task_mode: TemporalTaskMode,
+) -> Tensor {
+    match temporal_task_mode {
+        TemporalTaskMode::VelocityTrail => {
+            make_velocity_trail_candidate_target_batch(x_t, candidate_dx)
+        }
+        TemporalTaskMode::SignedVelocityTrail => {
+            make_signed_velocity_trail_candidate_target_batch(x_t, candidate_dx)
+        }
+        TemporalTaskMode::RandomSpeed => {
+            panic!(
+                "velocity-bank ranking only supports velocity-trail or signed-velocity-trail task"
+            )
+        }
     }
 }
 

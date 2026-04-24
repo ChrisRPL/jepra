@@ -37,7 +37,7 @@ Environment:
   JEPRA_PREDICTOR_MODES                         Space-separated modes (default: "baseline bottleneck residual-bottleneck")
   JEPRA_TRAIN_STEPS                             Train steps per run (default: 300)
   JEPRA_LOG_EVERY                               Log interval passed to examples (default: 25)
-  JEPRA_TEMPORAL_TASK                           Temporal task: random-speed|velocity-trail (default: random-speed)
+  JEPRA_TEMPORAL_TASK                           Temporal task: random-speed|velocity-trail|signed-velocity-trail (default: random-speed)
   JEPRA_UNPROJECTED_PREDICTOR_SEEDS             Space-separated unprojected seeds (default: "1000")
   JEPRA_PROJECTED_PREDICTOR_SEEDS               Space-separated projected seeds (default: "11000")
   JEPRA_UNPROJECTED_ENCODER_LR                  Unprojected encoder LR (default: 0.0)
@@ -94,6 +94,10 @@ lt_bool() {
 
 gt_threshold_bool() {
   awk -v value="$1" -v threshold="$2" 'BEGIN { if (value > threshold) print "true"; else print "false" }'
+}
+
+is_velocity_bank_task() {
+  [[ "$TEMPORAL_TASK" == "velocity-trail" || "$TEMPORAL_TASK" == "signed-velocity-trail" ]]
 }
 
 parse_unprojected_probe_line() {
@@ -368,7 +372,7 @@ run_one() {
 
     if ! proj_var_mean="$(parse_projected_var_line "$(grep -m1 '^final | proj mean_abs ' "$log_file" || true)")"; then proj_var_mean="na"; fi
     if ! target_drift_end="$(parse_target_drift_line "$(grep -m1 '^final | target drift ' "$log_file" || true)")"; then target_drift_end="na"; fi
-    if [[ "$TEMPORAL_TASK" == "velocity-trail" ]]; then
+    if is_velocity_bank_task; then
       initial_velocity_bank_line="$(grep -m1 '^initial | velocity bank mrr ' "$log_file" || true)"
       final_velocity_bank_line="$(grep -m1 '^final | velocity bank mrr ' "$log_file" || true)"
 

@@ -18,6 +18,9 @@ pub const VELOCITY_TRAIL_INTENSITY_RATIO: f32 = 0.35;
 pub const VELOCITY_TRAIL_DECAY: f32 = 0.82;
 #[allow(dead_code)]
 pub const VELOCITY_BANK_CANDIDATE_DX: [isize; 2] = [1, 2];
+#[allow(dead_code)]
+pub const SIGNED_VELOCITY_BANK_CANDIDATE_DX: [isize; 4] = [-2, -1, 1, 2];
+pub const MIN_SIGNED_MODE_COUNT: usize = 1;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactEncoderMode {
@@ -57,6 +60,7 @@ impl PredictorMode {
 pub enum TemporalTaskMode {
     RandomSpeed,
     VelocityTrail,
+    SignedVelocityTrail,
 }
 
 impl TemporalTaskMode {
@@ -64,6 +68,7 @@ impl TemporalTaskMode {
         match self {
             Self::RandomSpeed => "random-speed",
             Self::VelocityTrail => "velocity-trail",
+            Self::SignedVelocityTrail => "signed-velocity-trail",
         }
     }
 }
@@ -234,8 +239,9 @@ fn parse_temporal_task_mode(raw_mode: &str, source: &str) -> TemporalTaskMode {
     match raw_mode {
         "random-speed" | "current-squares" => TemporalTaskMode::RandomSpeed,
         "velocity-trail" | "harder-squares" => TemporalTaskMode::VelocityTrail,
+        "signed-velocity-trail" | "signed-trail" => TemporalTaskMode::SignedVelocityTrail,
         _ => panic!(
-            "unsupported value for {}: {} (expected random-speed|velocity-trail)",
+            "unsupported value for {}: {} (expected random-speed|velocity-trail|signed-velocity-trail)",
             source, raw_mode
         ),
     }
@@ -547,6 +553,14 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn temporal_task_mode_parses_signed_velocity_trail() {
+        assert_eq!(
+            temporal_task_mode_from_args(&args_with(&["--temporal-task", "signed-velocity-trail"])),
+            TemporalTaskMode::SignedVelocityTrail
+        );
+    }
+
+    #[test]
     fn temporal_task_mode_keeps_compatibility_aliases() {
         assert_eq!(
             temporal_task_mode_from_args(&args_with(&["--task", "harder-squares"])),
@@ -632,21 +646,33 @@ mod temporal_vision_config_tests {
 }
 
 pub fn motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {
-    let center_x_t = square_center_x(x_t, sample);
-    let center_x_t1 = square_center_x(x_t1, sample);
-    let delta_x = (center_x_t1 - center_x_t).round();
-
-    if (delta_x - 1.0).abs() < 1e-6 {
-        SLOW_MOTION_DX
-    } else if (delta_x - 2.0).abs() < 1e-6 {
-        FAST_MOTION_DX
-    } else {
-        panic!("unexpected motion delta {:.6}", delta_x);
+    match signed_motion_dx_for_pair(x_t, x_t1, sample) {
+        1 => SLOW_MOTION_DX,
+        2 => FAST_MOTION_DX,
+        dx => panic!("unexpected positive motion delta {}", dx),
     }
 }
 
 pub fn motion_dx_for_sample(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> usize {
     motion_dx_for_pair(x_t, x_t1, sample)
+}
+
+pub fn signed_motion_dx_for_pair(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> isize {
+    let center_x_t = square_center_x(x_t, sample);
+    let center_x_t1 = square_center_x(x_t1, sample);
+    let delta_x = (center_x_t1 - center_x_t).round();
+
+    for candidate_dx in SIGNED_VELOCITY_BANK_CANDIDATE_DX {
+        if (delta_x - candidate_dx as f32).abs() < 1e-6 {
+            return candidate_dx;
+        }
+    }
+
+    panic!("unexpected motion delta {:.6}", delta_x);
+}
+
+pub fn signed_motion_dx_for_sample(x_t: &Tensor, x_t1: &Tensor, sample: usize) -> isize {
+    signed_motion_dx_for_pair(x_t, x_t1, sample)
 }
 
 fn random_motion_dx(rng: &mut StdRng) -> usize {
@@ -655,6 +681,26 @@ fn random_motion_dx(rng: &mut StdRng) -> usize {
     } else {
         FAST_MOTION_DX
     }
+}
+
+fn balanced_signed_motion_dx_sequence(batch_size: usize, rng: &mut StdRng) -> Vec<isize> {
+    let mut motion_dx = Vec::with_capacity(batch_size);
+
+    while motion_dx.len() < batch_size {
+        for candidate_dx in SIGNED_VELOCITY_BANK_CANDIDATE_DX {
+            if motion_dx.len() == batch_size {
+                break;
+            }
+            motion_dx.push(candidate_dx);
+        }
+    }
+
+    for index in (1..motion_dx.len()).rev() {
+        let swap_index = rng.gen_range(0..=index);
+        motion_dx.swap(index, swap_index);
+    }
+
+    motion_dx
 }
 
 #[allow(dead_code)]
@@ -670,6 +716,9 @@ pub fn make_temporal_batch_for_task(
     match temporal_task_mode {
         TemporalTaskMode::RandomSpeed => make_random_speed_temporal_batch(batch_size, seed),
         TemporalTaskMode::VelocityTrail => make_velocity_trail_temporal_batch(batch_size, seed),
+        TemporalTaskMode::SignedVelocityTrail => {
+            make_signed_velocity_trail_temporal_batch(batch_size, seed)
+        }
     }
 }
 
@@ -756,22 +805,82 @@ fn make_velocity_trail_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, 
     (x_t, x_t1)
 }
 
+fn make_signed_velocity_trail_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let signed_motion_dx = balanced_signed_motion_dx_sequence(batch_size, &mut rng);
+    let mut x_t = Tensor::zeros(vec![batch_size, CHANNELS, IMAGE_SIZE, IMAGE_SIZE]);
+    let mut x_t1 = Tensor::zeros(vec![batch_size, CHANNELS, IMAGE_SIZE, IMAGE_SIZE]);
+
+    let max_row = IMAGE_SIZE - SQUARE_SIZE;
+    let min_col_t = FAST_MOTION_DX;
+    let max_col_t = IMAGE_SIZE - SQUARE_SIZE - FAST_MOTION_DX;
+
+    for sample in 0..batch_size {
+        let row = rng.gen_range(0..=max_row);
+        let col_t = rng.gen_range(min_col_t..=max_col_t);
+        let intensity_t = rng.gen_range(0.65f32..0.95f32);
+        let motion_dx = signed_motion_dx[sample];
+        let trail_col_t = (col_t as isize - motion_dx) as usize;
+        let col_t1 = (col_t as isize + motion_dx) as usize;
+        let trail_intensity_t = intensity_t * VELOCITY_TRAIL_INTENSITY_RATIO;
+        let intensity_t1 = intensity_t * VELOCITY_TRAIL_DECAY;
+        let trail_intensity_t1 = trail_intensity_t * VELOCITY_TRAIL_DECAY;
+
+        add_square(&mut x_t, sample, row, trail_col_t, trail_intensity_t);
+        add_square(&mut x_t, sample, row, col_t, intensity_t);
+        add_square(&mut x_t1, sample, row, col_t, trail_intensity_t1);
+        add_square(&mut x_t1, sample, row, col_t1, intensity_t1);
+    }
+
+    (x_t, x_t1)
+}
+
 #[allow(dead_code)]
 pub fn make_velocity_trail_candidate_target_batch(x_t: &Tensor, candidate_dx: isize) -> Tensor {
+    make_shifted_velocity_trail_candidate_target_batch(
+        x_t,
+        candidate_dx,
+        &VELOCITY_BANK_CANDIDATE_DX,
+        "velocity-trail",
+    )
+}
+
+#[allow(dead_code)]
+pub fn make_signed_velocity_trail_candidate_target_batch(
+    x_t: &Tensor,
+    candidate_dx: isize,
+) -> Tensor {
+    make_shifted_velocity_trail_candidate_target_batch(
+        x_t,
+        candidate_dx,
+        &SIGNED_VELOCITY_BANK_CANDIDATE_DX,
+        "signed-velocity-trail",
+    )
+}
+
+fn make_shifted_velocity_trail_candidate_target_batch(
+    x_t: &Tensor,
+    candidate_dx: isize,
+    allowed_candidate_dx: &[isize],
+    task_name: &str,
+) -> Tensor {
     assert!(
-        VELOCITY_BANK_CANDIDATE_DX.contains(&candidate_dx),
-        "velocity-trail candidate dx must be one of {:?}, got {}",
-        VELOCITY_BANK_CANDIDATE_DX,
+        allowed_candidate_dx.contains(&candidate_dx),
+        "{} candidate dx must be one of {:?}, got {}",
+        task_name,
+        allowed_candidate_dx,
         candidate_dx
     );
     assert!(
         x_t.shape.len() == 4,
-        "velocity-trail candidate target expects rank-4 input, got {:?}",
+        "{} candidate target expects rank-4 input, got {:?}",
+        task_name,
         x_t.shape
     );
     assert!(
         x_t.shape[1] == CHANNELS && x_t.shape[2] == IMAGE_SIZE && x_t.shape[3] == IMAGE_SIZE,
-        "velocity-trail candidate target expects shape [batch, {}, {}, {}], got {:?}",
+        "{} candidate target expects shape [batch, {}, {}, {}], got {:?}",
+        task_name,
         CHANNELS,
         IMAGE_SIZE,
         IMAGE_SIZE,
@@ -858,6 +967,30 @@ pub fn motion_mode_counts(x_t: &Tensor, x_t1: &Tensor) -> (usize, usize) {
     (slow_count, fast_count)
 }
 
+pub fn signed_motion_mode_counts(x_t: &Tensor, x_t1: &Tensor) -> (usize, usize, usize, usize) {
+    let mut negative_fast_count = 0;
+    let mut negative_slow_count = 0;
+    let mut positive_slow_count = 0;
+    let mut positive_fast_count = 0;
+
+    for sample in 0..BATCH_SIZE {
+        match signed_motion_dx_for_sample(x_t, x_t1, sample) {
+            -2 => negative_fast_count += 1,
+            -1 => negative_slow_count += 1,
+            1 => positive_slow_count += 1,
+            2 => positive_fast_count += 1,
+            dx => panic!("unexpected signed motion dx {}", dx),
+        }
+    }
+
+    (
+        negative_fast_count,
+        negative_slow_count,
+        positive_slow_count,
+        positive_fast_count,
+    )
+}
+
 #[cfg(test)]
 #[allow(dead_code)]
 pub fn batch_has_motion_mode(x_t: &Tensor, x_t1: &Tensor, motion_dx: usize) -> bool {
@@ -887,6 +1020,34 @@ pub fn batch_has_min_motion_mode_counts(
     slow_count >= min_slow_count && fast_count >= min_fast_count
 }
 
+pub fn batch_has_min_signed_motion_mode_counts(
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    min_mode_count: usize,
+) -> bool {
+    let (negative_fast_count, negative_slow_count, positive_slow_count, positive_fast_count) =
+        signed_motion_mode_counts(x_t, x_t1);
+    negative_fast_count >= min_mode_count
+        && negative_slow_count >= min_mode_count
+        && positive_slow_count >= min_mode_count
+        && positive_fast_count >= min_mode_count
+}
+
+pub fn batch_has_required_motion_mode_counts_for_task(
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    temporal_task_mode: TemporalTaskMode,
+) -> bool {
+    match temporal_task_mode {
+        TemporalTaskMode::SignedVelocityTrail => {
+            batch_has_min_signed_motion_mode_counts(x_t, x_t1, MIN_SIGNED_MODE_COUNT)
+        }
+        TemporalTaskMode::RandomSpeed | TemporalTaskMode::VelocityTrail => {
+            batch_has_min_motion_mode_counts(x_t, x_t1, MIN_MIXED_MODE_COUNT, MIN_MIXED_MODE_COUNT)
+        }
+    }
+}
+
 #[allow(dead_code)]
 pub fn make_validation_batch_with_both_motion_modes(
     validation_base_seed: u64,
@@ -904,6 +1065,14 @@ pub fn make_validation_batch_with_both_motion_modes_for_task(
     start_batch_idx: u64,
     temporal_task_mode: TemporalTaskMode,
 ) -> (Tensor, Tensor, u64) {
+    if temporal_task_mode == TemporalTaskMode::SignedVelocityTrail {
+        return make_validation_batch_with_required_motion_modes_for_task(
+            validation_base_seed,
+            start_batch_idx,
+            temporal_task_mode,
+        );
+    }
+
     for offset in 0..MIXED_MODE_SEARCH_LIMIT {
         let batch_idx = start_batch_idx + offset;
         let seed = validation_base_seed + batch_idx;
@@ -925,12 +1094,49 @@ pub fn make_validation_batch_with_both_motion_modes_for_task(
     );
 }
 
+pub fn make_validation_batch_with_required_motion_modes_for_task(
+    validation_base_seed: u64,
+    start_batch_idx: u64,
+    temporal_task_mode: TemporalTaskMode,
+) -> (Tensor, Tensor, u64) {
+    for offset in 0..MIXED_MODE_SEARCH_LIMIT {
+        let batch_idx = start_batch_idx + offset;
+        let seed = validation_base_seed + batch_idx;
+        let (x_t, x_t1) = make_temporal_batch_for_task(BATCH_SIZE, seed, temporal_task_mode);
+
+        if batch_has_required_motion_mode_counts_for_task(&x_t, &x_t1, temporal_task_mode) {
+            return (x_t, x_t1, seed);
+        }
+    }
+
+    panic!(
+        "did not find a required-mode validation batch for task {} within {} seeds from base {} and start batch {}",
+        temporal_task_mode.as_str(),
+        MIXED_MODE_SEARCH_LIMIT,
+        validation_base_seed,
+        start_batch_idx
+    );
+}
+
+#[allow(dead_code)]
 pub fn make_validation_batch_with_both_motion_modes_for_config(
     config: TemporalRunConfig,
     validation_base_seed: u64,
     start_batch_idx: u64,
 ) -> (Tensor, Tensor, u64) {
     make_validation_batch_with_both_motion_modes_for_task(
+        validation_base_seed,
+        start_batch_idx,
+        config.temporal_task_mode,
+    )
+}
+
+pub fn make_validation_batch_with_required_motion_modes_for_config(
+    config: TemporalRunConfig,
+    validation_base_seed: u64,
+    start_batch_idx: u64,
+) -> (Tensor, Tensor, u64) {
+    make_validation_batch_with_required_motion_modes_for_task(
         validation_base_seed,
         start_batch_idx,
         config.temporal_task_mode,
@@ -966,7 +1172,7 @@ pub fn assert_temporal_contract(x_t: &Tensor, x_t1: &Tensor) {
         let center_x_t = square_center_x(x_t, sample);
         let center_x_t1 = square_center_x(x_t1, sample);
         let delta_x = center_x_t1 - center_x_t;
-        let expected_motion_dx = motion_dx_for_sample(x_t, x_t1, sample) as f32;
+        let expected_motion_dx = signed_motion_dx_for_sample(x_t, x_t1, sample) as f32;
         let mass_t = total_mass(x_t, sample);
         let mass_t1 = total_mass(x_t1, sample);
 
@@ -1002,6 +1208,121 @@ pub fn print_batch_summary(name: &str, x_t: &Tensor, x_t1: &Tensor) {
         total_mass(x_t, 0),
         total_mass(x_t1, 0)
     );
+}
+
+pub fn print_batch_summary_for_task(
+    name: &str,
+    temporal_task_mode: TemporalTaskMode,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) {
+    match temporal_task_mode {
+        TemporalTaskMode::SignedVelocityTrail => {
+            let (
+                negative_fast_count,
+                negative_slow_count,
+                positive_slow_count,
+                positive_fast_count,
+            ) = signed_motion_mode_counts(x_t, x_t1);
+
+            println!(
+                "{} | shape {:?} | sample0 dx {} | -fast {} | -slow {} | +slow {} | +fast {} | center_x {:.3} -> {:.3} | mass {:.3} -> {:.3}",
+                name,
+                x_t.shape,
+                signed_motion_dx_for_sample(x_t, x_t1, 0),
+                negative_fast_count,
+                negative_slow_count,
+                positive_slow_count,
+                positive_fast_count,
+                square_center_x(x_t, 0),
+                square_center_x(x_t1, 0),
+                total_mass(x_t, 0),
+                total_mass(x_t1, 0)
+            );
+        }
+        TemporalTaskMode::RandomSpeed | TemporalTaskMode::VelocityTrail => {
+            print_batch_summary(name, x_t, x_t1);
+        }
+    }
+}
+
+pub fn assert_required_motion_modes_for_task(
+    temporal_task_mode: TemporalTaskMode,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) {
+    match temporal_task_mode {
+        TemporalTaskMode::SignedVelocityTrail => {
+            let (
+                negative_fast_count,
+                negative_slow_count,
+                positive_slow_count,
+                positive_fast_count,
+            ) = signed_motion_mode_counts(x_t, x_t1);
+            assert!(
+                negative_fast_count >= MIN_SIGNED_MODE_COUNT
+                    && negative_slow_count >= MIN_SIGNED_MODE_COUNT
+                    && positive_slow_count >= MIN_SIGNED_MODE_COUNT
+                    && positive_fast_count >= MIN_SIGNED_MODE_COUNT,
+                "signed validation probe counts too small: -fast {} -slow {} +slow {} +fast {}, expected each >= {}",
+                negative_fast_count,
+                negative_slow_count,
+                positive_slow_count,
+                positive_fast_count,
+                MIN_SIGNED_MODE_COUNT
+            );
+        }
+        TemporalTaskMode::RandomSpeed | TemporalTaskMode::VelocityTrail => {
+            let (slow_count, fast_count) = motion_mode_counts(x_t, x_t1);
+            assert!(
+                slow_count >= MIN_MIXED_MODE_COUNT,
+                "mixed validation probe slow count too small: {} < {}",
+                slow_count,
+                MIN_MIXED_MODE_COUNT
+            );
+            assert!(
+                fast_count >= MIN_MIXED_MODE_COUNT,
+                "mixed validation probe fast count too small: {} < {}",
+                fast_count,
+                MIN_MIXED_MODE_COUNT
+            );
+        }
+    }
+}
+
+pub fn print_motion_mode_summary_for_task(
+    name: &str,
+    seed: u64,
+    temporal_task_mode: TemporalTaskMode,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) {
+    match temporal_task_mode {
+        TemporalTaskMode::SignedVelocityTrail => {
+            let (
+                negative_fast_count,
+                negative_slow_count,
+                positive_slow_count,
+                positive_fast_count,
+            ) = signed_motion_mode_counts(x_t, x_t1);
+            println!(
+                "{} seed {} | -fast {} | -slow {} | +slow {} | +fast {}",
+                name,
+                seed,
+                negative_fast_count,
+                negative_slow_count,
+                positive_slow_count,
+                positive_fast_count
+            );
+        }
+        TemporalTaskMode::RandomSpeed | TemporalTaskMode::VelocityTrail => {
+            let (slow_count, fast_count) = motion_mode_counts(x_t, x_t1);
+            println!(
+                "{} seed {} | slow {} | fast {}",
+                name, seed, slow_count, fast_count
+            );
+        }
+    }
 }
 
 #[allow(dead_code)]

@@ -12,7 +12,7 @@ The crate is published as `jepra-core`.
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - core JEPA projection regularizer utilities for Gaussian moment regularization and projection statistics
 - temporal data now supports one or two moving squares per sample in the synthetic generator
-- temporal examples expose an opt-in `velocity-trail` task that adds previous-position cues while preserving the default `random-speed` task
+- temporal examples expose opt-in `velocity-trail` and `signed-velocity-trail` tasks that add previous-position cues while preserving the default `random-speed` task
 - unprojected validation helpers and reduction thresholds are centralized in `crates/jepra-core/examples/support/temporal_validation.rs`
 - temporal validation helpers now explicitly panic when validation batches is configured as zero
 
@@ -46,6 +46,7 @@ JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --ex
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --seed 21000 --steps 80 --log 20
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --target-momentum 0.95 --train-steps 120
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --temporal-task velocity-trail --train-steps 40
+# cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --temporal-task signed-velocity-trail --train-steps 40
 ./run-predictor-mode-comparison.sh all # compare baseline/bottleneck/residual predictor modes
 ```
 
@@ -56,7 +57,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--train-base-seed` (`--seed`) sets the base training seed
 - `--train-steps` (`--steps`) sets total training steps
 - `--log-every` (`--log`) sets log cadence (must be > 0)
-- `--temporal-task <random-speed|velocity-trail>` selects the synthetic temporal task (`random-speed` remains the default; `velocity-trail` is the harder opt-in diagnostic)
+- `--temporal-task <random-speed|velocity-trail|signed-velocity-trail>` selects the synthetic temporal task (`random-speed` remains the default; trail tasks are opt-in diagnostics)
 - `--encoder-lr` (or `--encoder-learning-rate`) enables encoder updates in temporal JEPA runs; `0.0` keeps a frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
@@ -82,13 +83,14 @@ Predictor-mode comparison protocol:
 ```bash
 ./run-predictor-mode-comparison.sh all
 JEPRA_TEMPORAL_TASK=velocity-trail ./run-predictor-mode-comparison.sh projected
+JEPRA_TEMPORAL_TASK=signed-velocity-trail ./run-predictor-mode-comparison.sh projected
 JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predictor-mode-comparison.sh all
 ```
 
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v5 temporal_task=<random-speed|velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v5 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -131,7 +133,7 @@ projector_drift_weight=5.0 val_pred_end=1.165685 | pred_min_std=0.462189 | targe
 projector_drift_weight=10.0 val_pred_end=1.216697 | pred_min_std=0.502000 | target_drift=0.113993 | status=ok
 ```
 
-Interpretation: parameter-space projector drift regularization is a valid opt-in control knob and reduces drift monotonically on this seed, but the observed tradeoff is not yet good enough for promotion. Keep it as evidence tooling; the active next gate is motion-structure diagnostics on `velocity-trail`.
+Interpretation: parameter-space projector drift regularization is a valid opt-in control knob and reduces drift monotonically on this seed, but the observed tradeoff is not yet good enough for promotion. Keep it as evidence tooling; the active next gate is motion-structure diagnostics on trail tasks.
 
 Velocity-trail compact-stronger projected evidence (`2026-04-24`, 300 steps, seeds `11000..11002`, target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
 
@@ -142,7 +144,15 @@ baseline mean velocity_bank_mrr=0.817708 | mean velocity_bank_top1=0.635417 | me
 residual-bottleneck mean velocity_bank_mrr=0.835938 | mean velocity_bank_top1=0.671875 | mean velocity_bank_rank=1.328125
 ```
 
-Interpretation: baseline wins the harder `velocity-trail` task on all three seeds and ranks the two-speed bank above random (`MRR=0.75`, `top1=0.5`). Residual-bottleneck has slightly higher speed-bank ranking but remains validation-worse and drift-confounded, so this evidence still blocks residual promotion and depthwise/spatial primitive work. The next useful implementation is a harder signed/bounce temporal task or objective diagnostic, not architecture widening.
+Interpretation: baseline wins the harder `velocity-trail` task on all three seeds and ranks the two-speed bank above random (`MRR=0.75`, `top1=0.5`). Residual-bottleneck has slightly higher speed-bank ranking but remains validation-worse and drift-confounded, so this evidence still blocks residual promotion and depthwise/spatial primitive work.
+
+Signed velocity-trail implementation smoke (`2026-04-24`, compact-stronger projected, baseline, seed `11000`, 20 steps, target momentum `1.0`):
+
+```text
+schema=jepra_predictor_compare_v5 temporal_task=signed-velocity-trail path=projected predictor=baseline seed=11000 steps=20 val_pred_start=2.995296 val_pred_end=2.079712 pred_min_std_final=0.145517 target_drift_end=0.002053 velocity_bank_mrr_end=0.536458 velocity_bank_top1_end=0.265625 velocity_bank_candidates=4 status=ok
+```
+
+Interpretation: `signed-velocity-trail` is implemented as the current harder motion-structure diagnostic. It balances `dx ∈ {-2,-1,+1,+2}` per batch, keeps defaults unchanged, and extends velocity-bank ranking to four candidates for the signed task. This is a routing smoke, not promotion evidence. The next useful implementation step is a compact-stronger projected signed-task comparison across baseline vs residual-bottleneck, then bounce/objective hardening only if signed evidence is still inconclusive.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

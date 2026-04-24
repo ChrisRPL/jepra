@@ -12,19 +12,22 @@ use temporal_validation::{
     temporal_validation_batch_loss, temporal_validation_batch_loss_from_base_seed,
 };
 use temporal_vision::{
-    BATCH_SIZE, CompactEncoderMode, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, PredictorMode, SQUARE_SIZE,
-    TemporalExperimentSummary, TemporalRunConfig, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX,
-    active_cell_count, assert_seed_range_has_both_motion_modes,
+    BATCH_SIZE, CompactEncoderMode, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, MIN_SIGNED_MODE_COUNT,
+    PredictorMode, SIGNED_VELOCITY_BANK_CANDIDATE_DX, SQUARE_SIZE, TemporalExperimentSummary,
+    TemporalRunConfig, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX, active_cell_count,
+    assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     assert_temporal_experiment_improved, batch_has_both_motion_modes,
-    batch_has_min_motion_mode_counts, make_compact_frozen_encoder,
-    make_compact_frozen_encoder_stronger, make_frozen_encoder, make_temporal_batch,
+    batch_has_min_motion_mode_counts, batch_has_min_signed_motion_mode_counts,
+    make_compact_frozen_encoder, make_compact_frozen_encoder_stronger, make_frozen_encoder,
+    make_signed_velocity_trail_candidate_target_batch, make_temporal_batch,
     make_temporal_batch_for_task, make_train_batch, make_train_batch_for_task,
     make_validation_batch, make_validation_batch_for_task,
     make_validation_batch_with_both_motion_modes,
     make_validation_batch_with_both_motion_modes_for_task,
+    make_validation_batch_with_required_motion_modes_for_task,
     make_velocity_trail_candidate_target_batch, motion_dx_for_sample, motion_mode_counts,
-    square_center_x, total_mass,
+    signed_motion_dx_for_sample, signed_motion_mode_counts, square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -941,6 +944,140 @@ fn velocity_trail_candidate_targets_match_true_future_for_matching_dx() {
         assert!(
             matched_samples > 0,
             "no matching samples for candidate dx {}",
+            candidate_dx
+        );
+    }
+}
+
+#[test]
+fn signed_velocity_trail_temporal_batch_is_deterministic_and_contract_valid() {
+    let (x_t_a, x_t1_a) =
+        make_temporal_batch_for_task(BATCH_SIZE, 31_124, TemporalTaskMode::SignedVelocityTrail);
+    let (x_t_b, x_t1_b) =
+        make_temporal_batch_for_task(BATCH_SIZE, 31_124, TemporalTaskMode::SignedVelocityTrail);
+    let (x_t_c, x_t1_c) =
+        make_temporal_batch_for_task(BATCH_SIZE, 31_125, TemporalTaskMode::SignedVelocityTrail);
+
+    assert_eq!(x_t_a, x_t_b);
+    assert_eq!(x_t1_a, x_t1_b);
+    assert_ne!(x_t_a, x_t_c);
+    assert_ne!(x_t1_a, x_t1_c);
+    assert_temporal_contract(&x_t_a, &x_t1_a);
+    assert_eq!(signed_motion_mode_counts(&x_t_a, &x_t1_a), (2, 2, 2, 2));
+
+    for sample in 0..BATCH_SIZE {
+        assert!(
+            active_cell_count(&x_t_a, sample) > SQUARE_SIZE * SQUARE_SIZE,
+            "signed velocity-trail sample {} should contain a previous-position trail",
+            sample
+        );
+        assert!(
+            SIGNED_VELOCITY_BANK_CANDIDATE_DX
+                .contains(&signed_motion_dx_for_sample(&x_t_a, &x_t1_a, sample)),
+            "sample {} has unsupported signed dx",
+            sample
+        );
+    }
+}
+
+#[test]
+fn signed_velocity_trail_generator_exposes_all_signed_motion_modes_across_seed_range() {
+    let mut saw_negative_fast = false;
+    let mut saw_negative_slow = false;
+    let mut saw_positive_slow = false;
+    let mut saw_positive_fast = false;
+
+    for seed in 0..64 {
+        let (x_t, x_t1) =
+            make_temporal_batch_for_task(BATCH_SIZE, seed, TemporalTaskMode::SignedVelocityTrail);
+
+        for sample in 0..BATCH_SIZE {
+            match signed_motion_dx_for_sample(&x_t, &x_t1, sample) {
+                -2 => saw_negative_fast = true,
+                -1 => saw_negative_slow = true,
+                1 => saw_positive_slow = true,
+                2 => saw_positive_fast = true,
+                dx => panic!("unexpected signed dx {}", dx),
+            }
+        }
+    }
+
+    assert!(saw_negative_fast);
+    assert!(saw_negative_slow);
+    assert!(saw_positive_slow);
+    assert!(saw_positive_fast);
+}
+
+#[test]
+fn signed_velocity_trail_mixed_mode_validation_probe_is_deterministic_and_contract_valid() {
+    let batch_a = make_validation_batch_with_required_motion_modes_for_task(
+        30_000,
+        1,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let batch_b = make_validation_batch_with_required_motion_modes_for_task(
+        30_000,
+        1,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let (negative_fast_count, negative_slow_count, positive_slow_count, positive_fast_count) =
+        signed_motion_mode_counts(&batch_a.0, &batch_a.1);
+
+    assert_eq!(batch_a.0, batch_b.0);
+    assert_eq!(batch_a.1, batch_b.1);
+    assert_eq!(batch_a.2, batch_b.2);
+    assert_temporal_contract(&batch_a.0, &batch_a.1);
+    assert!(batch_has_min_signed_motion_mode_counts(
+        &batch_a.0,
+        &batch_a.1,
+        MIN_SIGNED_MODE_COUNT
+    ));
+    assert!(negative_fast_count >= MIN_SIGNED_MODE_COUNT);
+    assert!(negative_slow_count >= MIN_SIGNED_MODE_COUNT);
+    assert!(positive_slow_count >= MIN_SIGNED_MODE_COUNT);
+    assert!(positive_fast_count >= MIN_SIGNED_MODE_COUNT);
+}
+
+#[test]
+fn signed_velocity_trail_candidate_targets_match_true_future_for_matching_dx() {
+    let (x_t, x_t1, _) = make_validation_batch_with_required_motion_modes_for_task(
+        30_000,
+        1,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    for candidate_dx in SIGNED_VELOCITY_BANK_CANDIDATE_DX {
+        let candidate_target =
+            make_signed_velocity_trail_candidate_target_batch(&x_t, candidate_dx);
+        let mut matched_samples = 0usize;
+
+        for sample in 0..BATCH_SIZE {
+            if signed_motion_dx_for_sample(&x_t, &x_t1, sample) != candidate_dx {
+                continue;
+            }
+
+            matched_samples += 1;
+            for row in 0..IMAGE_SIZE {
+                for col in 0..IMAGE_SIZE {
+                    let actual = candidate_target.get(&[sample, 0, row, col]);
+                    let expected = x_t1.get(&[sample, 0, row, col]);
+                    assert!(
+                        (actual - expected).abs() < 1e-6,
+                        "signed candidate dx {} mismatch at sample {} row {} col {}: {:.6} vs {:.6}",
+                        candidate_dx,
+                        sample,
+                        row,
+                        col,
+                        actual,
+                        expected
+                    );
+                }
+            }
+        }
+
+        assert!(
+            matched_samples > 0,
+            "no matching samples for signed candidate dx {}",
             candidate_dx
         );
     }

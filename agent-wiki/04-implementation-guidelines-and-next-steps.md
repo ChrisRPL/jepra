@@ -15,7 +15,7 @@ Read with `VISION.md`.
 - `ResidualBottleneckPredictor` is available as the compact-capacity identity-skip variant: identity plus scaled bottleneck delta, opt-in only.
 - `TemporalRunConfig` exposes `--residual-delta-scale` / `JEPRA_RESIDUAL_DELTA_SCALE` for residual-delta ablations without changing defaults.
 - `TemporalRunConfig` exposes `--projector-drift-weight` / `JEPRA_PROJECTOR_DRIFT_WEIGHT` for opt-in online-projector trust-region ablations without changing defaults.
-- `TemporalRunConfig` exposes `--temporal-task` / `JEPRA_TEMPORAL_TASK`; default `random-speed` is unchanged, and `velocity-trail` is the harder opt-in diagnostic task.
+- `TemporalRunConfig` exposes `--temporal-task` / `JEPRA_TEMPORAL_TASK`; default `random-speed` is unchanged, and `velocity-trail` plus `signed-velocity-trail` are harder opt-in diagnostic tasks.
 - Current defaults preserve hard target-projector behavior (`momentum = 1.0`) unless explicit tuning is passed.
 - Regression posture:
   - one-step projected loss reduction,
@@ -33,8 +33,9 @@ Current high-value implementation path:
 3. Compact-stronger evidence is healthy but drift-confounded; residual delta scaling is now the explicit control knob for ablations, not a hidden topology change.
 4. Treat the `velocity-trail` sweep as blocking residual promotion: baseline wins validation on all three compact-stronger projected seeds and residual has much higher target drift.
 5. Treat velocity-bank ranking/MRR as implemented: both baseline and residual rank speed above random, but residual remains blocked by validation loss and drift.
-6. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
-7. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+6. Treat `signed-velocity-trail` as the active next diagnostic: balanced signed velocities and four-candidate ranking are implemented; run the compact-stronger projected comparison before widening.
+7. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
+8. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
 
@@ -64,16 +65,19 @@ Projector drift regularizer evidence (`2026-04-24`, compact-stronger projected, 
 - Weight `1.0`: final validation prediction loss `1.126885`, prediction `min_std=0.425927`, target drift `0.137658`.
 - Weight `5.0`: final validation prediction loss `1.165685`, prediction `min_std=0.462189`, target drift `0.126054`.
 - Weight `10.0`: final validation prediction loss `1.216697`, prediction `min_std=0.502000`, target drift `0.113993`.
-- Decision: the L2 parameter-space drift regularizer works as an opt-in trust-region knob and keeps health intact, but current weights trade validation loss for only partial drift reduction. Do not promote defaults; use `velocity-trail` as the harder diagnostic before depthwise.
+- Decision: the L2 parameter-space drift regularizer works as an opt-in trust-region knob and keeps health intact, but current weights trade validation loss for only partial drift reduction. Do not promote defaults; use trail-task diagnostics before depthwise.
 
 Velocity-trail task axis:
 
 - `--temporal-task velocity-trail` adds a previous-position trail to each moving square while preserving deterministic mass decay and motion-mode contracts.
+- `--temporal-task signed-velocity-trail` adds the same trail structure with balanced signed velocities `dx ∈ {-2,-1,+1,+2}` per batch.
 - `random-speed` remains the default and the historical evidence baseline.
 - Current compact-stronger projected evidence (`2026-04-24`, seeds `11000..11002`, 300 steps): baseline mean validation prediction loss `0.119354`, residual-bottleneck mean `0.178396`; baseline wins 3/3.
 - Residual-bottleneck remains health-ok but drift-confounded on this task: mean target drift `0.159557` vs baseline `0.002187`.
 - Velocity-bank ranking/MRR (`2026-04-24`, same sweep): baseline mean MRR `0.817708`, top1 `0.635417`; residual mean MRR `0.835938`, top1 `0.671875`. Two-candidate random reference is MRR `0.75`, top1 `0.5`.
 - Decision: current models learn some ordered speed structure; residual's ranking edge does not override worse validation loss and much higher drift. Do not promote residual, depthwise, or spatial primitives from this result.
+- Signed velocity-trail smoke (`2026-04-24`, compact-stronger projected baseline, seed `11000`, 20 steps): `val_pred_end=2.079712`, `pred_min_std_final=0.145517`, `target_drift_end=0.002053`, `velocity_bank_mrr_end=0.536458`, `top1=0.265625`, `candidates=4`, `status=ok`.
+- Decision: signed task routing is implemented and parser-clean. This is not promotion evidence; the next valid step is a 300-step compact-stronger projected signed-task comparison across baseline and residual-bottleneck.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -84,7 +88,7 @@ Velocity-trail task axis:
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v5`, emits `temporal_task`, velocity-bank fields for projected `velocity-trail`, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v5`, emits `temporal_task`, velocity-bank fields for projected trail tasks, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
@@ -146,9 +150,9 @@ Velocity-trail task axis:
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use a harder signed/bounce temporal task or objective diagnostic as the next proof step before widening the model.
+2. Use the signed velocity-trail comparison as the next proof step before widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
-4. Only after `random-speed` and `velocity-trail` evidence are credible, widen the model or data path.
+4. Only after `random-speed`, `velocity-trail`, and `signed-velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.
 
 This is the sequence because JEPRA is a framework with a thesis, not a framework-first abstraction exercise.

@@ -360,6 +360,26 @@ fn projected_velocity_trail_validation_losses_are_finite() {
 }
 
 #[test]
+fn projected_signed_velocity_trail_validation_losses_are_finite() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let losses = projected_validation_batch_losses_from_base_seed_for_task(
+        &model,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    assert!(losses.0.is_finite() && losses.0 > 0.0);
+    assert!(losses.1.is_finite() && losses.1 >= 0.0);
+    assert!(losses.2.is_finite() && losses.2 > 0.0);
+}
+
+#[test]
 fn projected_velocity_bank_ranking_is_finite_and_bounded() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();
@@ -394,7 +414,41 @@ fn projected_velocity_bank_ranking_is_finite_and_bounded() {
 }
 
 #[test]
-#[should_panic(expected = "velocity-bank ranking only supports velocity-trail task")]
+fn projected_signed_velocity_bank_ranking_is_finite_and_bounded() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let ranking = projected_velocity_bank_ranking_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    assert!(ranking.mrr.is_finite());
+    assert!(
+        (0.25..=1.0).contains(&ranking.mrr),
+        "four-candidate MRR should be in [0.25, 1.0], got {:.6}",
+        ranking.mrr
+    );
+    assert!(
+        (0.0..=1.0).contains(&ranking.top1),
+        "top1 should be in [0.0, 1.0], got {:.6}",
+        ranking.top1
+    );
+    assert!(
+        (1.0..=4.0).contains(&ranking.mean_rank),
+        "mean rank should be in [1.0, 4.0], got {:.6}",
+        ranking.mean_rank
+    );
+    assert_eq!(ranking.samples, BATCH_SIZE * 2);
+    assert_eq!(ranking.candidates, 4);
+}
+
+#[test]
+#[should_panic(expected = "velocity-bank ranking only supports velocity-trail")]
 fn projected_velocity_bank_ranking_rejects_non_velocity_trail_task() {
     let encoder = make_frozen_encoder();
     let projector = make_projector();

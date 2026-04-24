@@ -13,11 +13,11 @@ use temporal_validation::{
     temporal_validation_batch_loss_from_base_seed_for_task,
 };
 use temporal_vision::{
-    CompactEncoderMode, MIN_MIXED_MODE_COUNT, PredictorMode, assert_temporal_contract,
-    assert_temporal_experiment_improved, make_compact_frozen_encoder,
+    CompactEncoderMode, PredictorMode, assert_required_motion_modes_for_task,
+    assert_temporal_contract, assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch_for_config,
-    make_validation_batch_for_config, make_validation_batch_with_both_motion_modes_for_config,
-    motion_mode_counts, print_batch_summary, print_representation_stats,
+    make_validation_batch_for_config, make_validation_batch_with_required_motion_modes_for_config,
+    print_batch_summary_for_task, print_motion_mode_summary_for_task, print_representation_stats,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -189,7 +189,7 @@ where
     let (val_probe_t, val_probe_t1) =
         make_validation_batch_for_config(run_config, UNPROJECTED_VALIDATION_BASE_SEED, 0);
     let (mixed_val_probe_t, mixed_val_probe_t1, mixed_val_probe_seed) =
-        make_validation_batch_with_both_motion_modes_for_config(
+        make_validation_batch_with_required_motion_modes_for_config(
             run_config,
             UNPROJECTED_VALIDATION_BASE_SEED,
             1,
@@ -203,31 +203,36 @@ where
     assert_ne!(train_probe_t.data, train_probe_next_t.data);
     assert_ne!(train_probe_t.data, val_probe_t.data);
     assert_ne!(val_probe_t.data, mixed_val_probe_t.data);
-    let (mixed_slow_count, mixed_fast_count) =
-        motion_mode_counts(&mixed_val_probe_t, &mixed_val_probe_t1);
-    assert!(
-        mixed_slow_count >= MIN_MIXED_MODE_COUNT,
-        "mixed validation probe slow count too small: {} < {}",
-        mixed_slow_count,
-        MIN_MIXED_MODE_COUNT
-    );
-    assert!(
-        mixed_fast_count >= MIN_MIXED_MODE_COUNT,
-        "mixed validation probe fast count too small: {} < {}",
-        mixed_fast_count,
-        MIN_MIXED_MODE_COUNT
-    );
-
-    print_batch_summary("train probe", &train_probe_t, &train_probe_t1);
-    print_batch_summary("validation probe", &val_probe_t, &val_probe_t1);
-    print_batch_summary(
-        "validation mixed probe",
+    assert_required_motion_modes_for_task(
+        run_config.temporal_task_mode,
         &mixed_val_probe_t,
         &mixed_val_probe_t1,
     );
-    println!(
-        "validation mixed probe seed {} | slow {} | fast {}",
-        mixed_val_probe_seed, mixed_slow_count, mixed_fast_count
+
+    print_batch_summary_for_task(
+        "train probe",
+        run_config.temporal_task_mode,
+        &train_probe_t,
+        &train_probe_t1,
+    );
+    print_batch_summary_for_task(
+        "validation probe",
+        run_config.temporal_task_mode,
+        &val_probe_t,
+        &val_probe_t1,
+    );
+    print_batch_summary_for_task(
+        "validation mixed probe",
+        run_config.temporal_task_mode,
+        &mixed_val_probe_t,
+        &mixed_val_probe_t1,
+    );
+    print_motion_mode_summary_for_task(
+        "validation mixed probe",
+        mixed_val_probe_seed,
+        run_config.temporal_task_mode,
+        &mixed_val_probe_t,
+        &mixed_val_probe_t1,
     );
 
     let encoder = match run_config.compact_encoder_mode {
