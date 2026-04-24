@@ -12,14 +12,18 @@ use temporal_validation::{
     temporal_validation_batch_loss, temporal_validation_batch_loss_from_base_seed,
 };
 use temporal_vision::{
-    BATCH_SIZE, CompactEncoderMode, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, PredictorMode,
-    TemporalExperimentSummary, TemporalRunConfig, assert_seed_range_has_both_motion_modes,
+    BATCH_SIZE, CompactEncoderMode, IMAGE_SIZE, MIN_MIXED_MODE_COUNT, PredictorMode, SQUARE_SIZE,
+    TemporalExperimentSummary, TemporalRunConfig, TemporalTaskMode, active_cell_count,
+    assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples, assert_temporal_contract,
     assert_temporal_experiment_improved, batch_has_both_motion_modes,
     batch_has_min_motion_mode_counts, make_compact_frozen_encoder,
     make_compact_frozen_encoder_stronger, make_frozen_encoder, make_temporal_batch,
-    make_train_batch, make_validation_batch, make_validation_batch_with_both_motion_modes,
-    motion_dx_for_sample, motion_mode_counts, square_center_x, total_mass,
+    make_temporal_batch_for_task, make_train_batch, make_train_batch_for_task,
+    make_validation_batch, make_validation_batch_for_task,
+    make_validation_batch_with_both_motion_modes,
+    make_validation_batch_with_both_motion_modes_for_task, motion_dx_for_sample,
+    motion_mode_counts, square_center_x, total_mass,
 };
 
 fn batch_loss(model: &VisionJepa, x_t: &Tensor, x_t1: &Tensor) -> f32 {
@@ -227,6 +231,7 @@ fn unprojected_run_with_encoder(
         },
         predictor_mode: PredictorMode::Baseline,
         encoder_learning_rate: encoder_lr,
+        temporal_task_mode: TemporalTaskMode::RandomSpeed,
         residual_delta_scale: 1.0,
         projector_drift_weight: 0.0,
         target_projection_momentum: 1.0,
@@ -794,6 +799,106 @@ fn helper_batches_follow_seed_offsets() {
         make_validation_batch(validation_base_seed, validation_batch_idx),
         expected_validation
     );
+}
+
+#[test]
+fn temporal_task_random_speed_wrapper_matches_default_generator() {
+    let seed = 7_101;
+    let expected = make_temporal_batch(BATCH_SIZE, seed);
+    let actual = make_temporal_batch_for_task(BATCH_SIZE, seed, TemporalTaskMode::RandomSpeed);
+
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn velocity_trail_temporal_batch_is_deterministic_and_contract_valid() {
+    let (x_t_a, x_t1_a) =
+        make_temporal_batch_for_task(BATCH_SIZE, 9_124, TemporalTaskMode::VelocityTrail);
+    let (x_t_b, x_t1_b) =
+        make_temporal_batch_for_task(BATCH_SIZE, 9_124, TemporalTaskMode::VelocityTrail);
+    let (x_t_c, x_t1_c) =
+        make_temporal_batch_for_task(BATCH_SIZE, 9_125, TemporalTaskMode::VelocityTrail);
+
+    assert_eq!(x_t_a, x_t_b);
+    assert_eq!(x_t1_a, x_t1_b);
+    assert_ne!(x_t_a, x_t_c);
+    assert_ne!(x_t1_a, x_t1_c);
+    assert_temporal_contract(&x_t_a, &x_t1_a);
+
+    for sample in 0..BATCH_SIZE {
+        assert!(
+            active_cell_count(&x_t_a, sample) > SQUARE_SIZE * SQUARE_SIZE,
+            "velocity-trail sample {} should contain a previous-position trail",
+            sample
+        );
+    }
+}
+
+#[test]
+fn velocity_trail_helpers_follow_seed_offsets() {
+    let train_base_seed = 10_100;
+    let validation_base_seed = 20_100;
+    let train_step = 11;
+    let validation_batch_idx = 6;
+
+    let expected_train = make_temporal_batch_for_task(
+        BATCH_SIZE,
+        train_base_seed + train_step,
+        TemporalTaskMode::VelocityTrail,
+    );
+    let expected_validation = make_temporal_batch_for_task(
+        BATCH_SIZE,
+        validation_base_seed + validation_batch_idx,
+        TemporalTaskMode::VelocityTrail,
+    );
+
+    assert_eq!(
+        make_train_batch_for_task(train_base_seed, train_step, TemporalTaskMode::VelocityTrail),
+        expected_train
+    );
+    assert_eq!(
+        make_validation_batch_for_task(
+            validation_base_seed,
+            validation_batch_idx,
+            TemporalTaskMode::VelocityTrail
+        ),
+        expected_validation
+    );
+}
+
+#[test]
+fn velocity_trail_generator_exposes_both_motion_modes_across_seed_range() {
+    assert_seed_range_has_both_motion_modes(64, |seed| {
+        make_temporal_batch_for_task(BATCH_SIZE, seed, TemporalTaskMode::VelocityTrail)
+    });
+}
+
+#[test]
+fn velocity_trail_mixed_mode_validation_probe_is_deterministic_and_contract_valid() {
+    let batch_a = make_validation_batch_with_both_motion_modes_for_task(
+        20_000,
+        1,
+        TemporalTaskMode::VelocityTrail,
+    );
+    let batch_b = make_validation_batch_with_both_motion_modes_for_task(
+        20_000,
+        1,
+        TemporalTaskMode::VelocityTrail,
+    );
+    let (slow_count, fast_count) = motion_mode_counts(&batch_a.0, &batch_a.1);
+
+    assert_eq!(batch_a.0, batch_b.0);
+    assert_eq!(batch_a.1, batch_b.1);
+    assert_eq!(batch_a.2, batch_b.2);
+    assert_temporal_contract(&batch_a.0, &batch_a.1);
+    assert!(batch_has_min_motion_mode_counts(
+        &batch_a.0,
+        &batch_a.1,
+        MIN_MIXED_MODE_COUNT,
+        MIN_MIXED_MODE_COUNT
+    ));
+    assert!(slow_count >= MIN_MIXED_MODE_COUNT);
+    assert!(fast_count >= MIN_MIXED_MODE_COUNT);
 }
 
 #[test]

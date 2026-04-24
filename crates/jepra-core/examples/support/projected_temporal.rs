@@ -1,4 +1,4 @@
-use super::temporal_vision::{BATCH_SIZE, make_temporal_batch};
+use super::temporal_vision::{BATCH_SIZE, TemporalTaskMode, make_temporal_batch_for_task};
 use jepra_core::{
     EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa, Tensor,
     gaussian_moment_regularizer, mse_loss,
@@ -103,11 +103,31 @@ where
     )
 }
 
+#[allow(dead_code)]
 pub fn projected_validation_batch_losses_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
     regularizer_weight: f32,
     validation_base_seed: u64,
     validation_batches: usize,
+) -> (f32, f32, f32)
+where
+    P: PredictorModule,
+{
+    projected_validation_batch_losses_from_base_seed_for_task(
+        model,
+        regularizer_weight,
+        validation_base_seed,
+        validation_batches,
+        TemporalTaskMode::RandomSpeed,
+    )
+}
+
+pub fn projected_validation_batch_losses_from_base_seed_for_task<P>(
+    model: &ProjectedVisionJepa<P>,
+    regularizer_weight: f32,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    temporal_task_mode: TemporalTaskMode,
 ) -> (f32, f32, f32)
 where
     P: PredictorModule,
@@ -120,6 +140,6 @@ where
         regularizer_weight,
         validation_base_seed,
         validation_batches,
-        |seed| make_temporal_batch(BATCH_SIZE, seed),
+        |seed| make_temporal_batch_for_task(BATCH_SIZE, seed, temporal_task_mode),
     )
 }

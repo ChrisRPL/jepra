@@ -15,10 +15,11 @@ use projected_temporal::{
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     projected_batch_losses, projected_step, projected_validation_batch_losses,
     projected_validation_batch_losses_from_base_seed,
+    projected_validation_batch_losses_from_base_seed_for_task,
 };
 use temporal_vision::{
     BATCH_SIZE, CompactEncoderMode, PredictorMode, TemporalExperimentSummary, TemporalRunConfig,
-    assert_seed_range_has_both_motion_modes,
+    TemporalTaskMode, assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples,
     assert_temporal_experiment_improved, make_compact_frozen_encoder, make_frozen_encoder,
     make_temporal_batch, make_train_batch, run_temporal_experiment_with_summary,
@@ -221,6 +222,7 @@ fn projected_run_with_encoder(
         total_steps: 120,
         log_every: 120,
         encoder_learning_rate: encoder_lr,
+        temporal_task_mode: TemporalTaskMode::RandomSpeed,
         compact_encoder_mode,
         predictor_mode: PredictorMode::Baseline,
         residual_delta_scale: 1.0,
@@ -334,6 +336,26 @@ fn projected_validation_batch_losses_zero_batch_count_panics() {
         0,
         |seed| make_train_batch(seed, 0),
     );
+}
+
+#[test]
+fn projected_velocity_trail_validation_losses_are_finite() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let losses = projected_validation_batch_losses_from_base_seed_for_task(
+        &model,
+        REGULARIZER_WEIGHT,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+        TemporalTaskMode::VelocityTrail,
+    );
+
+    assert!(losses.0.is_finite() && losses.0 > 0.0);
+    assert!(losses.1.is_finite() && losses.1 >= 0.0);
+    assert!(losses.2.is_finite() && losses.2 > 0.0);
 }
 
 #[test]
@@ -630,6 +652,7 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         total_steps: 2,
         log_every: 1,
         encoder_learning_rate: 0.0,
+        temporal_task_mode: TemporalTaskMode::RandomSpeed,
         compact_encoder_mode: CompactEncoderMode::Disabled,
         predictor_mode: PredictorMode::Baseline,
         residual_delta_scale: 1.0,
@@ -1274,6 +1297,7 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             total_steps: steps,
             log_every: steps,
             encoder_learning_rate: 0.0,
+            temporal_task_mode: TemporalTaskMode::RandomSpeed,
             compact_encoder_mode: CompactEncoderMode::Disabled,
             predictor_mode: PredictorMode::Baseline,
             residual_delta_scale: 1.0,

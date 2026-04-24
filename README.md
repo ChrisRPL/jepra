@@ -12,6 +12,7 @@ The crate is published as `jepra-core`.
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
 - core JEPA projection regularizer utilities for Gaussian moment regularization and projection statistics
 - temporal data now supports one or two moving squares per sample in the synthetic generator
+- temporal examples expose an opt-in `velocity-trail` task that adds previous-position cues while preserving the default `random-speed` task
 - unprojected validation helpers and reduction thresholds are centralized in `crates/jepra-core/examples/support/temporal_validation.rs`
 - temporal validation helpers now explicitly panic when validation batches is configured as zero
 
@@ -44,6 +45,7 @@ JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --ex
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal -- --encoder-lr 0.005 --train-steps 60 --train-base-seed 1400
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --seed 21000 --steps 80 --log 20
 # cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --target-momentum 0.95 --train-steps 120
+# cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- --temporal-task velocity-trail --train-steps 40
 ./run-predictor-mode-comparison.sh all # compare baseline/bottleneck/residual predictor modes
 ```
 
@@ -54,6 +56,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--train-base-seed` (`--seed`) sets the base training seed
 - `--train-steps` (`--steps`) sets total training steps
 - `--log-every` (`--log`) sets log cadence (must be > 0)
+- `--temporal-task <random-speed|velocity-trail>` selects the synthetic temporal task (`random-speed` remains the default; `velocity-trail` is the harder opt-in diagnostic)
 - `--encoder-lr` (or `--encoder-learning-rate`) enables encoder updates in temporal JEPA runs; `0.0` keeps a frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
@@ -66,6 +69,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--target-momentum-end` can also be passed as `--target-projection-momentum-end`
 - `--target-momentum-warmup-steps` linearly interpolates momentum from start to end over the first N steps (alias: `--target-projection-warmup-steps`)
 - `JEPRA_TRAIN_STEPS` is the environment fallback when step flags are not passed
+- `JEPRA_TEMPORAL_TASK` is the environment fallback for the temporal task
 - `JEPRA_ENCODER_LR` is an environment fallback when encoder-learning flags are not passed
 - `JEPRA_RESIDUAL_DELTA_SCALE` is an environment fallback for residual-bottleneck delta scale
 - `JEPRA_PROJECTOR_DRIFT_WEIGHT` is an environment fallback for projected online-projector drift regularization
@@ -77,24 +81,25 @@ Predictor-mode comparison protocol:
 
 ```bash
 ./run-predictor-mode-comparison.sh all
+JEPRA_TEMPORAL_TASK=velocity-trail ./run-predictor-mode-comparison.sh projected
 JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predictor-mode-comparison.sh all
 ```
 
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v3 path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v4 temporal_task=<random-speed|velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> seed=<seed> steps=<steps> ... train_pred_start=<n> train_pred_end=<n> val_pred_start=<n> val_pred_end=<n> ... pred_min_std_final=<n> target_min_std_final=<n> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
-Latest predictor comparison evidence (`2026-04-24`, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
+Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
 
 ```text
-schema=jepra_predictor_compare_v3 path=unprojected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.040150 pred_min_std_final=1.254614 status=ok
-schema=jepra_predictor_compare_v3 path=unprojected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.127445 pred_min_std_final=1.245264 status=ok
-schema=jepra_predictor_compare_v3 path=unprojected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.074866 pred_min_std_final=1.063676 status=ok
-schema=jepra_predictor_compare_v3 path=projected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.216322 pred_min_std_final=0.990177 target_drift_end=0.036044 status=ok
-schema=jepra_predictor_compare_v3 path=projected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=5.042953 pred_min_std_final=0.000000 target_drift_end=0.002192 status=accept_failed
-schema=jepra_predictor_compare_v3 path=projected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.045684 pred_min_std_final=0.972417 target_drift_end=0.031384 status=ok
+schema=jepra_predictor_compare_v4 temporal_task=random-speed path=unprojected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.040150 pred_min_std_final=1.254614 status=ok
+schema=jepra_predictor_compare_v4 temporal_task=random-speed path=unprojected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.127445 pred_min_std_final=1.245264 status=ok
+schema=jepra_predictor_compare_v4 temporal_task=random-speed path=unprojected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=1000 steps=300 val_pred_end=0.074866 pred_min_std_final=1.063676 status=ok
+schema=jepra_predictor_compare_v4 temporal_task=random-speed path=projected predictor=baseline residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.216322 pred_min_std_final=0.990177 target_drift_end=0.036044 status=ok
+schema=jepra_predictor_compare_v4 temporal_task=random-speed path=projected predictor=bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=5.042953 pred_min_std_final=0.000000 target_drift_end=0.002192 status=accept_failed
+schema=jepra_predictor_compare_v4 temporal_task=random-speed path=projected predictor=residual-bottleneck residual_delta_scale=1.0 projector_drift_weight=0.0 seed=11000 steps=300 val_pred_end=0.045684 pred_min_std_final=0.972417 target_drift_end=0.031384 status=ok
 ```
 
 Interpretation: residual-bottleneck is the current projected-path candidate because it keeps prediction health close to target health and materially beats projected baseline on this seed. It is not promoted as a default because unprojected baseline still has the lower final validation loss.

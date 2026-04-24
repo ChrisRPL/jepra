@@ -10,14 +10,14 @@ use jepra_core::{
 use temporal_validation::{
     UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, UNPROJECTED_VALIDATION_BASE_SEED,
     UNPROJECTED_VALIDATION_BATCHES, UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    temporal_validation_batch_loss_from_base_seed,
+    temporal_validation_batch_loss_from_base_seed_for_task,
 };
 use temporal_vision::{
     CompactEncoderMode, MIN_MIXED_MODE_COUNT, PredictorMode, assert_temporal_contract,
     assert_temporal_experiment_improved, make_compact_frozen_encoder,
-    make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch,
-    make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
-    print_batch_summary, print_representation_stats,
+    make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch_for_config,
+    make_validation_batch_for_config, make_validation_batch_with_both_motion_modes_for_config,
+    motion_mode_counts, print_batch_summary, print_representation_stats,
 };
 
 const TRAIN_BASE_SEED: u64 = 1_000;
@@ -150,6 +150,10 @@ pub fn main() {
         run_config.encoder_learning_rate
     );
     println!(
+        "temporal run config | task {}",
+        run_config.temporal_task_mode.as_str()
+    );
+    println!(
         "temporal run config | encoder variant {}",
         run_config.compact_encoder_mode.as_str()
     );
@@ -180,11 +184,16 @@ fn run_with_predictor<P>(run_config: temporal_vision::TemporalRunConfig, predict
 where
     P: PredictorModule,
 {
-    let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
-    let (train_probe_next_t, train_probe_next_t1) = make_train_batch(run_config.train_base_seed, 1);
-    let (val_probe_t, val_probe_t1) = make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, 0);
+    let (train_probe_t, train_probe_t1) = make_train_batch_for_config(run_config, 0);
+    let (train_probe_next_t, train_probe_next_t1) = make_train_batch_for_config(run_config, 1);
+    let (val_probe_t, val_probe_t1) =
+        make_validation_batch_for_config(run_config, UNPROJECTED_VALIDATION_BASE_SEED, 0);
     let (mixed_val_probe_t, mixed_val_probe_t1, mixed_val_probe_seed) =
-        make_validation_batch_with_both_motion_modes(UNPROJECTED_VALIDATION_BASE_SEED, 1);
+        make_validation_batch_with_both_motion_modes_for_config(
+            run_config,
+            UNPROJECTED_VALIDATION_BASE_SEED,
+            1,
+        );
 
     assert_temporal_contract(&train_probe_t, &train_probe_t1);
     assert_temporal_contract(&train_probe_next_t, &train_probe_next_t1);
@@ -232,10 +241,11 @@ where
     let initial_z_t1 = model.target_latent(&train_probe_t1);
     let initial_pred = model.predict_next_latent(&train_probe_t);
     let initial_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
-    let initial_val_loss = temporal_validation_batch_loss_from_base_seed(
+    let initial_val_loss = temporal_validation_batch_loss_from_base_seed_for_task(
         &model,
         UNPROJECTED_VALIDATION_BASE_SEED,
         UNPROJECTED_VALIDATION_BATCHES,
+        run_config.temporal_task_mode,
     );
 
     println!(
@@ -256,7 +266,7 @@ where
         initial_train_loss,
         initial_val_loss,
         |model, step, should_log| {
-            let (x_t, x_t1) = make_train_batch(run_config.train_base_seed, step as u64);
+            let (x_t, x_t1) = make_train_batch_for_config(run_config, step as u64);
             let (train_loss, _) = model.step_with_trainable_encoder(
                 &x_t,
                 &x_t1,
@@ -267,10 +277,11 @@ where
                 temporal_vision::print_temporal_train_val_metrics(
                     step,
                     train_loss,
-                    temporal_validation_batch_loss_from_base_seed(
+                    temporal_validation_batch_loss_from_base_seed_for_task(
                         model,
                         UNPROJECTED_VALIDATION_BASE_SEED,
                         UNPROJECTED_VALIDATION_BATCHES,
+                        run_config.temporal_task_mode,
                     ),
                 );
             }
@@ -278,20 +289,22 @@ where
             train_loss
         },
         |model| {
-            temporal_validation_batch_loss_from_base_seed(
+            temporal_validation_batch_loss_from_base_seed_for_task(
                 model,
                 UNPROJECTED_VALIDATION_BASE_SEED,
                 UNPROJECTED_VALIDATION_BATCHES,
+                run_config.temporal_task_mode,
             )
         },
     );
     temporal_vision::print_temporal_experiment_summary("unprojected", &experiment_summary);
 
     let final_train_loss = model.losses(&train_probe_t, &train_probe_t1).0;
-    let final_val_loss = temporal_validation_batch_loss_from_base_seed(
+    let final_val_loss = temporal_validation_batch_loss_from_base_seed_for_task(
         &model,
         UNPROJECTED_VALIDATION_BASE_SEED,
         UNPROJECTED_VALIDATION_BATCHES,
+        run_config.temporal_task_mode,
     );
     let final_z_t = model.encode(&train_probe_t);
     let final_pred = model.predict_next_latent(&train_probe_t);

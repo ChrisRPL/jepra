@@ -14,6 +14,8 @@ pub const FAST_MOTION_MASS_THRESHOLD: f32 = 0.8f32 * (SQUARE_SIZE * SQUARE_SIZE)
 pub const EXTRA_SQUARE_CHANCE: f64 = 0.5;
 pub const MIXED_MODE_SEARCH_LIMIT: u64 = 64;
 pub const MIN_MIXED_MODE_COUNT: usize = 2;
+pub const VELOCITY_TRAIL_INTENSITY_RATIO: f32 = 0.35;
+pub const VELOCITY_TRAIL_DECAY: f32 = 0.82;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CompactEncoderMode {
@@ -49,12 +51,28 @@ impl PredictorMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TemporalTaskMode {
+    RandomSpeed,
+    VelocityTrail,
+}
+
+impl TemporalTaskMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::RandomSpeed => "random-speed",
+            Self::VelocityTrail => "velocity-trail",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TemporalRunConfig {
     pub train_base_seed: u64,
     pub total_steps: usize,
     pub log_every: usize,
     pub encoder_learning_rate: f32,
+    pub temporal_task_mode: TemporalTaskMode,
     pub compact_encoder_mode: CompactEncoderMode,
     pub predictor_mode: PredictorMode,
     pub residual_delta_scale: f32,
@@ -105,6 +123,7 @@ impl TemporalRunConfig {
                 .unwrap_or(0);
         let compact_encoder_mode = compact_encoder_mode_from_args(&args);
         let predictor_mode = predictor_mode_from_args(&args);
+        let temporal_task_mode = temporal_task_mode_from_args(&args);
         let residual_delta_scale = residual_delta_scale_from_args(&args);
         let projector_drift_weight = projector_drift_weight_from_args(&args);
         assert_target_projection_momentum(target_projection_momentum_end);
@@ -126,6 +145,7 @@ impl TemporalRunConfig {
             total_steps,
             log_every,
             encoder_learning_rate,
+            temporal_task_mode,
             compact_encoder_mode,
             predictor_mode,
             residual_delta_scale,
@@ -193,6 +213,30 @@ fn predictor_mode_from_args(args: &[String]) -> PredictorMode {
             ),
         })
         .unwrap_or(PredictorMode::Baseline)
+}
+
+fn temporal_task_mode_from_args(args: &[String]) -> TemporalTaskMode {
+    parse_arg_value(args, "--temporal-task")
+        .or_else(|| parse_arg_value(args, "--task"))
+        .map(|raw_mode| parse_temporal_task_mode(raw_mode, "--temporal-task"))
+        .or_else(|| {
+            std::env::var("JEPRA_TEMPORAL_TASK")
+                .or_else(|_| std::env::var("JEPRA_TASK"))
+                .ok()
+                .map(|raw_mode| parse_temporal_task_mode(&raw_mode, "JEPRA_TEMPORAL_TASK"))
+        })
+        .unwrap_or(TemporalTaskMode::RandomSpeed)
+}
+
+fn parse_temporal_task_mode(raw_mode: &str, source: &str) -> TemporalTaskMode {
+    match raw_mode {
+        "random-speed" | "current-squares" => TemporalTaskMode::RandomSpeed,
+        "velocity-trail" | "harder-squares" => TemporalTaskMode::VelocityTrail,
+        _ => panic!(
+            "unsupported value for {}: {} (expected random-speed|velocity-trail)",
+            source, raw_mode
+        ),
+    }
 }
 
 fn residual_delta_scale_from_args(args: &[String]) -> f32 {
@@ -388,8 +432,9 @@ pub fn assert_temporal_experiment_improved(
 #[cfg(test)]
 mod temporal_vision_config_tests {
     use super::{
-        CompactEncoderMode, PredictorMode, TemporalRunConfig, compact_encoder_mode_from_args,
-        predictor_mode_from_args, projector_drift_weight_from_args, residual_delta_scale_from_args,
+        CompactEncoderMode, PredictorMode, TemporalRunConfig, TemporalTaskMode,
+        compact_encoder_mode_from_args, predictor_mode_from_args, projector_drift_weight_from_args,
+        residual_delta_scale_from_args, temporal_task_mode_from_args,
     };
 
     fn args_with(values: &[&str]) -> Vec<String> {
@@ -484,6 +529,40 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn temporal_task_mode_defaults_to_random_speed() {
+        assert_eq!(
+            temporal_task_mode_from_args(&args_with(&[])),
+            TemporalTaskMode::RandomSpeed
+        );
+    }
+
+    #[test]
+    fn temporal_task_mode_parses_velocity_trail() {
+        assert_eq!(
+            temporal_task_mode_from_args(&args_with(&["--temporal-task", "velocity-trail"])),
+            TemporalTaskMode::VelocityTrail
+        );
+    }
+
+    #[test]
+    fn temporal_task_mode_keeps_compatibility_aliases() {
+        assert_eq!(
+            temporal_task_mode_from_args(&args_with(&["--task", "harder-squares"])),
+            TemporalTaskMode::VelocityTrail
+        );
+        assert_eq!(
+            temporal_task_mode_from_args(&args_with(&["--task", "current-squares"])),
+            TemporalTaskMode::RandomSpeed
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported value for --temporal-task")]
+    fn temporal_task_mode_panics_on_invalid_value() {
+        temporal_task_mode_from_args(&args_with(&["--temporal-task", "bounce"]));
+    }
+
+    #[test]
     fn residual_delta_scale_defaults_to_unscaled_delta() {
         assert!((residual_delta_scale_from_args(&args_with(&[])) - 1.0).abs() < 1e-6);
     }
@@ -532,6 +611,7 @@ mod temporal_vision_config_tests {
             total_steps: 10,
             log_every: 1,
             encoder_learning_rate: 0.0,
+            temporal_task_mode: TemporalTaskMode::RandomSpeed,
             compact_encoder_mode: CompactEncoderMode::Disabled,
             predictor_mode: PredictorMode::Baseline,
             residual_delta_scale: 1.0,
@@ -575,7 +655,23 @@ fn random_motion_dx(rng: &mut StdRng) -> usize {
     }
 }
 
+#[allow(dead_code)]
 pub fn make_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
+    make_temporal_batch_for_task(batch_size, seed, TemporalTaskMode::RandomSpeed)
+}
+
+pub fn make_temporal_batch_for_task(
+    batch_size: usize,
+    seed: u64,
+    temporal_task_mode: TemporalTaskMode,
+) -> (Tensor, Tensor) {
+    match temporal_task_mode {
+        TemporalTaskMode::RandomSpeed => make_random_speed_temporal_batch(batch_size, seed),
+        TemporalTaskMode::VelocityTrail => make_velocity_trail_temporal_batch(batch_size, seed),
+    }
+}
+
+fn make_random_speed_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
     let mut rng = StdRng::seed_from_u64(seed);
     let mut x_t = Tensor::zeros(vec![batch_size, CHANNELS, IMAGE_SIZE, IMAGE_SIZE]);
     let mut x_t1 = Tensor::zeros(vec![batch_size, CHANNELS, IMAGE_SIZE, IMAGE_SIZE]);
@@ -629,12 +725,75 @@ pub fn make_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
     (x_t, x_t1)
 }
 
+fn make_velocity_trail_temporal_batch(batch_size: usize, seed: u64) -> (Tensor, Tensor) {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut x_t = Tensor::zeros(vec![batch_size, CHANNELS, IMAGE_SIZE, IMAGE_SIZE]);
+    let mut x_t1 = Tensor::zeros(vec![batch_size, CHANNELS, IMAGE_SIZE, IMAGE_SIZE]);
+
+    let max_row = IMAGE_SIZE - SQUARE_SIZE;
+    let min_col_t = FAST_MOTION_DX;
+    let max_col_t = IMAGE_SIZE - SQUARE_SIZE - FAST_MOTION_DX;
+
+    for sample in 0..batch_size {
+        let row = rng.gen_range(0..=max_row);
+        let col_t = rng.gen_range(min_col_t..=max_col_t);
+        let intensity_t = rng.gen_range(0.65f32..0.95f32);
+        let motion_dx = random_motion_dx(&mut rng);
+        let trail_col_t = col_t - motion_dx;
+        let col_t1 = col_t + motion_dx;
+        let trail_intensity_t = intensity_t * VELOCITY_TRAIL_INTENSITY_RATIO;
+        let intensity_t1 = intensity_t * VELOCITY_TRAIL_DECAY;
+        let trail_intensity_t1 = trail_intensity_t * VELOCITY_TRAIL_DECAY;
+
+        add_square(&mut x_t, sample, row, trail_col_t, trail_intensity_t);
+        add_square(&mut x_t, sample, row, col_t, intensity_t);
+        add_square(&mut x_t1, sample, row, col_t, trail_intensity_t1);
+        add_square(&mut x_t1, sample, row, col_t1, intensity_t1);
+    }
+
+    (x_t, x_t1)
+}
+
+#[allow(dead_code)]
 pub fn make_train_batch(train_base_seed: u64, step: u64) -> (Tensor, Tensor) {
     make_temporal_batch(BATCH_SIZE, train_base_seed + step)
 }
 
+pub fn make_train_batch_for_task(
+    train_base_seed: u64,
+    step: u64,
+    temporal_task_mode: TemporalTaskMode,
+) -> (Tensor, Tensor) {
+    make_temporal_batch_for_task(BATCH_SIZE, train_base_seed + step, temporal_task_mode)
+}
+
+pub fn make_train_batch_for_config(config: TemporalRunConfig, step: u64) -> (Tensor, Tensor) {
+    make_train_batch_for_task(config.train_base_seed, step, config.temporal_task_mode)
+}
+
+#[allow(dead_code)]
 pub fn make_validation_batch(validation_base_seed: u64, batch_idx: u64) -> (Tensor, Tensor) {
     make_temporal_batch(BATCH_SIZE, validation_base_seed + batch_idx)
+}
+
+pub fn make_validation_batch_for_task(
+    validation_base_seed: u64,
+    batch_idx: u64,
+    temporal_task_mode: TemporalTaskMode,
+) -> (Tensor, Tensor) {
+    make_temporal_batch_for_task(
+        BATCH_SIZE,
+        validation_base_seed + batch_idx,
+        temporal_task_mode,
+    )
+}
+
+pub fn make_validation_batch_for_config(
+    config: TemporalRunConfig,
+    validation_base_seed: u64,
+    batch_idx: u64,
+) -> (Tensor, Tensor) {
+    make_validation_batch_for_task(validation_base_seed, batch_idx, config.temporal_task_mode)
 }
 
 pub fn motion_mode_counts(x_t: &Tensor, x_t1: &Tensor) -> (usize, usize) {
@@ -681,14 +840,27 @@ pub fn batch_has_min_motion_mode_counts(
     slow_count >= min_slow_count && fast_count >= min_fast_count
 }
 
+#[allow(dead_code)]
 pub fn make_validation_batch_with_both_motion_modes(
     validation_base_seed: u64,
     start_batch_idx: u64,
 ) -> (Tensor, Tensor, u64) {
+    make_validation_batch_with_both_motion_modes_for_task(
+        validation_base_seed,
+        start_batch_idx,
+        TemporalTaskMode::RandomSpeed,
+    )
+}
+
+pub fn make_validation_batch_with_both_motion_modes_for_task(
+    validation_base_seed: u64,
+    start_batch_idx: u64,
+    temporal_task_mode: TemporalTaskMode,
+) -> (Tensor, Tensor, u64) {
     for offset in 0..MIXED_MODE_SEARCH_LIMIT {
         let batch_idx = start_batch_idx + offset;
         let seed = validation_base_seed + batch_idx;
-        let (x_t, x_t1) = make_temporal_batch(BATCH_SIZE, seed);
+        let (x_t, x_t1) = make_temporal_batch_for_task(BATCH_SIZE, seed, temporal_task_mode);
 
         if batch_has_min_motion_mode_counts(&x_t, &x_t1, MIN_MIXED_MODE_COUNT, MIN_MIXED_MODE_COUNT)
         {
@@ -704,6 +876,18 @@ pub fn make_validation_batch_with_both_motion_modes(
         validation_base_seed,
         start_batch_idx
     );
+}
+
+pub fn make_validation_batch_with_both_motion_modes_for_config(
+    config: TemporalRunConfig,
+    validation_base_seed: u64,
+    start_batch_idx: u64,
+) -> (Tensor, Tensor, u64) {
+    make_validation_batch_with_both_motion_modes_for_task(
+        validation_base_seed,
+        start_batch_idx,
+        config.temporal_task_mode,
+    )
 }
 
 pub fn square_center_x(tensor: &Tensor, sample: usize) -> f32 {
@@ -1004,6 +1188,16 @@ fn draw_square(tensor: &mut Tensor, sample: usize, row: usize, col: usize, inten
     for dy in 0..SQUARE_SIZE {
         for dx in 0..SQUARE_SIZE {
             tensor.set(&[sample, 0, row + dy, col + dx], intensity);
+        }
+    }
+}
+
+fn add_square(tensor: &mut Tensor, sample: usize, row: usize, col: usize, intensity: f32) {
+    for dy in 0..SQUARE_SIZE {
+        for dx in 0..SQUARE_SIZE {
+            let index = [sample, 0, row + dy, col + dx];
+            let next_value = tensor.get(&index) + intensity;
+            tensor.set(&index, next_value);
         }
     }
 }

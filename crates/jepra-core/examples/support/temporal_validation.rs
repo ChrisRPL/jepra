@@ -1,4 +1,4 @@
-use super::temporal_vision::make_validation_batch;
+use super::temporal_vision::{TemporalTaskMode, make_validation_batch_for_task};
 use jepra_core::{PredictorModule, Tensor, VisionJepa};
 
 pub const UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.5;
@@ -31,6 +31,7 @@ where
     total / validation_batches as f32
 }
 
+#[allow(dead_code)]
 pub fn temporal_validation_batch_loss_from_base_seed<P>(
     model: &VisionJepa<P>,
     validation_base_seed: u64,
@@ -39,10 +40,29 @@ pub fn temporal_validation_batch_loss_from_base_seed<P>(
 where
     P: PredictorModule,
 {
+    temporal_validation_batch_loss_from_base_seed_for_task(
+        model,
+        validation_base_seed,
+        validation_batches,
+        TemporalTaskMode::RandomSpeed,
+    )
+}
+
+pub fn temporal_validation_batch_loss_from_base_seed_for_task<P>(
+    model: &VisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    temporal_task_mode: TemporalTaskMode,
+) -> f32
+where
+    P: PredictorModule,
+{
     temporal_validation_batch_loss(
         model,
         validation_base_seed,
         validation_batches,
-        |batch_idx| make_validation_batch(validation_base_seed, batch_idx),
+        |batch_idx| {
+            make_validation_batch_for_task(validation_base_seed, batch_idx, temporal_task_mode)
+        },
     )
 }

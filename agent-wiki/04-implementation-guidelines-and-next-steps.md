@@ -15,6 +15,7 @@ Read with `VISION.md`.
 - `ResidualBottleneckPredictor` is available as the compact-capacity identity-skip variant: identity plus scaled bottleneck delta, opt-in only.
 - `TemporalRunConfig` exposes `--residual-delta-scale` / `JEPRA_RESIDUAL_DELTA_SCALE` for residual-delta ablations without changing defaults.
 - `TemporalRunConfig` exposes `--projector-drift-weight` / `JEPRA_PROJECTOR_DRIFT_WEIGHT` for opt-in online-projector trust-region ablations without changing defaults.
+- `TemporalRunConfig` exposes `--temporal-task` / `JEPRA_TEMPORAL_TASK`; default `random-speed` is unchanged, and `velocity-trail` is the harder opt-in diagnostic task.
 - Current defaults preserve hard target-projector behavior (`momentum = 1.0`) unless explicit tuning is passed.
 - Regression posture:
   - one-step projected loss reduction,
@@ -30,8 +31,9 @@ Current high-value implementation path:
 1. Run `run-predictor-mode-comparison.sh` before predictor-topology policy changes.
 2. Treat `residual-bottleneck` as the current projected-path candidate, not a default, because 300-step frozen-base evidence is strong for projected but not unprojected.
 3. Compact-stronger evidence is healthy but drift-confounded; residual delta scaling is now the explicit control knob for ablations, not a hidden topology change.
-4. Projector drift regularization is now the next opt-in control knob; use it to test the exact drift confound before adding depthwise or spatial primitives.
-5. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+4. Run the same compact-stronger projected comparisons on `velocity-trail` before adding depthwise or spatial primitives.
+5. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
+6. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
 
@@ -61,7 +63,13 @@ Projector drift regularizer evidence (`2026-04-24`, compact-stronger projected, 
 - Weight `1.0`: final validation prediction loss `1.126885`, prediction `min_std=0.425927`, target drift `0.137658`.
 - Weight `5.0`: final validation prediction loss `1.165685`, prediction `min_std=0.462189`, target drift `0.126054`.
 - Weight `10.0`: final validation prediction loss `1.216697`, prediction `min_std=0.502000`, target drift `0.113993`.
-- Decision: the L2 parameter-space drift regularizer works as an opt-in trust-region knob and keeps health intact, but current weights trade validation loss for only partial drift reduction. Do not promote defaults; next work should search for a better stabilization/control schedule or harder diagnostic before depthwise.
+- Decision: the L2 parameter-space drift regularizer works as an opt-in trust-region knob and keeps health intact, but current weights trade validation loss for only partial drift reduction. Do not promote defaults; use `velocity-trail` as the harder diagnostic before depthwise.
+
+Velocity-trail task axis:
+
+- `--temporal-task velocity-trail` adds a previous-position trail to each moving square while preserving deterministic mass decay and motion-mode contracts.
+- `random-speed` remains the default and the historical evidence baseline.
+- Use `velocity-trail` to decide whether residual/depthwise/spatial capacity is actually needed; do not promote architecture changes from loss-only wins.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -72,7 +80,7 @@ Projector drift regularizer evidence (`2026-04-24`, compact-stronger projected, 
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v3`, emits `residual_delta_scale` and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v4`, emits `temporal_task`, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
@@ -134,9 +142,9 @@ Projector drift regularizer evidence (`2026-04-24`, compact-stronger projected, 
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Build one harder temporal Vision JEPA example that forces real prediction, not memorization.
-3. Add regression coverage for that example’s shape, determinism, and loss behavior.
-4. Only after the temporal example is credible, widen the model or data path.
+2. Use the harder `velocity-trail` temporal task as the next proof diagnostic before widening the model.
+3. Keep regression coverage focused on task shape, determinism, and loss behavior.
+4. Only after `random-speed` and `velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.
 
 This is the sequence because JEPRA is a framework with a thesis, not a framework-first abstraction exercise.

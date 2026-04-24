@@ -9,6 +9,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Predictor comparison evidence is reproducible via `run-predictor-mode-comparison.sh`; current 300-step evidence favors residual-bottleneck only on the projected path, with compact-stronger runs showing a drift confound.
 - Residual-bottleneck now has an explicit residual-delta scale control for ablations. Scale `0.25` did not solve compact-stronger projected drift, and low target momentum produced low-loss representation collapse.
 - Projected path now has an opt-in L2 online-projector drift regularizer. It reduces target drift on a seed-level probe, but current weights are a tradeoff rather than a default-ready fix.
+- Temporal examples now expose a task axis: default `random-speed` plus opt-in `velocity-trail`, which adds previous-position trail cues without changing model defaults.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -16,7 +17,8 @@ Snapshot from local files only. Internal working note for the repo state today.
   - add and compare opt-in Rust-native predictor variants without changing defaults,
   - use lightweight representation-health stats to compare prediction and target behavior,
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
-  - use projector drift regularization as the current narrow drift-control probe,
+  - use `velocity-trail` as the next harder diagnostic before depthwise/spatial primitive work,
+  - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.
 
@@ -69,8 +71,8 @@ Snapshot from local files only. Internal working note for the repo state today.
 
 - `train_vision_jepa.rs` is intentionally a compatibility wrapper that delegates to the canonical random-temporal training flow.
 - A dedicated example entrypoint regression test now enforces that delegation in `crates/jepra-core/tests/example_entrypoint_guard.rs`.
-- Temporal data uses mixed-speed synthetic motion, with deterministic mixed-mode validation probes and held-out schedules.
-- CLI/env config for runs lives in `examples/support/temporal_vision.rs` and now includes `--predictor-mode`, `--residual-delta-scale`, `--projector-drift-weight`, `--target-momentum`/`--target-momentum-start`/`--target-momentum-end` plus `--target-momentum-warmup-steps`, `JEPRA_RESIDUAL_DELTA_SCALE`, `JEPRA_PROJECTOR_DRIFT_WEIGHT`, and `JEPRA_TARGET_MOMENTUM`.
+- Temporal data uses mixed-speed synthetic motion, with deterministic mixed-mode validation probes and held-out schedules; `velocity-trail` is available as the harder opt-in task.
+- CLI/env config for runs lives in `examples/support/temporal_vision.rs` and now includes `--temporal-task`, `--predictor-mode`, `--residual-delta-scale`, `--projector-drift-weight`, `--target-momentum`/`--target-momentum-start`/`--target-momentum-end` plus `--target-momentum-warmup-steps`, `JEPRA_TEMPORAL_TASK`, `JEPRA_RESIDUAL_DELTA_SCALE`, `JEPRA_PROJECTOR_DRIFT_WEIGHT`, and `JEPRA_TARGET_MOMENTUM`.
 - `Conv2d` has backprop support and optimizer updates; encoder-level backward/grad plumbing is now in place.
 - There is no real evaluation harness, no benchmark runner, and no model checkpointing or serialization path.
 

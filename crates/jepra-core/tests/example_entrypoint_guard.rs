@@ -52,4 +52,12 @@ fn temporal_examples_keep_predictor_mode_wiring_explicit() {
         projected_src.contains("run_config.predictor_mode"),
         "projected temporal example should route predictor mode through run config"
     );
+    assert!(
+        unprojected_src.contains("run_config.temporal_task_mode"),
+        "unprojected temporal example should route temporal task through run config"
+    );
+    assert!(
+        projected_src.contains("run_config.temporal_task_mode"),
+        "projected temporal example should route temporal task through run config"
+    );
 }
