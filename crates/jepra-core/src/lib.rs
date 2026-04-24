@@ -15,6 +15,7 @@ pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
 pub use predictor::{
     BottleneckPredictor, BottleneckPredictorGrads, Predictor, PredictorGrads, PredictorModule,
+    ResidualBottleneckPredictor, ResidualBottleneckPredictorGrads,
 };
 pub use regularizers::{
     RepresentationHealthStats, combine_projection_grads, gaussian_moment_regularizer,

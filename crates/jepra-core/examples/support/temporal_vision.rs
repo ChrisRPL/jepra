@@ -36,6 +36,7 @@ impl CompactEncoderMode {
 pub enum PredictorMode {
     Baseline,
     Bottleneck,
+    ResidualBottleneck,
 }
 
 impl PredictorMode {
@@ -43,6 +44,7 @@ impl PredictorMode {
         match self {
             Self::Baseline => "baseline",
             Self::Bottleneck => "bottleneck",
+            Self::ResidualBottleneck => "residual-bottleneck",
         }
     }
 }
@@ -178,8 +180,9 @@ fn predictor_mode_from_args(args: &[String]) -> PredictorMode {
         .map(|raw_mode| match raw_mode {
             "baseline" => PredictorMode::Baseline,
             "bottleneck" => PredictorMode::Bottleneck,
+            "residual-bottleneck" => PredictorMode::ResidualBottleneck,
             _ => panic!(
-                "unsupported value for --predictor-mode: {} (expected baseline|bottleneck)",
+                "unsupported value for --predictor-mode: {} (expected baseline|bottleneck|residual-bottleneck)",
                 raw_mode
             ),
         })
@@ -420,6 +423,14 @@ mod temporal_vision_config_tests {
         assert_eq!(
             predictor_mode_from_args(&args_with(&["--predictor-mode", "bottleneck"])),
             PredictorMode::Bottleneck
+        );
+    }
+
+    #[test]
+    fn predictor_mode_parses_residual_bottleneck() {
+        assert_eq!(
+            predictor_mode_from_args(&args_with(&["--predictor-mode", "residual-bottleneck"])),
+            PredictorMode::ResidualBottleneck
         );
     }
 

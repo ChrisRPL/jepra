@@ -12,6 +12,7 @@ Read with `VISION.md`.
   - CLI/env control via `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, `--target-momentum-warmup-steps`, optional projection aliases (`--target-projection-momentum`, `--target-projection-momentum-end`), and `JEPRA_TARGET_MOMENTUM`.
 - Projection regularization utilities now live in core (`regularizers.rs`) instead of example-only support code.
 - Representation-health telemetry now lives in core and is printed by both temporal examples for prediction/target comparison.
+- `ResidualBottleneckPredictor` is available as the compact-capacity identity-skip variant: identity plus bottleneck delta, opt-in only.
 - Current defaults preserve hard target-projector behavior (`momentum = 1.0`) unless explicit tuning is passed.
 - Regression posture:
   - one-step projected loss reduction,
@@ -24,8 +25,8 @@ Read with `VISION.md`.
 
 Current high-value implementation path:
 
-1. Use representation-health telemetry to compare `baseline` vs `bottleneck` with identical temporal seeds.
-2. Add an opt-in residual predictor only if compact predictor evidence shows it is needed.
+1. Compare `baseline`, `bottleneck`, and `residual-bottleneck` with identical temporal seeds.
+2. Promote no defaults yet; use health telemetry to decide whether residual is stable enough for stronger compact encoder runs.
 3. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Focused Review (Projected Path Hardening)

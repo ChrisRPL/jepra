@@ -97,6 +97,17 @@ pub struct BottleneckPredictorGrads {
     pub grad_fc3: LinearGrads,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResidualBottleneckPredictor {
+    pub delta: BottleneckPredictor,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResidualBottleneckPredictorGrads {
+    pub grad_input: Tensor,
+    pub grad_delta: BottleneckPredictorGrads,
+}
+
 impl BottleneckPredictor {
     pub fn new(fc1: Linear, fc2: Linear, fc3: Linear) -> Self {
         assert!(
@@ -165,5 +176,58 @@ impl PredictorModule for BottleneckPredictor {
 
     fn sgd_step(&mut self, grads: &Self::Grads, lr: f32) {
         BottleneckPredictor::sgd_step(self, grads, lr);
+    }
+}
+
+impl ResidualBottleneckPredictor {
+    pub fn new(delta: BottleneckPredictor) -> Self {
+        let input_dim = delta.fc1.weight.shape[0];
+        let output_dim = delta.fc3.weight.shape[1];
+        assert!(
+            input_dim == output_dim,
+            "ResidualBottleneckPredictor requires matching input/output dims, got {} -> {}",
+            input_dim,
+            output_dim
+        );
+
+        Self { delta }
+    }
+
+    pub fn forward(&self, x: &Tensor) -> Tensor {
+        x.add(&self.delta.forward(x))
+    }
+
+    pub fn backward(&self, x: &Tensor, grad_out: &Tensor) -> ResidualBottleneckPredictorGrads {
+        let grad_delta = self.delta.backward(x, grad_out);
+        let grad_input = grad_out.add(&grad_delta.grad_input);
+
+        ResidualBottleneckPredictorGrads {
+            grad_input,
+            grad_delta,
+        }
+    }
+
+    pub fn sgd_step(&mut self, grads: &ResidualBottleneckPredictorGrads, lr: f32) {
+        self.delta.sgd_step(&grads.grad_delta, lr);
+    }
+}
+
+impl PredictorModule for ResidualBottleneckPredictor {
+    type Grads = ResidualBottleneckPredictorGrads;
+
+    fn forward(&self, x: &Tensor) -> Tensor {
+        ResidualBottleneckPredictor::forward(self, x)
+    }
+
+    fn backward(&self, x: &Tensor, grad_out: &Tensor) -> Self::Grads {
+        ResidualBottleneckPredictor::backward(self, x, grad_out)
+    }
+
+    fn grad_input(grads: &Self::Grads) -> &Tensor {
+        &grads.grad_input
+    }
+
+    fn sgd_step(&mut self, grads: &Self::Grads, lr: f32) {
+        ResidualBottleneckPredictor::sgd_step(self, grads, lr);
     }
 }

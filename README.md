@@ -6,7 +6,7 @@ The crate is published as `jepra-core`.
 ## Current Scope (from `VISION.md`)
 
 - `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline, a compact frozen-encoder option, and optional trainable-encoder updates in temporal JEPA examples
-- baseline two-layer predictors plus an opt-in `BottleneckPredictor` for compact-capacity experiments
+- baseline two-layer predictors plus opt-in `BottleneckPredictor` and `ResidualBottleneckPredictor` variants for compact-capacity experiments
 - lightweight representation-health telemetry for predictor/target comparisons (`mean_abs`, `mean_std`, `min_std`, mean/max off-diagonal covariance)
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
@@ -56,7 +56,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--encoder-lr` (or `--encoder-learning-rate`) enables encoder updates in temporal JEPA runs; `0.0` keeps a frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`, `--compact-encoder-mode base` opts into the original compact variant)
-- `--predictor-mode <baseline|bottleneck>` selects the predictor topology (`baseline` is the default; `bottleneck` is experimental and non-default)
+- `--predictor-mode <baseline|bottleneck|residual-bottleneck>` selects the predictor topology (`baseline` is the default; the others are experimental and non-default)
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)

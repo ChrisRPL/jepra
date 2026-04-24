@@ -4,8 +4,8 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{
-    BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa, Tensor,
-    projection_stats, representation_stats,
+    BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
+    ResidualBottleneckPredictor, Tensor, projection_stats, representation_stats,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -57,13 +57,17 @@ fn make_bottleneck_predictor() -> BottleneckPredictor {
     )
 }
 
+fn make_residual_bottleneck_predictor() -> ResidualBottleneckPredictor {
+    ResidualBottleneckPredictor::new(make_bottleneck_predictor())
+}
+
 fn reduction_thresholds_for_predictor_mode(predictor_mode: PredictorMode) -> (f32, f32) {
     match predictor_mode {
         PredictorMode::Baseline => (
             PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
             PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
         ),
-        PredictorMode::Bottleneck => (1.0, 1.0),
+        PredictorMode::Bottleneck | PredictorMode::ResidualBottleneck => (1.0, 1.0),
     }
 }
 
@@ -93,6 +97,9 @@ fn main() {
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
         PredictorMode::Bottleneck => run_with_predictor(run_config, make_bottleneck_predictor()),
+        PredictorMode::ResidualBottleneck => {
+            run_with_predictor(run_config, make_residual_bottleneck_predictor())
+        }
     }
 }
 

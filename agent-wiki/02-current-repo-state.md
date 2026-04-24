@@ -31,7 +31,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 
 - `tensor.rs`: shape/rank validation, indexing, `get`/`set`, elementwise add, inplace updates, `matmul`, `transpose`, `sum_axis0`, `relu`, `relu_backward`, `global_avg_pool2d`, and `global_avg_pool2d_backward`.
 - `linear.rs`: `Linear`, `LinearGrads`, forward, backward, SGD step.
-- `predictor.rs`: baseline two-layer predictor plus bottleneck predictor, both with ReLU, backward pass, and SGD step.
+- `predictor.rs`: baseline two-layer predictor plus bottleneck and residual-bottleneck predictors, with ReLU, backward pass, and SGD step.
 - `conv.rs`: `Conv2d` with forward, backward, and SGD step APIs.
 - `encoder.rs`: `ConvEncoder` and `EmbeddingEncoder` on top of conv + global average pooling.
 - `regularizers.rs`: JEPA projection regularizer utilities (`gaussian_moment_regularizer`, gradient, projection stats, representation stats, projection-grad combination).

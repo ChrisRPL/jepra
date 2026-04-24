@@ -1,4 +1,6 @@
-use jepra_core::{BottleneckPredictor, Linear, Tensor, mse_loss, mse_loss_grad};
+use jepra_core::{
+    BottleneckPredictor, Linear, ResidualBottleneckPredictor, Tensor, mse_loss, mse_loss_grad,
+};
 
 fn exact_bottleneck_predictor() -> BottleneckPredictor {
     BottleneckPredictor::new(
@@ -114,4 +116,42 @@ fn bottleneck_predictor_sgd_step_reduces_mse_loss() {
         loss_before,
         loss_after
     );
+}
+
+#[test]
+fn residual_bottleneck_predictor_adds_delta_to_input() {
+    let predictor = ResidualBottleneckPredictor::new(BottleneckPredictor::new(
+        Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::zeros(vec![2]),
+        ),
+        Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::zeros(vec![2]),
+        ),
+        Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::zeros(vec![2]),
+        ),
+    ));
+    let x = Tensor::new(vec![1.0, 2.0], vec![1, 2]);
+
+    let out = predictor.forward(&x);
+
+    assert_eq!(out, Tensor::new(vec![2.0, 4.0], vec![1, 2]));
+}
+
+#[test]
+fn residual_bottleneck_predictor_backward_preserves_skip_gradient() {
+    let predictor = ResidualBottleneckPredictor::new(BottleneckPredictor::new(
+        Linear::new(Tensor::zeros(vec![2, 2]), Tensor::zeros(vec![2])),
+        Linear::new(Tensor::zeros(vec![2, 1]), Tensor::zeros(vec![1])),
+        Linear::new(Tensor::zeros(vec![1, 2]), Tensor::zeros(vec![2])),
+    ));
+    let x = Tensor::new(vec![1.0, 2.0], vec![1, 2]);
+    let grad_out = Tensor::new(vec![0.25, -0.75], vec![1, 2]);
+
+    let grads = predictor.backward(&x, &grad_out);
+
+    assert_eq!(grads.grad_input, grad_out);
 }
