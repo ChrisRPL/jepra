@@ -38,8 +38,9 @@ Current high-value implementation path:
 8. Treat prediction-bank v8 margin diagnostics as implemented: predictions sit closer to wrong signed futures than true targets on most samples.
 9. Treat signed objective v9 decomposition as implemented: the dominant signed loss is negative-direction error, not missing candidate construction or raw speed ranking.
 10. Treat signed-margin objective v10 as implemented and rejected by the narrow grid: do not expand weights or promote it.
-11. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
-12. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+11. Treat signed state separability v11 as implemented: current latent and projected state are near random on signed direction, so another loss-only pass is not the next best build step.
+12. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
+13. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
 
@@ -89,7 +90,8 @@ Velocity-trail task axis:
 - Signed objective v9 diagnostics (`2026-04-24`, same sweep): baseline `all=1.305638`, `neg=2.118653`, `pos=0.492622`, `slow=1.349482`, `fast=1.261794`, `sign_gap=-1.626031`, `speed_gap=-0.087688`; residual `all=1.385723`, `neg=2.204694`, `pos=0.566752`, `slow=1.327650`, `fast=1.443796`, `sign_gap=-1.637942`, `speed_gap=0.116146`.
 - Signed-margin objective v10 status: default-off hinge objective is wired for projected `signed-velocity-trail` only. Disabled rows keep signed-margin report fields `na`; enabled rows emit signed-margin loss and active hinge rates.
 - Signed-margin objective v10 grid (`2026-04-24`, weights `0,0.003,0.01,0.03,0.1`): all candidates rejected. Best baseline weight `0.1` gives `val_ratio=0.989425`, `sign_top1=0.552083`, `mrr=0.531250`, `margin_gain=0.084920`, and `ppr_gain=0.010417`.
-- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show the current objective places predictions closer to wrong signed futures than true targets on most samples, v9 shows negative-direction loss dominates, and v10 shows uniform signed-margin shaping is too weak. Next valid step: inspect a stronger direction-aware objective or representation path before bounce/architecture widening.
+- Signed state separability v11 (`2026-04-24`, same sweep): baseline and residual both have latent MRR `0.518229`, latent sign-top1 `0.468750`, projection MRR `0.518229`, and projection sign-top1 `0.468750`; four-candidate random references are MRR `0.520833` and top1 `0.25`.
+- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show predictions closer to wrong signed futures than true targets on most samples, v9 shows negative-direction loss dominates, v10 shows uniform signed-margin shaping is too weak, and v11 shows current state representation is not direction-separable. Next valid step: build a narrow opt-in representation/conditioning probe for signed direction before bounce/architecture widening.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -100,7 +102,7 @@ Velocity-trail task axis:
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v10`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, prediction-bank margin fields, signed objective error decomposition fields, signed-margin objective fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v11`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, prediction-bank margin fields, signed objective error decomposition fields, signed-margin objective fields, signed state separability fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
@@ -162,7 +164,7 @@ Velocity-trail task axis:
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use signed objective error decomposition as the next proof step before bounce or widening the model.
+2. Use signed state separability as the current proof gate; improve representation/conditioning before another objective grid, bounce, or widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed`, `velocity-trail`, and `signed-velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.

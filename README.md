@@ -13,6 +13,7 @@ The crate is published as `jepra-core`.
 - core JEPA projection regularizer utilities for Gaussian moment regularization and projection statistics
 - temporal data now supports one or two moving squares per sample in the synthetic generator
 - temporal examples expose opt-in `velocity-trail` and `signed-velocity-trail` tasks that add previous-position cues while preserving the default `random-speed` task
+- projected signed-task diagnostics include velocity-bank ranking, target/prediction-bank margins, objective decomposition, signed-margin objective probes, and signed state separability
 - unprojected validation helpers and reduction thresholds are centralized in `crates/jepra-core/examples/support/temporal_validation.rs`
 - temporal validation helpers now explicitly panic when validation batches is configured as zero
 
@@ -90,7 +91,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v10 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> signed_bank_neg_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> signed_bank_speed_top1_end=<n|na> target_bank_oracle_mrr_end=<n|na> target_bank_margin_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_objective_sign_gap_end=<n|na> signed_objective_speed_gap_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_margin_active_sign_rate_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v11 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> velocity_bank_top1_end=<n|na> signed_bank_neg_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> signed_bank_speed_top1_end=<n|na> target_bank_oracle_mrr_end=<n|na> target_bank_margin_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_objective_sign_gap_end=<n|na> signed_objective_speed_gap_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_margin_active_sign_rate_end=<n|na> state_latent_mrr_end=<n|na> state_projection_mrr_end=<n|na> state_projection_sign_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -173,6 +174,13 @@ Default-off signed-margin objective probe (`jepra_predictor_compare_v10`):
 - With weight `0.0`, signed-margin metrics remain `na` and the training path does not construct candidate target banks.
 - With weight `>0`, the comparison report emits signed-margin losses and active hinge rates; this is an experiment probe, not a default promotion.
 - Latest narrow grid (`2026-04-24`, weights `0,0.003,0.01,0.03,0.1`) rejects all candidates. Best baseline weight `0.1` improves validation slightly (`val_ratio=0.989425`) and sign top1 to `0.552083`, but margin gain is only `0.084920`, positive-margin-rate gain is only `0.010417`, and MRR remains `0.531250`. Do not expand the grid or promote the objective.
+
+Signed state separability probe (`jepra_predictor_compare_v11`):
+
+- The probe is report-only and only runs for projected `signed-velocity-trail`.
+- It splits deterministic validation batches into support/query halves, builds nearest-centroid classifiers over true signed `dx` for current latent state `z_t` and online projected state, then reports MRR/top1/sign-top1/mean-rank.
+- Latest compact-stronger signed evidence (`2026-04-24`, seeds `11000..11002`, baseline and residual-bottleneck): latent and projection separability are both near random (`state_latent_mrr=0.518229`, `state_projection_mrr=0.518229`, `state_*_sign_top1=0.468750`; random references are MRR `0.520833`, top1 `0.25`).
+- Interpretation: signed failure is not only a prediction objective issue. The current state representation itself does not separate direction, so the next build step should add a narrow representation/conditioning probe before more loss shaping, residual promotion, depthwise convolution, or spatial predictor work.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 
