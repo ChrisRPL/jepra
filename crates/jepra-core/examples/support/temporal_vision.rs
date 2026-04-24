@@ -32,6 +32,21 @@ impl CompactEncoderMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PredictorMode {
+    Baseline,
+    Bottleneck,
+}
+
+impl PredictorMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Baseline => "baseline",
+            Self::Bottleneck => "bottleneck",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TemporalRunConfig {
     pub train_base_seed: u64,
@@ -39,6 +54,7 @@ pub struct TemporalRunConfig {
     pub log_every: usize,
     pub encoder_learning_rate: f32,
     pub compact_encoder_mode: CompactEncoderMode,
+    pub predictor_mode: PredictorMode,
     pub target_projection_momentum: f32,
     pub target_projection_momentum_start: f32,
     pub target_projection_momentum_end: f32,
@@ -84,6 +100,7 @@ impl TemporalRunConfig {
                 .or_else(|| parse_usize_arg(&args, "--target-projection-warmup-steps"))
                 .unwrap_or(0);
         let compact_encoder_mode = compact_encoder_mode_from_args(&args);
+        let predictor_mode = predictor_mode_from_args(&args);
         assert_target_projection_momentum(target_projection_momentum_end);
         assert_target_projection_momentum(target_projection_momentum_start);
 
@@ -104,6 +121,7 @@ impl TemporalRunConfig {
             log_every,
             encoder_learning_rate,
             compact_encoder_mode,
+            predictor_mode,
             target_projection_momentum: target_projection_momentum_end,
             target_projection_momentum_start,
             target_projection_momentum_end,
@@ -153,6 +171,19 @@ fn parse_compact_encoder_mode_flag(args: &[String]) -> Option<CompactEncoderMode
             raw_mode
         ),
     })
+}
+
+fn predictor_mode_from_args(args: &[String]) -> PredictorMode {
+    parse_arg_value(args, "--predictor-mode")
+        .map(|raw_mode| match raw_mode {
+            "baseline" => PredictorMode::Baseline,
+            "bottleneck" => PredictorMode::Bottleneck,
+            _ => panic!(
+                "unsupported value for --predictor-mode: {} (expected baseline|bottleneck)",
+                raw_mode
+            ),
+        })
+        .unwrap_or(PredictorMode::Baseline)
 }
 
 pub fn training_steps(default_steps: usize) -> usize {
@@ -310,7 +341,10 @@ pub fn assert_temporal_experiment_improved(
 
 #[cfg(test)]
 mod temporal_vision_config_tests {
-    use super::{CompactEncoderMode, TemporalRunConfig, compact_encoder_mode_from_args};
+    use super::{
+        CompactEncoderMode, PredictorMode, TemporalRunConfig, compact_encoder_mode_from_args,
+        predictor_mode_from_args,
+    };
 
     fn args_with(values: &[&str]) -> Vec<String> {
         values
@@ -374,6 +408,28 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn predictor_mode_defaults_to_baseline() {
+        assert_eq!(
+            predictor_mode_from_args(&args_with(&[])),
+            PredictorMode::Baseline
+        );
+    }
+
+    #[test]
+    fn predictor_mode_parses_bottleneck() {
+        assert_eq!(
+            predictor_mode_from_args(&args_with(&["--predictor-mode", "bottleneck"])),
+            PredictorMode::Bottleneck
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "unsupported value for --predictor-mode")]
+    fn predictor_mode_panics_on_invalid_value() {
+        predictor_mode_from_args(&args_with(&["--predictor-mode", "wide"]));
+    }
+
+    #[test]
     fn target_projection_momentum_warms_linearly_to_end() {
         let config = TemporalRunConfig {
             train_base_seed: 0,
@@ -381,6 +437,7 @@ mod temporal_vision_config_tests {
             log_every: 1,
             encoder_learning_rate: 0.0,
             compact_encoder_mode: CompactEncoderMode::Disabled,
+            predictor_mode: PredictorMode::Baseline,
             target_projection_momentum: 0.5,
             target_projection_momentum_start: 1.0,
             target_projection_momentum_end: 0.5,

@@ -16,7 +16,7 @@ use projected_temporal::{
     projected_validation_batch_losses_from_base_seed,
 };
 use temporal_vision::{
-    BATCH_SIZE, CompactEncoderMode, TemporalExperimentSummary, TemporalRunConfig,
+    BATCH_SIZE, CompactEncoderMode, PredictorMode, TemporalExperimentSummary, TemporalRunConfig,
     assert_seed_range_has_both_motion_modes,
     assert_seed_range_has_single_and_double_square_batch_examples,
     assert_temporal_experiment_improved, make_compact_frozen_encoder, make_frozen_encoder,
@@ -221,6 +221,7 @@ fn projected_run_with_encoder(
         log_every: 120,
         encoder_learning_rate: encoder_lr,
         compact_encoder_mode,
+        predictor_mode: PredictorMode::Baseline,
         target_projection_momentum: 0.5,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.5,
@@ -565,6 +566,7 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         log_every: 1,
         encoder_learning_rate: 0.0,
         compact_encoder_mode: CompactEncoderMode::Disabled,
+        predictor_mode: PredictorMode::Baseline,
         target_projection_momentum: 0.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.0,
@@ -1206,6 +1208,7 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             log_every: steps,
             encoder_learning_rate: 0.0,
             compact_encoder_mode: CompactEncoderMode::Disabled,
+            predictor_mode: PredictorMode::Baseline,
             target_projection_momentum: momentum,
             target_projection_momentum_start: momentum,
             target_projection_momentum_end: momentum,

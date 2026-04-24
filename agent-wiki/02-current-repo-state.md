@@ -8,10 +8,10 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Regression coverage is in `crates/jepra-core/tests/projected_temporal_support.rs`; fixed-seed hardening evidence is captured in README and reproducible via `run-projected-momentum-sweep.sh`.
 
 ## Next Action
-- Current phase focus is projected warmup + protocol evidence:
-  - keep default path conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`) while adding warmup controls,
-  - schedule target momentum from `--target-momentum-start` toward `--target-momentum-end` and verify target drift trend,
-  - protocol evidence loop with fixed-seed projected sweeps at `target_projection_momentum ∈ {1.0, 0.5, 0.0}` is active and must remain clean before any default change.
+- Current phase focus has shifted from projected hardening to compact model capacity:
+  - keep default path conservative (`--encoder-lr=0.0`, `target_projection_momentum=1.0`, `--predictor-mode=baseline`),
+  - add and compare opt-in Rust-native predictor variants without changing defaults,
+  - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.
 
 ## Anti-Goals
 - no implicit trainable projected encoder defaults
@@ -30,7 +30,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 
 - `tensor.rs`: shape/rank validation, indexing, `get`/`set`, elementwise add, inplace updates, `matmul`, `transpose`, `sum_axis0`, `relu`, `relu_backward`, `global_avg_pool2d`, and `global_avg_pool2d_backward`.
 - `linear.rs`: `Linear`, `LinearGrads`, forward, backward, SGD step.
-- `predictor.rs`: two-layer predictor with ReLU between layers, backward pass, SGD step.
+- `predictor.rs`: baseline two-layer predictor plus bottleneck predictor, both with ReLU, backward pass, and SGD step.
 - `conv.rs`: `Conv2d` with forward, backward, and SGD step APIs.
 - `encoder.rs`: `ConvEncoder` and `EmbeddingEncoder` on top of conv + global average pooling.
 - `regularizers.rs`: JEPA projection regularizer utilities (`gaussian_moment_regularizer`, gradient, projection stats, projection-grad combination).

@@ -3,14 +3,17 @@ mod projected_temporal;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use jepra_core::{Linear, Predictor, ProjectedVisionJepa, Tensor, projection_stats};
+use jepra_core::{
+    BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa, Tensor,
+    projection_stats,
+};
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     projected_validation_batch_losses_from_base_seed,
 };
 use temporal_vision::{
-    CompactEncoderMode, MIN_MIXED_MODE_COUNT, assert_temporal_contract,
+    CompactEncoderMode, MIN_MIXED_MODE_COUNT, PredictorMode, assert_temporal_contract,
     assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch,
     make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
@@ -46,6 +49,24 @@ fn make_predictor() -> Predictor {
     )
 }
 
+fn make_bottleneck_predictor() -> BottleneckPredictor {
+    BottleneckPredictor::new(
+        Linear::randn(PROJECTION_DIM, 8, 0.1, 21_100),
+        Linear::randn(8, 2, 0.1, 21_101),
+        Linear::randn(2, PROJECTION_DIM, 0.1, 21_102),
+    )
+}
+
+fn reduction_thresholds_for_predictor_mode(predictor_mode: PredictorMode) -> (f32, f32) {
+    match predictor_mode {
+        PredictorMode::Baseline => (
+            PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+            PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        ),
+        PredictorMode::Bottleneck => (1.0, 1.0),
+    }
+}
+
 fn main() {
     let run_config =
         temporal_vision::TemporalRunConfig::from_args(TRAIN_BASE_SEED, NUM_STEPS, LOG_EVERY, 0.0);
@@ -64,7 +85,21 @@ fn main() {
         "temporal run config | encoder variant {}",
         run_config.compact_encoder_mode.as_str()
     );
+    println!(
+        "temporal run config | predictor mode {}",
+        run_config.predictor_mode.as_str()
+    );
 
+    match run_config.predictor_mode {
+        PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
+        PredictorMode::Bottleneck => run_with_predictor(run_config, make_bottleneck_predictor()),
+    }
+}
+
+fn run_with_predictor<P>(run_config: temporal_vision::TemporalRunConfig, predictor: P)
+where
+    P: PredictorModule,
+{
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(run_config.train_base_seed, 1);
     let (val_probe_t, val_probe_t1) = make_validation_batch(PROJECTED_VALIDATION_BASE_SEED, 0);
@@ -113,7 +148,6 @@ fn main() {
     };
     let online_projector = make_projector();
     let target_projector = online_projector.clone();
-    let predictor = make_predictor();
     let mut model =
         ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor)
             .with_target_projection_momentum(run_config.target_projection_momentum_at_step(1));
@@ -227,6 +261,8 @@ fn main() {
         );
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);
+    let (train_reduction_threshold, validation_reduction_threshold) =
+        reduction_thresholds_for_predictor_mode(run_config.predictor_mode);
 
     assert_temporal_experiment_improved(
         "projected",
@@ -234,8 +270,8 @@ fn main() {
         final_train_total_loss,
         initial_val_total_loss,
         final_val_total_loss,
-        PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        train_reduction_threshold,
+        validation_reduction_threshold,
     );
 
     println!(

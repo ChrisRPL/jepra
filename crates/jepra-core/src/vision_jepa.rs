@@ -1,20 +1,23 @@
 use crate::encoder::EmbeddingEncoder;
 use crate::linear::Linear;
 use crate::losses::{mse_loss, mse_loss_grad};
-use crate::predictor::Predictor;
+use crate::predictor::{Predictor, PredictorModule};
 use crate::regularizers::{
     combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
 };
 use crate::tensor::Tensor;
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct VisionJepa {
+pub struct VisionJepa<P = Predictor> {
     pub encoder: EmbeddingEncoder,
-    pub predictor: Predictor,
+    pub predictor: P,
 }
 
-impl VisionJepa {
-    pub fn new(encoder: EmbeddingEncoder, predictor: Predictor) -> Self {
+impl<P> VisionJepa<P>
+where
+    P: PredictorModule,
+{
+    pub fn new(encoder: EmbeddingEncoder, predictor: P) -> Self {
         Self { encoder, predictor }
     }
 
@@ -57,7 +60,7 @@ impl VisionJepa {
 
         let grad_out = mse_loss_grad(&pred, &target);
         let grads = self.predictor.backward(&z_t, &grad_out);
-        let encoder_grads = self.encoder.backward(x_t, &grads.grad_input);
+        let encoder_grads = self.encoder.backward(x_t, P::grad_input(&grads));
         self.predictor.sgd_step(&grads, predictor_lr);
         self.encoder.sgd_step(&encoder_grads, encoder_lr);
 
@@ -74,20 +77,23 @@ impl VisionJepa {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ProjectedVisionJepa {
+pub struct ProjectedVisionJepa<P = Predictor> {
     pub encoder: EmbeddingEncoder,
     pub projector: Linear,
     pub target_projector: Linear,
-    pub predictor: Predictor,
+    pub predictor: P,
     pub target_projection_momentum: f32,
 }
 
-impl ProjectedVisionJepa {
+impl<P> ProjectedVisionJepa<P>
+where
+    P: PredictorModule,
+{
     pub fn new(
         encoder: EmbeddingEncoder,
         projector: Linear,
         target_projector: Linear,
-        predictor: Predictor,
+        predictor: P,
     ) -> Self {
         Self {
             encoder,
@@ -211,7 +217,7 @@ impl ProjectedVisionJepa {
         let reg_grad = gaussian_moment_regularizer_grad(&projection_t);
         let pred_grads = self.predictor.backward(&projection_t, &prediction_grad);
         let projection_grad =
-            combine_projection_grads(&pred_grads.grad_input, &reg_grad, regularizer_weight);
+            combine_projection_grads(P::grad_input(&pred_grads), &reg_grad, regularizer_weight);
         let projector_grads = self.projector.backward(&z_t, &projection_grad);
         let encoder_grads = self.encoder.backward(x_t, &projector_grads.grad_input);
 

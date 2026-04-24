@@ -31,3 +31,25 @@ fn legacy_vision_jepa_example_delegates_to_random_temporal_entrypoint() {
         "random-temporal example should still expose a canonical main entrypoint"
     );
 }
+
+#[test]
+fn temporal_examples_keep_predictor_mode_wiring_explicit() {
+    let manifest_dir = env!("CARGO_MANIFEST_DIR");
+    let unprojected_path = format!("{manifest_dir}/examples/train_vision_jepa_random_temporal.rs");
+    let projected_path =
+        format!("{manifest_dir}/examples/train_vision_jepa_random_temporal_projected.rs");
+
+    let unprojected_src =
+        fs::read_to_string(unprojected_path).expect("unprojected temporal source must exist");
+    let projected_src =
+        fs::read_to_string(projected_path).expect("projected temporal source must exist");
+
+    assert!(
+        unprojected_src.contains("run_config.predictor_mode"),
+        "unprojected temporal example should route predictor mode through run config"
+    );
+    assert!(
+        projected_src.contains("run_config.predictor_mode"),
+        "projected temporal example should route predictor mode through run config"
+    );
+}

@@ -1,7 +1,7 @@
 use super::temporal_vision::{BATCH_SIZE, make_temporal_batch};
 use jepra_core::{
-    EmbeddingEncoder, Linear, Predictor, ProjectedVisionJepa, Tensor, gaussian_moment_regularizer,
-    mse_loss,
+    EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa, Tensor,
+    gaussian_moment_regularizer, mse_loss,
 };
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -20,15 +20,18 @@ pub fn projected_target(
 }
 
 #[allow(dead_code)]
-pub fn projected_batch_losses(
+pub fn projected_batch_losses<P>(
     encoder: &EmbeddingEncoder,
     online_projector: &Linear,
     target_projector: &Linear,
-    predictor: &Predictor,
+    predictor: &P,
     x_t: &Tensor,
     x_t1: &Tensor,
     regularizer_weight: f32,
-) -> (f32, f32, f32) {
+) -> (f32, f32, f32)
+where
+    P: PredictorModule,
+{
     let z_t = encoder.forward(x_t);
     let projection_t = online_projector.forward(&z_t);
     let pred = predictor.forward(&projection_t);
@@ -53,17 +56,18 @@ pub fn projected_step(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn projected_validation_batch_losses<F>(
+pub fn projected_validation_batch_losses<P, F>(
     encoder: &EmbeddingEncoder,
     online_projector: &Linear,
     target_projector: &Linear,
-    predictor: &Predictor,
+    predictor: &P,
     regularizer_weight: f32,
     base_seed: u64,
     validation_batches: usize,
     make_batch: F,
 ) -> (f32, f32, f32)
 where
+    P: PredictorModule,
     F: Fn(u64) -> (Tensor, Tensor),
 {
     assert!(
@@ -99,12 +103,15 @@ where
     )
 }
 
-pub fn projected_validation_batch_losses_from_base_seed(
-    model: &ProjectedVisionJepa,
+pub fn projected_validation_batch_losses_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
     regularizer_weight: f32,
     validation_base_seed: u64,
     validation_batches: usize,
-) -> (f32, f32, f32) {
+) -> (f32, f32, f32)
+where
+    P: PredictorModule,
+{
     projected_validation_batch_losses(
         &model.encoder,
         &model.projector,

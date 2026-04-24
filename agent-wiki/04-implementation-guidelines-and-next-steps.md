@@ -20,6 +20,13 @@ Read with `VISION.md`.
   - fixed + multi-seed convergence gates.
 
 ## Next Action
+
+Current high-value implementation path:
+
+1. Finish `BottleneckPredictor` as an opt-in Rust-native predictor variant.
+2. Compare `baseline` vs `bottleneck` with the current temporal examples using identical seeds.
+3. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+
 ## Focused Review (Projected Path Hardening)
 
 - `TemporalRunConfig` already supports `--target-momentum`, `--target-momentum-start`, `--target-momentum-end`, and warmup args in `examples/support/temporal_vision.rs`, with a linear schedule tested in `target_projection_momentum_warms_linearly_to_end`.
@@ -29,6 +36,7 @@ Read with `VISION.md`.
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
+- Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
 

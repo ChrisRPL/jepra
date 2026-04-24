@@ -13,7 +13,9 @@ pub use encoder::{ConvEncoder, ConvEncoderGrads, EmbeddingEncoder, EmbeddingEnco
 pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
 pub use losses::{mse_loss, mse_loss_grad};
-pub use predictor::{Predictor, PredictorGrads};
+pub use predictor::{
+    BottleneckPredictor, BottleneckPredictorGrads, Predictor, PredictorGrads, PredictorModule,
+};
 pub use regularizers::{
     combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
     projection_stats,

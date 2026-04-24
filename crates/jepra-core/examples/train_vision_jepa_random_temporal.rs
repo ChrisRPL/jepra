@@ -3,14 +3,14 @@ mod temporal_validation;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
-use jepra_core::{Linear, Predictor, Tensor, VisionJepa};
+use jepra_core::{BottleneckPredictor, Linear, Predictor, PredictorModule, Tensor, VisionJepa};
 use temporal_validation::{
     UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, UNPROJECTED_VALIDATION_BASE_SEED,
     UNPROJECTED_VALIDATION_BATCHES, UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     temporal_validation_batch_loss_from_base_seed,
 };
 use temporal_vision::{
-    CompactEncoderMode, MIN_MIXED_MODE_COUNT, assert_temporal_contract,
+    CompactEncoderMode, MIN_MIXED_MODE_COUNT, PredictorMode, assert_temporal_contract,
     assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_stronger, make_frozen_encoder, make_train_batch,
     make_validation_batch, make_validation_batch_with_both_motion_modes, motion_mode_counts,
@@ -44,6 +44,56 @@ fn make_predictor() -> Predictor {
     Predictor::new(fc1, fc2)
 }
 
+fn make_bottleneck_predictor() -> BottleneckPredictor {
+    let fc1 = Linear::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, 0.0, 1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, 0.0, 1.0, 0.0, //
+                0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
+            ],
+            vec![3, 6],
+        ),
+        Tensor::zeros(vec![6]),
+    );
+    let fc2 = Linear::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, //
+                0.0, 1.0, //
+                0.0, 0.0, //
+                1.0, 0.0, //
+                0.0, 1.0, //
+                0.0, 0.0,
+            ],
+            vec![6, 2],
+        ),
+        Tensor::zeros(vec![2]),
+    );
+    let fc3 = Linear::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, 0.5, //
+                0.0, 1.0, 0.5,
+            ],
+            vec![2, 3],
+        ),
+        Tensor::zeros(vec![3]),
+    );
+
+    BottleneckPredictor::new(fc1, fc2, fc3)
+}
+
+fn reduction_thresholds_for_predictor_mode(predictor_mode: PredictorMode) -> (f32, f32) {
+    match predictor_mode {
+        PredictorMode::Baseline => (
+            UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+            UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        ),
+        PredictorMode::Bottleneck => (1.0, 1.0),
+    }
+}
+
 pub fn main() {
     let run_config = temporal_vision::TemporalRunConfig::from_args(
         TRAIN_BASE_SEED,
@@ -64,7 +114,21 @@ pub fn main() {
         "temporal run config | encoder variant {}",
         run_config.compact_encoder_mode.as_str()
     );
+    println!(
+        "temporal run config | predictor mode {}",
+        run_config.predictor_mode.as_str()
+    );
 
+    match run_config.predictor_mode {
+        PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
+        PredictorMode::Bottleneck => run_with_predictor(run_config, make_bottleneck_predictor()),
+    }
+}
+
+fn run_with_predictor<P>(run_config: temporal_vision::TemporalRunConfig, predictor: P)
+where
+    P: PredictorModule,
+{
     let (train_probe_t, train_probe_t1) = make_train_batch(run_config.train_base_seed, 0);
     let (train_probe_next_t, train_probe_next_t1) = make_train_batch(run_config.train_base_seed, 1);
     let (val_probe_t, val_probe_t1) = make_validation_batch(UNPROJECTED_VALIDATION_BASE_SEED, 0);
@@ -111,7 +175,6 @@ pub fn main() {
         CompactEncoderMode::Base => make_compact_frozen_encoder(),
         CompactEncoderMode::Stronger => make_compact_frozen_encoder_stronger(),
     };
-    let predictor = make_predictor();
     let mut model = VisionJepa::new(encoder, predictor);
 
     let initial_z_t = model.encode(&train_probe_t);
@@ -179,6 +242,8 @@ pub fn main() {
     let final_z_t = model.encode(&train_probe_t);
     let final_pred = model.predict_next_latent(&train_probe_t);
     let final_target = model.target_latent(&train_probe_t1);
+    let (train_reduction_threshold, validation_reduction_threshold) =
+        reduction_thresholds_for_predictor_mode(run_config.predictor_mode);
 
     assert_temporal_experiment_improved(
         "unprojected",
@@ -186,8 +251,8 @@ pub fn main() {
         final_train_loss,
         initial_val_loss,
         final_val_loss,
-        UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-        UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+        train_reduction_threshold,
+        validation_reduction_threshold,
     );
 
     println!(
