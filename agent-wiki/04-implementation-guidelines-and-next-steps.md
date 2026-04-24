@@ -27,7 +27,7 @@ Current high-value implementation path:
 
 1. Run `run-predictor-mode-comparison.sh` before predictor-topology policy changes.
 2. Treat `residual-bottleneck` as the current projected-path candidate, not a default, because 300-step frozen-base evidence is strong for projected but not unprojected.
-3. Next build step: compare residual-bottleneck on `compact-stronger` projected runs before adding new spatial primitives.
+3. Compact-stronger evidence is healthy but drift-confounded; the next build step is controlling residual/projector drift, not adding depthwise primitives.
 4. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
@@ -39,6 +39,13 @@ Latest paired evidence (`2026-04-24`, 300 steps, frozen-base encoder):
 - Projected baseline is healthy but worse: final validation prediction loss `0.216322`.
 - Projected bottleneck collapses prediction spread: final validation prediction loss `5.042953`, prediction `min_std=0.000000`, `status=accept_failed`.
 - Decision: residual is worth building on for projected compact-capacity work; bottleneck alone should not drive projected topology.
+
+Compact-stronger projected evidence (`2026-04-24`, 300 steps, seeds `11000..11002`, zero-init residual delta head):
+
+- Baseline: mean final validation prediction loss `1.158821`, mean prediction `min_std=0.467862`, mean target drift `0.006282`, all rows `ok`.
+- Bottleneck: mean final validation prediction loss `1.299992`, prediction `min_std=0.000000`, all rows `accept_failed`.
+- Residual-bottleneck: mean final validation prediction loss `1.119540`, mean prediction `min_std=0.473802`, mean target drift `0.140347`, all rows `ok`.
+- Decision: residual is still the projected candidate, but the compact-stronger advantage is modest and drift-confounded. Do not promote defaults; do not implement depthwise yet.
 
 ## Focused Review (Projected Path Hardening)
 

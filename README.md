@@ -95,6 +95,16 @@ schema=jepra_predictor_compare_v1 path=projected predictor=residual-bottleneck s
 
 Interpretation: residual-bottleneck is the current projected-path candidate because it keeps prediction health close to target health and materially beats projected baseline on this seed. It is not promoted as a default because unprojected baseline still has the lower final validation loss.
 
+Compact-stronger projected predictor evidence (`2026-04-24`, 300 steps, seeds `11000..11002`, target momentum `1.0`, zero-init residual delta head):
+
+```text
+baseline mean val_pred_end=1.158821 | mean pred_min_std=0.467862 | mean target_drift=0.006282 | status=ok all seeds
+bottleneck mean val_pred_end=1.299992 | mean pred_min_std=0.000000 | mean target_drift=0.000701 | status=accept_failed all seeds
+residual-bottleneck mean val_pred_end=1.119540 | mean pred_min_std=0.473802 | mean target_drift=0.140347 | status=ok all seeds
+```
+
+Interpretation: residual-bottleneck remains healthy and modestly improves compact-stronger projected validation on 2/3 seeds, but target drift is much higher than baseline. Treat it as a projected candidate with drift confound, not a default promotion or a trigger for depthwise work.
+
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 
 ```bash

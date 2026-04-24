@@ -88,16 +88,45 @@ fn make_bottleneck_predictor() -> BottleneckPredictor {
 }
 
 fn make_residual_bottleneck_predictor() -> ResidualBottleneckPredictor {
-    ResidualBottleneckPredictor::new(make_bottleneck_predictor())
+    let fc1 = Linear::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, 0.0, 1.0, 0.0, 0.0, //
+                0.0, 1.0, 0.0, 0.0, 1.0, 0.0, //
+                0.0, 0.0, 1.0, 0.0, 0.0, 1.0,
+            ],
+            vec![3, 6],
+        ),
+        Tensor::zeros(vec![6]),
+    );
+    let fc2 = Linear::new(
+        Tensor::new(
+            vec![
+                1.0, 0.0, //
+                0.0, 1.0, //
+                0.0, 0.0, //
+                1.0, 0.0, //
+                0.0, 1.0, //
+                0.0, 0.0,
+            ],
+            vec![6, 2],
+        ),
+        Tensor::zeros(vec![2]),
+    );
+    let fc3 = Linear::new(Tensor::zeros(vec![2, 3]), Tensor::zeros(vec![3]));
+
+    ResidualBottleneckPredictor::new(BottleneckPredictor::new(fc1, fc2, fc3))
 }
 
-fn reduction_thresholds_for_predictor_mode(predictor_mode: PredictorMode) -> (f32, f32) {
-    match predictor_mode {
-        PredictorMode::Baseline => (
+fn reduction_thresholds_for_run_config(
+    run_config: temporal_vision::TemporalRunConfig,
+) -> (f32, f32) {
+    match (run_config.compact_encoder_mode, run_config.predictor_mode) {
+        (CompactEncoderMode::Disabled, PredictorMode::Baseline) => (
             UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
             UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
         ),
-        PredictorMode::Bottleneck | PredictorMode::ResidualBottleneck => (1.0, 1.0),
+        _ => (1.0, 1.0),
     }
 }
 
@@ -256,7 +285,7 @@ where
     let final_pred = model.predict_next_latent(&train_probe_t);
     let final_target = model.target_latent(&train_probe_t1);
     let (train_reduction_threshold, validation_reduction_threshold) =
-        reduction_thresholds_for_predictor_mode(run_config.predictor_mode);
+        reduction_thresholds_for_run_config(run_config);
 
     assert_temporal_experiment_improved(
         "unprojected",

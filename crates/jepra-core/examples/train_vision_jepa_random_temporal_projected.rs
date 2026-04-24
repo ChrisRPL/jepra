@@ -58,16 +58,25 @@ fn make_bottleneck_predictor() -> BottleneckPredictor {
 }
 
 fn make_residual_bottleneck_predictor() -> ResidualBottleneckPredictor {
-    ResidualBottleneckPredictor::new(make_bottleneck_predictor())
+    ResidualBottleneckPredictor::new(BottleneckPredictor::new(
+        Linear::randn(PROJECTION_DIM, 8, 0.1, 21_100),
+        Linear::randn(8, 2, 0.1, 21_101),
+        Linear::new(
+            Tensor::zeros(vec![2, PROJECTION_DIM]),
+            Tensor::zeros(vec![PROJECTION_DIM]),
+        ),
+    ))
 }
 
-fn reduction_thresholds_for_predictor_mode(predictor_mode: PredictorMode) -> (f32, f32) {
-    match predictor_mode {
-        PredictorMode::Baseline => (
+fn reduction_thresholds_for_run_config(
+    run_config: temporal_vision::TemporalRunConfig,
+) -> (f32, f32) {
+    match (run_config.compact_encoder_mode, run_config.predictor_mode) {
+        (CompactEncoderMode::Disabled, PredictorMode::Baseline) => (
             PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
             PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
         ),
-        PredictorMode::Bottleneck | PredictorMode::ResidualBottleneck => (1.0, 1.0),
+        _ => (1.0, 1.0),
     }
 }
 
@@ -275,7 +284,7 @@ where
     let (final_projection_mean_abs, final_projection_var_mean) =
         projection_stats(&final_projection_t);
     let (train_reduction_threshold, validation_reduction_threshold) =
-        reduction_thresholds_for_predictor_mode(run_config.predictor_mode);
+        reduction_thresholds_for_run_config(run_config);
 
     assert_temporal_experiment_improved(
         "projected",
