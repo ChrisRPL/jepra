@@ -13,7 +13,8 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_batch_losses, projected_signed_target_bank_separability_from_base_seed,
+    projected_batch_losses, projected_signed_prediction_bank_margin_from_base_seed,
+    projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
     projected_validation_batch_losses, projected_validation_batch_losses_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
@@ -561,6 +562,50 @@ fn projected_signed_target_bank_separability_is_finite_and_balanced() {
     );
     assert_eq!(separability.negative_samples, separability.positive_samples);
     assert_eq!(separability.slow_samples, separability.fast_samples);
+}
+
+#[test]
+fn projected_signed_prediction_bank_margin_is_finite_and_balanced() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let margin = projected_signed_prediction_bank_margin_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for value in [
+        margin.true_distance,
+        margin.nearest_wrong_distance,
+        margin.margin,
+        margin.min_margin,
+        margin.positive_margin_rate,
+        margin.sign_margin,
+        margin.speed_margin,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!(margin.true_distance >= 0.0);
+    assert!(margin.nearest_wrong_distance >= 0.0);
+    assert!((0.0..=1.0).contains(&margin.positive_margin_rate));
+    assert!(
+        margin.min_margin <= margin.margin,
+        "minimum margin should not exceed mean margin: {:.6} > {:.6}",
+        margin.min_margin,
+        margin.margin
+    );
+    assert_eq!(margin.samples, BATCH_SIZE * 2);
+    assert_eq!(
+        margin.negative_samples + margin.positive_samples,
+        margin.samples
+    );
+    assert_eq!(margin.slow_samples + margin.fast_samples, margin.samples);
+    assert_eq!(margin.negative_samples, margin.positive_samples);
+    assert_eq!(margin.slow_samples, margin.fast_samples);
 }
 
 #[test]

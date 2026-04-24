@@ -69,6 +69,22 @@ pub struct ProjectedSignedTargetBankSeparability {
     pub fast_samples: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedPredictionBankMargin {
+    pub true_distance: f32,
+    pub nearest_wrong_distance: f32,
+    pub margin: f32,
+    pub min_margin: f32,
+    pub positive_margin_rate: f32,
+    pub sign_margin: f32,
+    pub speed_margin: f32,
+    pub samples: usize,
+    pub negative_samples: usize,
+    pub positive_samples: usize,
+    pub slow_samples: usize,
+    pub fast_samples: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct VelocityBankSampleOutcome {
     true_dx: isize,
@@ -84,6 +100,15 @@ struct SignedTargetBankSampleOutcome {
     true_distance: f32,
     nearest_wrong_distance: f32,
     rank: usize,
+    sign_margin: f32,
+    speed_margin: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedPredictionBankMarginSampleOutcome {
+    true_dx: isize,
+    true_distance: f32,
+    nearest_wrong_distance: f32,
     sign_margin: f32,
     speed_margin: f32,
 }
@@ -125,6 +150,22 @@ struct SignedTargetBankSeparabilityTotals {
     positive_nearest_wrong_distance: f32,
     slow_nearest_wrong_distance: f32,
     fast_nearest_wrong_distance: f32,
+    sign_margin: f32,
+    speed_margin: f32,
+    samples: usize,
+    negative_samples: usize,
+    positive_samples: usize,
+    slow_samples: usize,
+    fast_samples: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedPredictionBankMarginTotals {
+    true_distance: f32,
+    nearest_wrong_distance: f32,
+    margin: f32,
+    min_margin: f32,
+    positive_margin_count: usize,
     sign_margin: f32,
     speed_margin: f32,
     samples: usize,
@@ -292,6 +333,75 @@ impl SignedTargetBankSeparabilityTotals {
                 / self.slow_samples as f32,
             fast_nearest_wrong_distance: self.fast_nearest_wrong_distance
                 / self.fast_samples as f32,
+            sign_margin: self.sign_margin / self.samples as f32,
+            speed_margin: self.speed_margin / self.samples as f32,
+            samples: self.samples,
+            negative_samples: self.negative_samples,
+            positive_samples: self.positive_samples,
+            slow_samples: self.slow_samples,
+            fast_samples: self.fast_samples,
+        }
+    }
+}
+
+impl SignedPredictionBankMarginTotals {
+    fn observe(&mut self, outcome: SignedPredictionBankMarginSampleOutcome) {
+        let margin = outcome.nearest_wrong_distance - outcome.true_distance;
+        assert!(
+            outcome.true_distance.is_finite()
+                && outcome.nearest_wrong_distance.is_finite()
+                && margin.is_finite()
+                && outcome.sign_margin.is_finite()
+                && outcome.speed_margin.is_finite(),
+            "signed prediction-bank margin produced non-finite metrics"
+        );
+
+        if self.samples == 0 {
+            self.min_margin = margin;
+        } else {
+            self.min_margin = self.min_margin.min(margin);
+        }
+
+        self.samples += 1;
+        self.true_distance += outcome.true_distance;
+        self.nearest_wrong_distance += outcome.nearest_wrong_distance;
+        self.margin += margin;
+        self.positive_margin_count += usize::from(margin > VELOCITY_BANK_TIE_EPSILON);
+        self.sign_margin += outcome.sign_margin;
+        self.speed_margin += outcome.speed_margin;
+
+        if outcome.true_dx < 0 {
+            self.negative_samples += 1;
+        } else {
+            self.positive_samples += 1;
+        }
+
+        if outcome.true_dx.abs() == 1 {
+            self.slow_samples += 1;
+        } else {
+            self.fast_samples += 1;
+        }
+    }
+
+    fn into_margin(self) -> ProjectedSignedPredictionBankMargin {
+        assert!(
+            self.samples > 0,
+            "signed prediction-bank margin has no samples"
+        );
+        assert!(
+            self.negative_samples > 0
+                && self.positive_samples > 0
+                && self.slow_samples > 0
+                && self.fast_samples > 0,
+            "signed prediction-bank margin requires all sign/speed groups"
+        );
+
+        ProjectedSignedPredictionBankMargin {
+            true_distance: self.true_distance / self.samples as f32,
+            nearest_wrong_distance: self.nearest_wrong_distance / self.samples as f32,
+            margin: self.margin / self.samples as f32,
+            min_margin: self.min_margin,
+            positive_margin_rate: self.positive_margin_count as f32 / self.samples as f32,
             sign_margin: self.sign_margin / self.samples as f32,
             speed_margin: self.speed_margin / self.samples as f32,
             samples: self.samples,
@@ -683,6 +793,56 @@ where
     totals.into_separability()
 }
 
+#[allow(dead_code)]
+pub fn projected_signed_prediction_bank_margin<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> ProjectedSignedPredictionBankMargin
+where
+    P: PredictorModule,
+{
+    let outcomes = projected_signed_prediction_bank_margin_sample_outcomes(model, x_t, x_t1);
+    let mut totals = SignedPredictionBankMarginTotals::default();
+
+    for outcome in outcomes {
+        totals.observe(outcome);
+    }
+
+    totals.into_margin()
+}
+
+pub fn projected_signed_prediction_bank_margin_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedPredictionBankMargin
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedPredictionBankMarginTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let outcomes = projected_signed_prediction_bank_margin_sample_outcomes(model, &x_t, &x_t1);
+
+        for outcome in outcomes {
+            totals.observe(outcome);
+        }
+    }
+
+    totals.into_margin()
+}
+
 fn projected_velocity_bank_sample_outcomes<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -766,6 +926,81 @@ where
             rank,
             sign_correct: true_sign_distance < other_sign_distance - VELOCITY_BANK_TIE_EPSILON,
             speed_correct: true_speed_distance < other_speed_distance - VELOCITY_BANK_TIE_EPSILON,
+        });
+    }
+
+    outcomes
+}
+
+fn projected_signed_prediction_bank_margin_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Vec<SignedPredictionBankMarginSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "prediction-bank margin expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "prediction-bank margin expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = candidate_dx_bank
+        .iter()
+        .map(|candidate_dx| {
+            let candidate_x_t1 =
+                make_signed_velocity_trail_candidate_target_batch(x_t, *candidate_dx);
+            model.target_projection(&candidate_x_t1)
+        })
+        .collect::<Vec<_>>();
+    let batch_size = x_t.shape[0];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = candidate_dx_bank
+            .iter()
+            .position(|candidate_dx| *candidate_dx == true_dx)
+            .unwrap_or_else(|| panic!("true dx {} is missing from signed target bank", true_dx));
+        let distances = candidate_targets
+            .iter()
+            .map(|candidate_target| sample_squared_distance(&prediction, candidate_target, sample))
+            .collect::<Vec<_>>();
+        let true_distance = distances[true_index];
+        let nearest_wrong_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |candidate_index, _| {
+                candidate_index != true_index
+            });
+        let true_sign_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.signum() == true_dx.signum()
+            });
+        let other_sign_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.signum() != true_dx.signum()
+            });
+        let true_speed_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.abs() == true_dx.abs()
+            });
+        let other_speed_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.abs() != true_dx.abs()
+            });
+
+        outcomes.push(SignedPredictionBankMarginSampleOutcome {
+            true_dx,
+            true_distance,
+            nearest_wrong_distance,
+            sign_margin: other_sign_distance - true_sign_distance,
+            speed_margin: other_speed_distance - true_speed_distance,
         });
     }
 
