@@ -13,9 +13,9 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_batch_losses, projected_signed_velocity_bank_breakdown_from_base_seed,
-    projected_step, projected_validation_batch_losses,
-    projected_validation_batch_losses_from_base_seed,
+    projected_batch_losses, projected_signed_target_bank_separability_from_base_seed,
+    projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
+    projected_validation_batch_losses, projected_validation_batch_losses_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed,
 };
@@ -504,6 +504,63 @@ fn projected_signed_velocity_bank_breakdown_is_finite_and_balanced() {
         breakdown.true_fast_best_slow + breakdown.true_fast_best_fast,
         breakdown.fast_samples
     );
+}
+
+#[test]
+fn projected_signed_target_bank_separability_is_finite_and_balanced() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let separability = projected_signed_target_bank_separability_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for value in [
+        separability.oracle_mrr,
+        separability.oracle_top1,
+        separability.true_distance,
+        separability.max_true_distance,
+        separability.nearest_wrong_distance,
+        separability.min_nearest_wrong_distance,
+        separability.margin,
+        separability.min_margin,
+        separability.negative_nearest_wrong_distance,
+        separability.positive_nearest_wrong_distance,
+        separability.slow_nearest_wrong_distance,
+        separability.fast_nearest_wrong_distance,
+        separability.sign_margin,
+        separability.speed_margin,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!((0.0..=1.0).contains(&separability.oracle_mrr));
+    assert!((0.0..=1.0).contains(&separability.oracle_top1));
+    assert!(separability.true_distance >= 0.0);
+    assert!(separability.max_true_distance >= separability.true_distance);
+    assert!(separability.nearest_wrong_distance >= 0.0);
+    assert!(separability.min_nearest_wrong_distance >= 0.0);
+    assert!(separability.margin >= 0.0);
+    assert!(separability.min_margin >= 0.0);
+    assert!(separability.negative_nearest_wrong_distance >= 0.0);
+    assert!(separability.positive_nearest_wrong_distance >= 0.0);
+    assert!(separability.slow_nearest_wrong_distance >= 0.0);
+    assert!(separability.fast_nearest_wrong_distance >= 0.0);
+    assert_eq!(separability.samples, BATCH_SIZE * 2);
+    assert_eq!(
+        separability.negative_samples + separability.positive_samples,
+        separability.samples
+    );
+    assert_eq!(
+        separability.slow_samples + separability.fast_samples,
+        separability.samples
+    );
+    assert_eq!(separability.negative_samples, separability.positive_samples);
+    assert_eq!(separability.slow_samples, separability.fast_samples);
 }
 
 #[test]

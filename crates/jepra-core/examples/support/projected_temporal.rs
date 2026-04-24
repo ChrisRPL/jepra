@@ -46,6 +46,29 @@ pub struct ProjectedSignedVelocityBankBreakdown {
     pub true_fast_best_fast: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedTargetBankSeparability {
+    pub oracle_mrr: f32,
+    pub oracle_top1: f32,
+    pub true_distance: f32,
+    pub max_true_distance: f32,
+    pub nearest_wrong_distance: f32,
+    pub min_nearest_wrong_distance: f32,
+    pub margin: f32,
+    pub min_margin: f32,
+    pub negative_nearest_wrong_distance: f32,
+    pub positive_nearest_wrong_distance: f32,
+    pub slow_nearest_wrong_distance: f32,
+    pub fast_nearest_wrong_distance: f32,
+    pub sign_margin: f32,
+    pub speed_margin: f32,
+    pub samples: usize,
+    pub negative_samples: usize,
+    pub positive_samples: usize,
+    pub slow_samples: usize,
+    pub fast_samples: usize,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct VelocityBankSampleOutcome {
     true_dx: isize,
@@ -53,6 +76,16 @@ struct VelocityBankSampleOutcome {
     rank: usize,
     sign_correct: bool,
     speed_correct: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedTargetBankSampleOutcome {
+    true_dx: isize,
+    true_distance: f32,
+    nearest_wrong_distance: f32,
+    rank: usize,
+    sign_margin: f32,
+    speed_margin: f32,
 }
 
 #[derive(Debug, Default)]
@@ -76,6 +109,29 @@ struct SignedVelocityBankBreakdownTotals {
     true_slow_best_fast: usize,
     true_fast_best_slow: usize,
     true_fast_best_fast: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedTargetBankSeparabilityTotals {
+    reciprocal_rank: f32,
+    top1: usize,
+    true_distance: f32,
+    max_true_distance: f32,
+    nearest_wrong_distance: f32,
+    min_nearest_wrong_distance: f32,
+    margin: f32,
+    min_margin: f32,
+    negative_nearest_wrong_distance: f32,
+    positive_nearest_wrong_distance: f32,
+    slow_nearest_wrong_distance: f32,
+    fast_nearest_wrong_distance: f32,
+    sign_margin: f32,
+    speed_margin: f32,
+    samples: usize,
+    negative_samples: usize,
+    positive_samples: usize,
+    slow_samples: usize,
+    fast_samples: usize,
 }
 
 impl SignedVelocityBankBreakdownTotals {
@@ -152,6 +208,97 @@ impl SignedVelocityBankBreakdownTotals {
             true_slow_best_fast: self.true_slow_best_fast,
             true_fast_best_slow: self.true_fast_best_slow,
             true_fast_best_fast: self.true_fast_best_fast,
+        }
+    }
+}
+
+impl SignedTargetBankSeparabilityTotals {
+    fn observe(&mut self, outcome: SignedTargetBankSampleOutcome) {
+        let margin = outcome.nearest_wrong_distance - outcome.true_distance;
+        assert!(
+            outcome.true_distance.is_finite()
+                && margin.is_finite()
+                && outcome.rank > 0
+                && outcome.nearest_wrong_distance.is_finite()
+                && outcome.sign_margin.is_finite()
+                && outcome.speed_margin.is_finite(),
+            "signed target-bank separability produced non-finite metrics"
+        );
+
+        if self.samples == 0 {
+            self.min_nearest_wrong_distance = outcome.nearest_wrong_distance;
+            self.min_margin = margin;
+        } else {
+            self.min_nearest_wrong_distance = self
+                .min_nearest_wrong_distance
+                .min(outcome.nearest_wrong_distance);
+            self.min_margin = self.min_margin.min(margin);
+        }
+
+        self.samples += 1;
+        self.reciprocal_rank += 1.0 / outcome.rank as f32;
+        self.top1 += usize::from(outcome.rank == 1);
+        self.true_distance += outcome.true_distance;
+        self.max_true_distance = self.max_true_distance.max(outcome.true_distance);
+        self.nearest_wrong_distance += outcome.nearest_wrong_distance;
+        self.margin += margin;
+        self.sign_margin += outcome.sign_margin;
+        self.speed_margin += outcome.speed_margin;
+
+        if outcome.true_dx < 0 {
+            self.negative_nearest_wrong_distance += outcome.nearest_wrong_distance;
+            self.negative_samples += 1;
+        } else {
+            self.positive_nearest_wrong_distance += outcome.nearest_wrong_distance;
+            self.positive_samples += 1;
+        }
+
+        if outcome.true_dx.abs() == 1 {
+            self.slow_nearest_wrong_distance += outcome.nearest_wrong_distance;
+            self.slow_samples += 1;
+        } else {
+            self.fast_nearest_wrong_distance += outcome.nearest_wrong_distance;
+            self.fast_samples += 1;
+        }
+    }
+
+    fn into_separability(self) -> ProjectedSignedTargetBankSeparability {
+        assert!(
+            self.samples > 0,
+            "signed target-bank separability has no samples"
+        );
+        assert!(
+            self.negative_samples > 0
+                && self.positive_samples > 0
+                && self.slow_samples > 0
+                && self.fast_samples > 0,
+            "signed target-bank separability requires all sign/speed groups"
+        );
+
+        ProjectedSignedTargetBankSeparability {
+            oracle_mrr: self.reciprocal_rank / self.samples as f32,
+            oracle_top1: self.top1 as f32 / self.samples as f32,
+            true_distance: self.true_distance / self.samples as f32,
+            max_true_distance: self.max_true_distance,
+            nearest_wrong_distance: self.nearest_wrong_distance / self.samples as f32,
+            min_nearest_wrong_distance: self.min_nearest_wrong_distance,
+            margin: self.margin / self.samples as f32,
+            min_margin: self.min_margin,
+            negative_nearest_wrong_distance: self.negative_nearest_wrong_distance
+                / self.negative_samples as f32,
+            positive_nearest_wrong_distance: self.positive_nearest_wrong_distance
+                / self.positive_samples as f32,
+            slow_nearest_wrong_distance: self.slow_nearest_wrong_distance
+                / self.slow_samples as f32,
+            fast_nearest_wrong_distance: self.fast_nearest_wrong_distance
+                / self.fast_samples as f32,
+            sign_margin: self.sign_margin / self.samples as f32,
+            speed_margin: self.speed_margin / self.samples as f32,
+            samples: self.samples,
+            negative_samples: self.negative_samples,
+            positive_samples: self.positive_samples,
+            slow_samples: self.slow_samples,
+            fast_samples: self.fast_samples,
         }
     }
 }
@@ -486,6 +633,56 @@ where
     totals.into_breakdown()
 }
 
+#[allow(dead_code)]
+pub fn projected_signed_target_bank_separability<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> ProjectedSignedTargetBankSeparability
+where
+    P: PredictorModule,
+{
+    let outcomes = projected_signed_target_bank_sample_outcomes(model, x_t, x_t1);
+    let mut totals = SignedTargetBankSeparabilityTotals::default();
+
+    for outcome in outcomes {
+        totals.observe(outcome);
+    }
+
+    totals.into_separability()
+}
+
+pub fn projected_signed_target_bank_separability_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedTargetBankSeparability
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedTargetBankSeparabilityTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let outcomes = projected_signed_target_bank_sample_outcomes(model, &x_t, &x_t1);
+
+        for outcome in outcomes {
+            totals.observe(outcome);
+        }
+    }
+
+    totals.into_separability()
+}
+
 fn projected_velocity_bank_sample_outcomes<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -575,6 +772,100 @@ where
     outcomes
 }
 
+fn projected_signed_target_bank_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Vec<SignedTargetBankSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "target-bank separability expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "target-bank separability expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let candidate_targets = candidate_dx_bank
+        .iter()
+        .map(|candidate_dx| {
+            let candidate_x_t1 =
+                make_signed_velocity_trail_candidate_target_batch(x_t, *candidate_dx);
+            model.target_projection(&candidate_x_t1)
+        })
+        .collect::<Vec<_>>();
+    let actual_target = model.target_projection(x_t1);
+    let batch_size = x_t.shape[0];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = candidate_dx_bank
+            .iter()
+            .position(|candidate_dx| *candidate_dx == true_dx)
+            .unwrap_or_else(|| panic!("true dx {} is missing from signed target bank", true_dx));
+        let distances = candidate_targets
+            .iter()
+            .map(|candidate_target| {
+                sample_squared_distance(&actual_target, candidate_target, sample)
+            })
+            .collect::<Vec<_>>();
+        let true_distance = distances[true_index];
+        let mut rank = 1usize;
+
+        for (candidate_index, distance) in distances.iter().enumerate() {
+            if candidate_index != true_index
+                && *distance <= true_distance + VELOCITY_BANK_TIE_EPSILON
+            {
+                rank += 1;
+            }
+        }
+
+        let nearest_wrong_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |candidate_index, _| {
+                candidate_index != true_index
+            });
+        let same_sign_wrong_distance = best_indexed_group_distance(
+            candidate_dx_bank,
+            &distances,
+            |candidate_index, candidate_dx| {
+                candidate_index != true_index && candidate_dx.signum() == true_dx.signum()
+            },
+        );
+        let opposite_sign_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.signum() != true_dx.signum()
+            });
+        let same_speed_wrong_distance = best_indexed_group_distance(
+            candidate_dx_bank,
+            &distances,
+            |candidate_index, candidate_dx| {
+                candidate_index != true_index && candidate_dx.abs() == true_dx.abs()
+            },
+        );
+        let different_speed_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.abs() != true_dx.abs()
+            });
+
+        outcomes.push(SignedTargetBankSampleOutcome {
+            true_dx,
+            true_distance,
+            nearest_wrong_distance,
+            rank,
+            sign_margin: opposite_sign_distance - same_sign_wrong_distance,
+            speed_margin: different_speed_distance - same_speed_wrong_distance,
+        });
+    }
+
+    outcomes
+}
+
 fn best_group_distance(
     candidate_dx_bank: &[isize],
     distances: &[f32],
@@ -584,6 +875,22 @@ fn best_group_distance(
 
     for (candidate_index, candidate_dx) in candidate_dx_bank.iter().enumerate() {
         if include_candidate(*candidate_dx) {
+            best_distance = best_distance.min(distances[candidate_index]);
+        }
+    }
+
+    best_distance
+}
+
+fn best_indexed_group_distance(
+    candidate_dx_bank: &[isize],
+    distances: &[f32],
+    mut include_candidate: impl FnMut(usize, isize) -> bool,
+) -> f32 {
+    let mut best_distance = f32::INFINITY;
+
+    for (candidate_index, candidate_dx) in candidate_dx_bank.iter().enumerate() {
+        if include_candidate(candidate_index, *candidate_dx) {
             best_distance = best_distance.min(distances[candidate_index]);
         }
     }

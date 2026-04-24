@@ -10,7 +10,8 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
+    ProjectedVelocityBankRanking, projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed,
@@ -217,6 +218,8 @@ where
     let initial_velocity_bank_ranking = maybe_projected_velocity_bank_ranking(&model, run_config);
     let initial_signed_velocity_bank_breakdown =
         maybe_projected_signed_velocity_bank_breakdown(&model, run_config);
+    let initial_signed_target_bank_separability =
+        maybe_projected_signed_target_bank_separability(&model, run_config);
 
     println!(
         "initial | projection sample0 {:?} | target {:?}",
@@ -243,6 +246,7 @@ where
     println!("initial | target drift {:.6}", initial_projection_drift);
     print_velocity_bank_ranking("initial", initial_velocity_bank_ranking);
     print_signed_velocity_bank_breakdown("initial", initial_signed_velocity_bank_breakdown);
+    print_signed_target_bank_separability("initial", initial_signed_target_bank_separability);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
         run_config,
@@ -338,6 +342,8 @@ where
     let final_velocity_bank_ranking = maybe_projected_velocity_bank_ranking(&model, run_config);
     let final_signed_velocity_bank_breakdown =
         maybe_projected_signed_velocity_bank_breakdown(&model, run_config);
+    let final_signed_target_bank_separability =
+        maybe_projected_signed_target_bank_separability(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
         reduction_thresholds_for_run_config(run_config);
 
@@ -390,6 +396,7 @@ where
     println!("final | target drift {:.6}", final_projection_drift);
     print_velocity_bank_ranking("final", final_velocity_bank_ranking);
     print_signed_velocity_bank_breakdown("final", final_signed_velocity_bank_breakdown);
+    print_signed_target_bank_separability("final", final_signed_target_bank_separability);
 }
 
 fn maybe_projected_velocity_bank_ranking<P>(
@@ -464,6 +471,51 @@ fn print_signed_velocity_bank_breakdown(
             breakdown.true_slow_best_fast,
             breakdown.true_fast_best_slow,
             breakdown.true_fast_best_fast
+        );
+    }
+}
+
+fn maybe_projected_signed_target_bank_separability<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedTargetBankSeparability>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(projected_signed_target_bank_separability_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+    ))
+}
+
+fn print_signed_target_bank_separability(
+    tag: &str,
+    separability: Option<ProjectedSignedTargetBankSeparability>,
+) {
+    if let Some(separability) = separability {
+        println!(
+            "{} | target bank separability oracle_mrr {:.6} | top1 {:.6} | true_dist {:.6} | true_dist_max {:.6} | nearest_wrong {:.6} | nearest_wrong_min {:.6} | margin {:.6} | margin_min {:.6} | neg_nearest_wrong {:.6} | pos_nearest_wrong {:.6} | slow_nearest_wrong {:.6} | fast_nearest_wrong {:.6} | sign_margin {:.6} | speed_margin {:.6} | samples {}",
+            tag,
+            separability.oracle_mrr,
+            separability.oracle_top1,
+            separability.true_distance,
+            separability.max_true_distance,
+            separability.nearest_wrong_distance,
+            separability.min_nearest_wrong_distance,
+            separability.margin,
+            separability.min_margin,
+            separability.negative_nearest_wrong_distance,
+            separability.positive_nearest_wrong_distance,
+            separability.slow_nearest_wrong_distance,
+            separability.fast_nearest_wrong_distance,
+            separability.sign_margin,
+            separability.speed_margin,
+            separability.samples,
         );
     }
 }
