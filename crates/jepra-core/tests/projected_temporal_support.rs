@@ -17,6 +17,7 @@ use projected_temporal::{
     projected_batch_losses, projected_signed_margin_objective_loss_and_grad,
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
+    projected_signed_prediction_bank_unit_geometry_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
@@ -848,6 +849,45 @@ fn projected_signed_prediction_bank_margin_is_finite_and_balanced() {
     assert_eq!(margin.slow_samples + margin.fast_samples, margin.samples);
     assert_eq!(margin.negative_samples, margin.positive_samples);
     assert_eq!(margin.slow_samples, margin.fast_samples);
+}
+
+#[test]
+fn projected_signed_prediction_bank_unit_geometry_is_finite_and_bounded() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let geometry = projected_signed_prediction_bank_unit_geometry_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for value in [
+        geometry.mrr,
+        geometry.top1,
+        geometry.true_distance,
+        geometry.nearest_wrong_distance,
+        geometry.margin,
+        geometry.positive_margin_rate,
+        geometry.sign_margin,
+        geometry.speed_margin,
+        geometry.prediction_center_norm,
+        geometry.true_target_center_norm,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!((0.25..=1.0).contains(&geometry.mrr));
+    assert!((0.0..=1.0).contains(&geometry.top1));
+    assert!(geometry.true_distance >= 0.0);
+    assert!(geometry.nearest_wrong_distance >= 0.0);
+    assert!((0.0..=1.0).contains(&geometry.positive_margin_rate));
+    assert!(geometry.prediction_center_norm >= 0.0);
+    assert!(geometry.true_target_center_norm >= 0.0);
+    assert_eq!(geometry.samples, BATCH_SIZE * 2);
+    assert_eq!(geometry.candidates, 4);
 }
 
 #[test]

@@ -12,14 +12,15 @@ use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
-    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
-    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
-    projected_signed_bank_softmax_objective_loss_and_grad,
+    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedStateSeparability,
+    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
+    ProjectedVelocityBankRanking, projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
+    projected_signed_prediction_bank_unit_geometry_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
@@ -252,6 +253,8 @@ where
         maybe_projected_signed_target_bank_separability(&model, run_config);
     let initial_signed_prediction_bank_margin =
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
+    let initial_signed_prediction_bank_unit_geometry =
+        maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
     let initial_signed_bank_softmax_objective_report =
@@ -286,6 +289,10 @@ where
     print_signed_velocity_bank_breakdown("initial", initial_signed_velocity_bank_breakdown);
     print_signed_target_bank_separability("initial", initial_signed_target_bank_separability);
     print_signed_prediction_bank_margin("initial", initial_signed_prediction_bank_margin);
+    print_signed_prediction_bank_unit_geometry(
+        "initial",
+        initial_signed_prediction_bank_unit_geometry,
+    );
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
         "initial",
@@ -438,6 +445,8 @@ where
         maybe_projected_signed_target_bank_separability(&model, run_config);
     let final_signed_prediction_bank_margin =
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
+    let final_signed_prediction_bank_unit_geometry =
+        maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
     let final_signed_objective_error_breakdown =
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let final_signed_margin_objective_report =
@@ -500,6 +509,7 @@ where
     print_signed_velocity_bank_breakdown("final", final_signed_velocity_bank_breakdown);
     print_signed_target_bank_separability("final", final_signed_target_bank_separability);
     print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
+    print_signed_prediction_bank_unit_geometry("final", final_signed_prediction_bank_unit_geometry);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
@@ -681,6 +691,50 @@ fn print_signed_prediction_bank_margin(
             margin.sign_margin,
             margin.speed_margin,
             margin.samples,
+        );
+    }
+}
+
+fn maybe_projected_signed_prediction_bank_unit_geometry<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedPredictionBankUnitGeometry>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(
+        projected_signed_prediction_bank_unit_geometry_from_base_seed(
+            model,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+        ),
+    )
+}
+
+fn print_signed_prediction_bank_unit_geometry(
+    tag: &str,
+    geometry: Option<ProjectedSignedPredictionBankUnitGeometry>,
+) {
+    if let Some(geometry) = geometry {
+        println!(
+            "{} | signed prediction bank unit geometry mrr {:.6} | top1 {:.6} | true_distance {:.6} | nearest_wrong_distance {:.6} | margin {:.6} | positive_margin_rate {:.6} | sign_margin {:.6} | speed_margin {:.6} | prediction_center_norm {:.6} | true_target_center_norm {:.6} | samples {} | candidates {}",
+            tag,
+            geometry.mrr,
+            geometry.top1,
+            geometry.true_distance,
+            geometry.nearest_wrong_distance,
+            geometry.margin,
+            geometry.positive_margin_rate,
+            geometry.sign_margin,
+            geometry.speed_margin,
+            geometry.prediction_center_norm,
+            geometry.true_target_center_norm,
+            geometry.samples,
+            geometry.candidates,
         );
     }
 }

@@ -102,6 +102,22 @@ pub struct ProjectedSignedPredictionBankMargin {
     pub fast_samples: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedPredictionBankUnitGeometry {
+    pub mrr: f32,
+    pub top1: f32,
+    pub true_distance: f32,
+    pub nearest_wrong_distance: f32,
+    pub margin: f32,
+    pub positive_margin_rate: f32,
+    pub sign_margin: f32,
+    pub speed_margin: f32,
+    pub prediction_center_norm: f32,
+    pub true_target_center_norm: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedObjectiveErrorBreakdown {
@@ -149,6 +165,18 @@ struct SignedPredictionBankMarginSampleOutcome {
     nearest_wrong_distance: f32,
     sign_margin: f32,
     speed_margin: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedPredictionBankUnitGeometrySampleOutcome {
+    true_dx: isize,
+    true_distance: f32,
+    nearest_wrong_distance: f32,
+    rank: usize,
+    sign_margin: f32,
+    speed_margin: f32,
+    prediction_center_norm: f32,
+    true_target_center_norm: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -228,6 +256,25 @@ struct SignedPredictionBankMarginTotals {
     positive_margin_count: usize,
     sign_margin: f32,
     speed_margin: f32,
+    samples: usize,
+    negative_samples: usize,
+    positive_samples: usize,
+    slow_samples: usize,
+    fast_samples: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedPredictionBankUnitGeometryTotals {
+    reciprocal_rank: f32,
+    top1: usize,
+    true_distance: f32,
+    nearest_wrong_distance: f32,
+    margin: f32,
+    positive_margin_count: usize,
+    sign_margin: f32,
+    speed_margin: f32,
+    prediction_center_norm: f32,
+    true_target_center_norm: f32,
     samples: usize,
     negative_samples: usize,
     positive_samples: usize,
@@ -701,6 +748,76 @@ impl SignedPredictionBankMarginTotals {
             positive_samples: self.positive_samples,
             slow_samples: self.slow_samples,
             fast_samples: self.fast_samples,
+        }
+    }
+}
+
+impl SignedPredictionBankUnitGeometryTotals {
+    fn observe(&mut self, outcome: SignedPredictionBankUnitGeometrySampleOutcome) {
+        let margin = outcome.nearest_wrong_distance - outcome.true_distance;
+        assert!(
+            outcome.true_distance.is_finite()
+                && outcome.nearest_wrong_distance.is_finite()
+                && margin.is_finite()
+                && outcome.rank > 0
+                && outcome.sign_margin.is_finite()
+                && outcome.speed_margin.is_finite()
+                && outcome.prediction_center_norm.is_finite()
+                && outcome.true_target_center_norm.is_finite(),
+            "signed prediction-bank unit geometry produced non-finite metrics"
+        );
+
+        self.samples += 1;
+        self.reciprocal_rank += 1.0 / outcome.rank as f32;
+        self.top1 += usize::from(outcome.rank == 1);
+        self.true_distance += outcome.true_distance;
+        self.nearest_wrong_distance += outcome.nearest_wrong_distance;
+        self.margin += margin;
+        self.positive_margin_count += usize::from(margin > VELOCITY_BANK_TIE_EPSILON);
+        self.sign_margin += outcome.sign_margin;
+        self.speed_margin += outcome.speed_margin;
+        self.prediction_center_norm += outcome.prediction_center_norm;
+        self.true_target_center_norm += outcome.true_target_center_norm;
+
+        if outcome.true_dx < 0 {
+            self.negative_samples += 1;
+        } else {
+            self.positive_samples += 1;
+        }
+
+        if outcome.true_dx.abs() == 1 {
+            self.slow_samples += 1;
+        } else {
+            self.fast_samples += 1;
+        }
+    }
+
+    fn into_geometry(self) -> ProjectedSignedPredictionBankUnitGeometry {
+        assert!(
+            self.samples > 0,
+            "signed prediction-bank unit geometry has no samples"
+        );
+        assert!(
+            self.negative_samples > 0
+                && self.positive_samples > 0
+                && self.slow_samples > 0
+                && self.fast_samples > 0,
+            "signed prediction-bank unit geometry requires all sign/speed groups"
+        );
+
+        ProjectedSignedPredictionBankUnitGeometry {
+            mrr: self.reciprocal_rank / self.samples as f32,
+            top1: self.top1 as f32 / self.samples as f32,
+            true_distance: self.true_distance / self.samples as f32,
+            nearest_wrong_distance: self.nearest_wrong_distance / self.samples as f32,
+            margin: self.margin / self.samples as f32,
+            positive_margin_rate: self.positive_margin_count as f32 / self.samples as f32,
+            sign_margin: self.sign_margin / self.samples as f32,
+            speed_margin: self.speed_margin / self.samples as f32,
+            prediction_center_norm: self.prediction_center_norm / self.samples as f32,
+            true_target_center_norm: self.true_target_center_norm / self.samples as f32,
+            samples: self.samples,
+            candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
         }
     }
 }
@@ -1240,6 +1357,57 @@ where
 }
 
 #[allow(dead_code)]
+pub fn projected_signed_prediction_bank_unit_geometry<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> ProjectedSignedPredictionBankUnitGeometry
+where
+    P: PredictorModule,
+{
+    let outcomes = projected_signed_prediction_bank_unit_geometry_sample_outcomes(model, x_t, x_t1);
+    let mut totals = SignedPredictionBankUnitGeometryTotals::default();
+
+    for outcome in outcomes {
+        totals.observe(outcome);
+    }
+
+    totals.into_geometry()
+}
+
+pub fn projected_signed_prediction_bank_unit_geometry_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedPredictionBankUnitGeometry
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedPredictionBankUnitGeometryTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let outcomes =
+            projected_signed_prediction_bank_unit_geometry_sample_outcomes(model, &x_t, &x_t1);
+
+        for outcome in outcomes {
+            totals.observe(outcome);
+        }
+    }
+
+    totals.into_geometry()
+}
+
+#[allow(dead_code)]
 pub fn projected_signed_objective_error_breakdown_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
     validation_base_seed: u64,
@@ -1763,6 +1931,118 @@ where
     outcomes
 }
 
+fn projected_signed_prediction_bank_unit_geometry_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Vec<SignedPredictionBankUnitGeometrySampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "prediction-bank unit geometry expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "prediction-bank unit geometry expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = candidate_dx_bank
+        .iter()
+        .map(|candidate_dx| {
+            let candidate_x_t1 =
+                make_signed_velocity_trail_candidate_target_batch(x_t, *candidate_dx);
+            model.target_projection(&candidate_x_t1)
+        })
+        .collect::<Vec<_>>();
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let mut centroid = vec![0.0f32; projection_dim];
+
+        for candidate_target in &candidate_targets {
+            for (feature_idx, centroid_value) in centroid.iter_mut().enumerate() {
+                *centroid_value += candidate_target.get(&[sample, feature_idx]);
+            }
+        }
+        for centroid_value in &mut centroid {
+            *centroid_value /= candidate_targets.len() as f32;
+        }
+
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let prediction_center_norm = vector_l2_norm(&prediction_centered);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let candidate_units = candidate_targets
+            .iter()
+            .map(|candidate_target| {
+                let centered = centered_sample_vector(candidate_target, sample, &centroid);
+                unit_vector(&centered)
+            })
+            .collect::<Vec<_>>();
+        let true_target_center_norm = vector_l2_norm(&centered_sample_vector(
+            &candidate_targets[true_index],
+            sample,
+            &centroid,
+        ));
+        let distances = candidate_units
+            .iter()
+            .map(|candidate_unit| vector_squared_distance(&prediction_unit, candidate_unit))
+            .collect::<Vec<_>>();
+        let true_distance = distances[true_index];
+        let nearest_wrong_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |candidate_index, _| {
+                candidate_index != true_index
+            });
+        let mut rank = 1usize;
+
+        for (candidate_index, distance) in distances.iter().enumerate() {
+            if candidate_index != true_index
+                && *distance <= true_distance + VELOCITY_BANK_TIE_EPSILON
+            {
+                rank += 1;
+            }
+        }
+
+        let true_sign_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.signum() == true_dx.signum()
+            });
+        let other_sign_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.signum() != true_dx.signum()
+            });
+        let true_speed_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.abs() == true_dx.abs()
+            });
+        let other_speed_distance =
+            best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+                candidate_dx.abs() != true_dx.abs()
+            });
+
+        outcomes.push(SignedPredictionBankUnitGeometrySampleOutcome {
+            true_dx,
+            true_distance,
+            nearest_wrong_distance,
+            rank,
+            sign_margin: other_sign_distance - true_sign_distance,
+            speed_margin: other_speed_distance - true_speed_distance,
+            prediction_center_norm,
+            true_target_center_norm,
+        });
+    }
+
+    outcomes
+}
+
 fn projected_signed_target_bank_sample_outcomes<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -1855,6 +2135,55 @@ where
     }
 
     outcomes
+}
+
+fn centered_sample_vector(tensor: &Tensor, sample: usize, centroid: &[f32]) -> Vec<f32> {
+    assert!(
+        tensor.shape.len() == 2,
+        "centered sample vector expects rank-2 tensor, got {:?}",
+        tensor.shape
+    );
+    assert_eq!(
+        tensor.shape[1],
+        centroid.len(),
+        "centered sample vector dim mismatch"
+    );
+
+    centroid
+        .iter()
+        .enumerate()
+        .map(|(feature_idx, centroid_value)| tensor.get(&[sample, feature_idx]) - centroid_value)
+        .collect()
+}
+
+fn vector_l2_norm(vector: &[f32]) -> f32 {
+    vector.iter().map(|value| value * value).sum::<f32>().sqrt()
+}
+
+fn unit_vector(vector: &[f32]) -> Vec<f32> {
+    let norm = vector_l2_norm(vector);
+
+    if norm <= VELOCITY_BANK_TIE_EPSILON {
+        return vec![0.0; vector.len()];
+    }
+
+    vector.iter().map(|value| value / norm).collect()
+}
+
+fn vector_squared_distance(left: &[f32], right: &[f32]) -> f32 {
+    assert_eq!(
+        left.len(),
+        right.len(),
+        "vector distance expects matching lengths"
+    );
+
+    left.iter()
+        .zip(right.iter())
+        .map(|(left_value, right_value)| {
+            let diff = left_value - right_value;
+            diff * diff
+        })
+        .sum()
 }
 
 fn best_group_distance(
