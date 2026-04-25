@@ -211,6 +211,8 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - Geometry counterfactual v16 shows the bottleneck precisely: true-radius snapping raises PPR to `0.447917`, while true-angle and support global rescale both stay at `0.218750`. This justified a trainable state-conditioned radius/speed geometry path rather than another scalar global rescale or broad architecture widening.
 - `--predictor-mode state-radius` adds the first trainable state-conditioned radius/speed path. Bounded evidence (`2026-04-25`, same seeds) is health-ok and slightly improves validation (`0.377447` vs baseline `0.387471`) and raw margin (`-0.730436` vs `-0.818459`), but raw PPR drops to `0.140625` and unit PPR collapses to `0.114583`; reject simple projected-state displacement gain as the fix.
 - Next geometry build should be candidate-centroid-aware: preserve the bank-centered angular signal while learning radius/speed in the signed target-bank frame.
+- `--signed-candidate-centroid-integration` adds a report-only candidate-bank radius probe. First 3-seed evidence at temperature `0.05` improves the candidate-frame nearest/softmax radius PPR to `0.348958` versus raw `0.281250`, while unit PPR stays `0.453125`; useful direction, but still below the `~0.364583` proof gate, so hard candidate radius selection is not enough.
+- Next implementation should use the new centered-radius scalar primitive to train a candidate-centered radius residual/logit head rather than promoting the report-only postprocessor.
 
 Candidate-centroid-aware geometry acceptance gate:
 
