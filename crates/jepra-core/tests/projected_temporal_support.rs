@@ -19,6 +19,7 @@ use projected_temporal::{
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_prediction_bank_unit_geometry_from_base_seed,
+    projected_signed_prediction_geometry_counterfactual_from_base_seed,
     projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
@@ -893,6 +894,49 @@ fn projected_signed_prediction_bank_unit_geometry_is_finite_and_bounded() {
     assert!(geometry.true_target_center_norm >= 0.0);
     assert_eq!(geometry.samples, BATCH_SIZE * 2);
     assert_eq!(geometry.candidates, 4);
+}
+
+#[test]
+fn projected_signed_prediction_geometry_counterfactual_is_finite_and_bounded() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let counterfactual = projected_signed_prediction_geometry_counterfactual_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for metrics in [
+        counterfactual.oracle_radius,
+        counterfactual.oracle_angle,
+        counterfactual.support_global_rescale,
+    ] {
+        for value in [
+            metrics.mrr,
+            metrics.top1,
+            metrics.margin,
+            metrics.positive_margin_rate,
+            metrics.sign_margin,
+            metrics.speed_margin,
+            metrics.norm_ratio,
+        ] {
+            assert!(value.is_finite());
+        }
+
+        assert!((0.25..=1.0).contains(&metrics.mrr));
+        assert!((0.0..=1.0).contains(&metrics.top1));
+        assert!((0.0..=1.0).contains(&metrics.positive_margin_rate));
+        assert!(metrics.norm_ratio >= 0.0);
+    }
+
+    assert!(counterfactual.support_norm_ratio.is_finite());
+    assert!(counterfactual.support_norm_ratio >= 0.0);
+    assert_eq!(counterfactual.support_samples, BATCH_SIZE);
+    assert_eq!(counterfactual.query_samples, BATCH_SIZE);
+    assert_eq!(counterfactual.candidates, 4);
 }
 
 #[test]

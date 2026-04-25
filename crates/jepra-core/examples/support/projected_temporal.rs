@@ -121,6 +121,28 @@ pub struct ProjectedSignedPredictionBankUnitGeometry {
     pub candidates: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedPredictionCounterfactualMetrics {
+    pub mrr: f32,
+    pub top1: f32,
+    pub margin: f32,
+    pub positive_margin_rate: f32,
+    pub sign_margin: f32,
+    pub speed_margin: f32,
+    pub norm_ratio: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedPredictionGeometryCounterfactual {
+    pub oracle_radius: ProjectedSignedPredictionCounterfactualMetrics,
+    pub oracle_angle: ProjectedSignedPredictionCounterfactualMetrics,
+    pub support_global_rescale: ProjectedSignedPredictionCounterfactualMetrics,
+    pub support_norm_ratio: f32,
+    pub support_samples: usize,
+    pub query_samples: usize,
+    pub candidates: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedObjectiveErrorBreakdown {
@@ -180,6 +202,24 @@ struct SignedPredictionBankUnitGeometrySampleOutcome {
     speed_margin: f32,
     prediction_center_norm: f32,
     true_target_center_norm: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedPredictionCounterfactualSampleOutcome {
+    true_dx: isize,
+    true_distance: f32,
+    nearest_wrong_distance: f32,
+    rank: usize,
+    sign_margin: f32,
+    speed_margin: f32,
+    norm_ratio: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedPredictionGeometryCounterfactualSampleOutcome {
+    oracle_radius: SignedPredictionCounterfactualSampleOutcome,
+    oracle_angle: SignedPredictionCounterfactualSampleOutcome,
+    support_global_rescale: SignedPredictionCounterfactualSampleOutcome,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -278,6 +318,22 @@ struct SignedPredictionBankUnitGeometryTotals {
     speed_margin: f32,
     prediction_center_norm: f32,
     true_target_center_norm: f32,
+    samples: usize,
+    negative_samples: usize,
+    positive_samples: usize,
+    slow_samples: usize,
+    fast_samples: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedPredictionCounterfactualMetricTotals {
+    reciprocal_rank: f32,
+    top1: usize,
+    margin: f32,
+    positive_margin_count: usize,
+    sign_margin: f32,
+    speed_margin: f32,
+    norm_ratio: f32,
     samples: usize,
     negative_samples: usize,
     positive_samples: usize,
@@ -821,6 +877,67 @@ impl SignedPredictionBankUnitGeometryTotals {
             true_target_center_norm: self.true_target_center_norm / self.samples as f32,
             samples: self.samples,
             candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+        }
+    }
+}
+
+impl SignedPredictionCounterfactualMetricTotals {
+    fn observe(&mut self, outcome: SignedPredictionCounterfactualSampleOutcome) {
+        let margin = outcome.nearest_wrong_distance - outcome.true_distance;
+        assert!(
+            outcome.true_distance.is_finite()
+                && outcome.nearest_wrong_distance.is_finite()
+                && margin.is_finite()
+                && outcome.rank > 0
+                && outcome.sign_margin.is_finite()
+                && outcome.speed_margin.is_finite()
+                && outcome.norm_ratio.is_finite(),
+            "signed prediction counterfactual produced non-finite metrics"
+        );
+
+        self.samples += 1;
+        self.reciprocal_rank += 1.0 / outcome.rank as f32;
+        self.top1 += usize::from(outcome.rank == 1);
+        self.margin += margin;
+        self.positive_margin_count += usize::from(margin > VELOCITY_BANK_TIE_EPSILON);
+        self.sign_margin += outcome.sign_margin;
+        self.speed_margin += outcome.speed_margin;
+        self.norm_ratio += outcome.norm_ratio;
+
+        if outcome.true_dx < 0 {
+            self.negative_samples += 1;
+        } else {
+            self.positive_samples += 1;
+        }
+
+        if outcome.true_dx.abs() == 1 {
+            self.slow_samples += 1;
+        } else {
+            self.fast_samples += 1;
+        }
+    }
+
+    fn into_metrics(self) -> ProjectedSignedPredictionCounterfactualMetrics {
+        assert!(
+            self.samples > 0,
+            "signed prediction counterfactual has no samples"
+        );
+        assert!(
+            self.negative_samples > 0
+                && self.positive_samples > 0
+                && self.slow_samples > 0
+                && self.fast_samples > 0,
+            "signed prediction counterfactual requires all sign/speed groups"
+        );
+
+        ProjectedSignedPredictionCounterfactualMetrics {
+            mrr: self.reciprocal_rank / self.samples as f32,
+            top1: self.top1 as f32 / self.samples as f32,
+            margin: self.margin / self.samples as f32,
+            positive_margin_rate: self.positive_margin_count as f32 / self.samples as f32,
+            sign_margin: self.sign_margin / self.samples as f32,
+            speed_margin: self.speed_margin / self.samples as f32,
+            norm_ratio: self.norm_ratio / self.samples as f32,
         }
     }
 }
@@ -1408,6 +1525,83 @@ where
     }
 
     totals.into_geometry()
+}
+
+pub fn projected_signed_prediction_geometry_counterfactual_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedPredictionGeometryCounterfactual
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches >= 2,
+        "geometry counterfactual requires at least one support and one query batch"
+    );
+
+    let support_batches = validation_batches / 2;
+    let query_batches = validation_batches - support_batches;
+    assert!(
+        support_batches > 0 && query_batches > 0,
+        "geometry counterfactual requires non-empty support and query splits"
+    );
+
+    let mut support_prediction_norm = 0.0f32;
+    let mut support_target_norm = 0.0f32;
+    let mut support_samples = 0usize;
+
+    for batch_idx in 0..support_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let (prediction_norm, target_norm, samples) =
+            signed_prediction_bank_center_norm_sums(model, &x_t, &x_t1);
+        support_prediction_norm += prediction_norm;
+        support_target_norm += target_norm;
+        support_samples += samples;
+    }
+
+    let support_norm_ratio =
+        support_target_norm / support_prediction_norm.max(VELOCITY_BANK_TIE_EPSILON);
+    let mut oracle_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut oracle_angle_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut support_global_rescale_totals = SignedPredictionCounterfactualMetricTotals::default();
+
+    for query_idx in 0..query_batches {
+        let batch_idx = support_batches + query_idx;
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let outcomes = projected_signed_prediction_geometry_counterfactual_sample_outcomes(
+            model,
+            &x_t,
+            &x_t1,
+            support_norm_ratio,
+        );
+
+        for outcome in outcomes {
+            oracle_radius_totals.observe(outcome.oracle_radius);
+            oracle_angle_totals.observe(outcome.oracle_angle);
+            support_global_rescale_totals.observe(outcome.support_global_rescale);
+        }
+    }
+
+    let query_samples = support_global_rescale_totals.samples;
+
+    ProjectedSignedPredictionGeometryCounterfactual {
+        oracle_radius: oracle_radius_totals.into_metrics(),
+        oracle_angle: oracle_angle_totals.into_metrics(),
+        support_global_rescale: support_global_rescale_totals.into_metrics(),
+        support_norm_ratio,
+        support_samples,
+        query_samples,
+        candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
 }
 
 #[allow(dead_code)]
@@ -2238,6 +2432,136 @@ where
     outcomes
 }
 
+fn signed_prediction_bank_center_norm_sums<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> (f32, f32, usize)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "prediction-bank center norm sums expect matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "prediction-bank center norm sums expect rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut prediction_norm_sum = 0.0f32;
+    let mut target_norm_sum = 0.0f32;
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+
+        prediction_norm_sum += vector_l2_norm(&prediction_centered);
+        target_norm_sum += vector_l2_norm(&target_centered);
+    }
+
+    (prediction_norm_sum, target_norm_sum, batch_size)
+}
+
+fn projected_signed_prediction_geometry_counterfactual_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    support_norm_ratio: f32,
+) -> Vec<SignedPredictionGeometryCounterfactualSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert!(
+        support_norm_ratio.is_finite() && support_norm_ratio >= 0.0,
+        "support norm ratio must be finite and non-negative"
+    );
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "prediction geometry counterfactual expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "prediction geometry counterfactual expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let prediction_norm = vector_l2_norm(&prediction_centered);
+        let target_norm = vector_l2_norm(&target_centered);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let target_unit = unit_vector(&target_centered);
+        let oracle_radius_centered = scale_vector(&prediction_unit, target_norm);
+        let oracle_angle_centered = scale_vector(&target_unit, prediction_norm);
+        let support_global_rescale_centered =
+            scale_vector(&prediction_centered, support_norm_ratio);
+
+        let oracle_radius_norm_ratio =
+            vector_l2_norm(&oracle_radius_centered) / target_norm.max(VELOCITY_BANK_TIE_EPSILON);
+        let oracle_angle_norm_ratio =
+            vector_l2_norm(&oracle_angle_centered) / target_norm.max(VELOCITY_BANK_TIE_EPSILON);
+        let support_global_rescale_norm_ratio = vector_l2_norm(&support_global_rescale_centered)
+            / target_norm.max(VELOCITY_BANK_TIE_EPSILON);
+
+        outcomes.push(SignedPredictionGeometryCounterfactualSampleOutcome {
+            oracle_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &oracle_radius_centered,
+                oracle_radius_norm_ratio,
+            ),
+            oracle_angle: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &oracle_angle_centered,
+                oracle_angle_norm_ratio,
+            ),
+            support_global_rescale: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &support_global_rescale_centered,
+                support_global_rescale_norm_ratio,
+            ),
+        });
+    }
+
+    outcomes
+}
+
 fn projected_signed_target_bank_sample_outcomes<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -2332,6 +2656,114 @@ where
     outcomes
 }
 
+fn signed_prediction_counterfactual_outcome(
+    candidate_dx_bank: &[isize],
+    candidate_targets: &[Tensor],
+    sample: usize,
+    true_dx: isize,
+    true_index: usize,
+    centroid: &[f32],
+    prediction_centered: &[f32],
+    norm_ratio: f32,
+) -> SignedPredictionCounterfactualSampleOutcome {
+    let distances = counterfactual_prediction_distances(
+        candidate_targets,
+        sample,
+        centroid,
+        prediction_centered,
+    );
+    let true_distance = distances[true_index];
+    let nearest_wrong_distance =
+        best_indexed_group_distance(candidate_dx_bank, &distances, |candidate_index, _| {
+            candidate_index != true_index
+        });
+    let mut rank = 1usize;
+
+    for (candidate_index, distance) in distances.iter().enumerate() {
+        if candidate_index != true_index && *distance <= true_distance + VELOCITY_BANK_TIE_EPSILON {
+            rank += 1;
+        }
+    }
+
+    let true_sign_distance =
+        best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+            candidate_dx.signum() == true_dx.signum()
+        });
+    let other_sign_distance =
+        best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+            candidate_dx.signum() != true_dx.signum()
+        });
+    let true_speed_distance =
+        best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+            candidate_dx.abs() == true_dx.abs()
+        });
+    let other_speed_distance =
+        best_indexed_group_distance(candidate_dx_bank, &distances, |_, candidate_dx| {
+            candidate_dx.abs() != true_dx.abs()
+        });
+
+    SignedPredictionCounterfactualSampleOutcome {
+        true_dx,
+        true_distance,
+        nearest_wrong_distance,
+        rank,
+        sign_margin: other_sign_distance - true_sign_distance,
+        speed_margin: other_speed_distance - true_speed_distance,
+        norm_ratio,
+    }
+}
+
+fn counterfactual_prediction_distances(
+    candidate_targets: &[Tensor],
+    sample: usize,
+    centroid: &[f32],
+    prediction_centered: &[f32],
+) -> Vec<f32> {
+    assert_eq!(
+        centroid.len(),
+        prediction_centered.len(),
+        "counterfactual prediction dim mismatch"
+    );
+
+    candidate_targets
+        .iter()
+        .map(|candidate_target| {
+            assert_eq!(
+                candidate_target.shape[1],
+                centroid.len(),
+                "counterfactual target dim mismatch"
+            );
+
+            let mut distance = 0.0f32;
+            for feature_idx in 0..centroid.len() {
+                let prediction_value = centroid[feature_idx] + prediction_centered[feature_idx];
+                let diff = prediction_value - candidate_target.get(&[sample, feature_idx]);
+                distance += diff * diff;
+            }
+            distance
+        })
+        .collect()
+}
+
+fn signed_candidate_centroid(
+    candidate_targets: &[Tensor],
+    sample: usize,
+    projection_dim: usize,
+) -> Vec<f32> {
+    let mut centroid = vec![0.0f32; projection_dim];
+
+    for candidate_target in candidate_targets {
+        for (feature_idx, centroid_value) in centroid.iter_mut().enumerate() {
+            *centroid_value += candidate_target.get(&[sample, feature_idx]);
+        }
+    }
+    for centroid_value in &mut centroid {
+        *centroid_value /= candidate_targets.len() as f32;
+    }
+
+    centroid
+}
+
 fn centered_sample_vector(tensor: &Tensor, sample: usize, centroid: &[f32]) -> Vec<f32> {
     assert!(
         tensor.shape.len() == 2,
@@ -2349,6 +2781,10 @@ fn centered_sample_vector(tensor: &Tensor, sample: usize, centroid: &[f32]) -> V
         .enumerate()
         .map(|(feature_idx, centroid_value)| tensor.get(&[sample, feature_idx]) - centroid_value)
         .collect()
+}
+
+fn scale_vector(vector: &[f32], scale: f32) -> Vec<f32> {
+    vector.iter().map(|value| value * scale).collect()
 }
 
 fn vector_l2_norm(vector: &[f32]) -> f32 {

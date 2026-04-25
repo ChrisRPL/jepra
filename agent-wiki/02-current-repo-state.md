@@ -25,6 +25,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Default-off signed-bank softmax objective is implemented for projected `signed-velocity-trail` probes. It keeps the candidate-bank ranking loss explicit and reportable, but narrow evidence does not close the signed-direction margin gate (`ppr=0.281250` at weight `0.5`; high-weight single-seed still `ppr=0.281250`), so it is not promoted.
 - Opt-in `signed-direction-magnitude` and prediction-bank unit-geometry diagnostics are implemented. Combined 3-seed evidence improves validation (`0.387471`) and raw margin (`-0.818459`) while preserving health, and unit geometry reaches top1/PPR `0.453125`, but raw PPR is still pinned at `0.281250`.
 - Default-off signed radial calibration is implemented for projected `signed-velocity-trail` probes. The first bounded `signed-direction-magnitude` 3-seed probe at weight `0.1` is health-ok and raises centered norm ratio to `0.485350`, but raw PPR remains pinned at `0.281250`, so this is evidence/tooling rather than a promotable fix.
+- Report-only signed geometry counterfactual v16 is implemented. On `signed-direction-magnitude`, true-radius snapping raises PPR to `0.447917`, while true-angle and support global rescale stay at `0.218750`; the next bottleneck is trainable state-conditioned radius/speed geometry, not missing angle or simple global gain.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -34,7 +35,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
   - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
   - do not expand the signed-margin grid; v11 shows the current signed state representation is not direction-separable enough for another loss-only pass,
-  - next high-value build step is angular-radial decoupling beyond scalar radius matching, likely a signed candidate-geometry predictor head or target-space geometry change, before bounce, depthwise convolution, spatial predictor work, or more objective tuning,
+  - next high-value build step is a trainable state-conditioned radius/speed geometry path or geometry-aware candidate head, before bounce, depthwise convolution, spatial predictor work, or more objective tuning,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.
@@ -102,7 +103,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 
 ## Limitations And Technical Debt
 
-- Naming drift: no active `RoadJEPA`-vs-`JEPRA` naming split in tracked metadata (`crates/jepra-core/Cargo.toml`).
+- Naming drift: no active legacy-vs-`JEPRA` naming split in tracked metadata (`crates/jepra-core/Cargo.toml`).
 - Scope drift: reduced; this wiki now tracks active temporal JEPA work and validation-focused paths.
 - Missing infrastructure: no workspace-level organization, no docs folder policy, no benchmarks, no dataset layer, and no dedicated temporal batching abstraction.
 - Implementation debt: manual loops everywhere, no automatic differentiation, no dataset layer, no temporal batching abstraction.

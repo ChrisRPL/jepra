@@ -13,9 +13,10 @@ use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
-    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedStateSeparability,
-    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, projected_signed_angular_radial_objective_loss_and_grad,
+    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionGeometryCounterfactual,
+    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
+    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    projected_signed_angular_radial_objective_loss_and_grad,
     projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
@@ -24,6 +25,7 @@ use projected_temporal::{
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_prediction_bank_unit_geometry_from_base_seed,
+    projected_signed_prediction_geometry_counterfactual_from_base_seed,
     projected_signed_radial_calibration_loss_and_grad,
     projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
@@ -270,6 +272,8 @@ where
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let initial_signed_prediction_bank_unit_geometry =
         maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
+    let initial_signed_prediction_geometry_counterfactual =
+        maybe_projected_signed_prediction_geometry_counterfactual(&model, run_config);
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
     let initial_signed_bank_softmax_objective_report =
@@ -311,6 +315,10 @@ where
     print_signed_prediction_bank_unit_geometry(
         "initial",
         initial_signed_prediction_bank_unit_geometry,
+    );
+    print_signed_prediction_geometry_counterfactual(
+        "initial",
+        initial_signed_prediction_geometry_counterfactual,
     );
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
@@ -512,6 +520,8 @@ where
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let final_signed_prediction_bank_unit_geometry =
         maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
+    let final_signed_prediction_geometry_counterfactual =
+        maybe_projected_signed_prediction_geometry_counterfactual(&model, run_config);
     let final_signed_objective_error_breakdown =
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let final_signed_margin_objective_report =
@@ -579,6 +589,10 @@ where
     print_signed_target_bank_separability("final", final_signed_target_bank_separability);
     print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
     print_signed_prediction_bank_unit_geometry("final", final_signed_prediction_bank_unit_geometry);
+    print_signed_prediction_geometry_counterfactual(
+        "final",
+        final_signed_prediction_geometry_counterfactual,
+    );
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
@@ -809,6 +823,63 @@ fn print_signed_prediction_bank_unit_geometry(
             geometry.true_target_center_norm,
             geometry.samples,
             geometry.candidates,
+        );
+    }
+}
+
+fn maybe_projected_signed_prediction_geometry_counterfactual<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedPredictionGeometryCounterfactual>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(
+        projected_signed_prediction_geometry_counterfactual_from_base_seed(
+            model,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+        ),
+    )
+}
+
+fn print_signed_prediction_geometry_counterfactual(
+    tag: &str,
+    counterfactual: Option<ProjectedSignedPredictionGeometryCounterfactual>,
+) {
+    if let Some(counterfactual) = counterfactual {
+        println!(
+            "{} | signed prediction geometry counterfactual oracle_radius_mrr {:.6} | oracle_radius_top1 {:.6} | oracle_radius_margin {:.6} | oracle_radius_positive_margin_rate {:.6} | oracle_radius_sign_margin {:.6} | oracle_radius_speed_margin {:.6} | oracle_radius_norm_ratio {:.6} | oracle_angle_mrr {:.6} | oracle_angle_top1 {:.6} | oracle_angle_margin {:.6} | oracle_angle_positive_margin_rate {:.6} | oracle_angle_sign_margin {:.6} | oracle_angle_speed_margin {:.6} | oracle_angle_norm_ratio {:.6} | support_global_rescale_mrr {:.6} | support_global_rescale_top1 {:.6} | support_global_rescale_margin {:.6} | support_global_rescale_positive_margin_rate {:.6} | support_global_rescale_sign_margin {:.6} | support_global_rescale_speed_margin {:.6} | support_global_rescale_norm_ratio {:.6} | support_norm_ratio {:.6} | support_samples {} | query_samples {} | candidates {}",
+            tag,
+            counterfactual.oracle_radius.mrr,
+            counterfactual.oracle_radius.top1,
+            counterfactual.oracle_radius.margin,
+            counterfactual.oracle_radius.positive_margin_rate,
+            counterfactual.oracle_radius.sign_margin,
+            counterfactual.oracle_radius.speed_margin,
+            counterfactual.oracle_radius.norm_ratio,
+            counterfactual.oracle_angle.mrr,
+            counterfactual.oracle_angle.top1,
+            counterfactual.oracle_angle.margin,
+            counterfactual.oracle_angle.positive_margin_rate,
+            counterfactual.oracle_angle.sign_margin,
+            counterfactual.oracle_angle.speed_margin,
+            counterfactual.oracle_angle.norm_ratio,
+            counterfactual.support_global_rescale.mrr,
+            counterfactual.support_global_rescale.top1,
+            counterfactual.support_global_rescale.margin,
+            counterfactual.support_global_rescale.positive_margin_rate,
+            counterfactual.support_global_rescale.sign_margin,
+            counterfactual.support_global_rescale.speed_margin,
+            counterfactual.support_global_rescale.norm_ratio,
+            counterfactual.support_norm_ratio,
+            counterfactual.support_samples,
+            counterfactual.query_samples,
+            counterfactual.candidates,
         );
     }
 }
