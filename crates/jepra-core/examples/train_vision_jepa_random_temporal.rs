@@ -145,6 +145,10 @@ pub fn main() {
         run_config.signed_margin_weight == 0.0,
         "signed margin objective is only supported by projected signed-velocity-trail runs"
     );
+    assert!(
+        run_config.signed_bank_softmax_weight == 0.0,
+        "signed bank softmax objective is only supported by projected signed-velocity-trail runs"
+    );
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",

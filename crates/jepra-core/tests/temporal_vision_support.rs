@@ -5,7 +5,10 @@ mod temporal_validation;
 #[path = "../examples/support/temporal_vision.rs"]
 mod temporal_vision;
 
-use jepra_core::{Linear, Predictor, SignedMarginObjectiveConfig, Tensor, VisionJepa};
+use jepra_core::{
+    Linear, Predictor, SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
+    VisionJepa,
+};
 use temporal_validation::{
     UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, UNPROJECTED_VALIDATION_BASE_SEED,
     UNPROJECTED_VALIDATION_BATCHES, UNPROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
@@ -240,6 +243,8 @@ fn unprojected_run_with_encoder(
         projector_drift_weight: 0.0,
         signed_margin_weight: 0.0,
         signed_margin_config: SignedMarginObjectiveConfig::default(),
+        signed_bank_softmax_weight: 0.0,
+        signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
         target_projection_momentum: 1.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 1.0,

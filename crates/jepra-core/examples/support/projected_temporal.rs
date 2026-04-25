@@ -4,9 +4,10 @@ use super::temporal_vision::{
     make_velocity_trail_candidate_target_batch, signed_motion_dx_for_sample,
 };
 use jepra_core::{
-    EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa, SignedMarginObjectiveConfig,
-    SignedMarginObjectiveReport, Tensor, gaussian_moment_regularizer, mse_loss,
-    signed_margin_objective_loss_and_grad,
+    EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa,
+    SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
+    SignedMarginObjectiveConfig, SignedMarginObjectiveReport, Tensor, gaussian_moment_regularizer,
+    mse_loss, signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
 };
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -1299,6 +1300,37 @@ where
     )
 }
 
+pub fn projected_signed_bank_softmax_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    config: SignedBankSoftmaxObjectiveConfig,
+) -> (SignedBankSoftmaxObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed bank softmax objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "signed bank softmax objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+
+    signed_bank_softmax_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_candidate_indices,
+        config,
+    )
+}
+
 pub fn projected_signed_margin_objective_report_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
     validation_base_seed: u64,
@@ -1323,6 +1355,36 @@ where
         );
         let (report, _) =
             projected_signed_margin_objective_loss_and_grad(model, &x_t, &x_t1, config);
+        totals.observe(report);
+    }
+
+    totals.into_report()
+}
+
+pub fn projected_signed_bank_softmax_objective_report_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    config: SignedBankSoftmaxObjectiveConfig,
+) -> SignedBankSoftmaxObjectiveReport
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedBankSoftmaxObjectiveReportTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let (report, _) =
+            projected_signed_bank_softmax_objective_loss_and_grad(model, &x_t, &x_t1, config);
         totals.observe(report);
     }
 
@@ -1378,6 +1440,37 @@ impl SignedMarginObjectiveReportTotals {
             active_bank_pairs: self.active_bank_pairs,
             active_sign_pairs: self.active_sign_pairs,
             active_speed_pairs: self.active_speed_pairs,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct SignedBankSoftmaxObjectiveReportTotals {
+    loss: f32,
+    top1: f32,
+    mean_true_probability: f32,
+    samples: usize,
+}
+
+impl SignedBankSoftmaxObjectiveReportTotals {
+    fn observe(&mut self, report: SignedBankSoftmaxObjectiveReport) {
+        self.loss += report.loss * report.samples as f32;
+        self.top1 += report.top1 * report.samples as f32;
+        self.mean_true_probability += report.mean_true_probability * report.samples as f32;
+        self.samples += report.samples;
+    }
+
+    fn into_report(self) -> SignedBankSoftmaxObjectiveReport {
+        assert!(
+            self.samples > 0,
+            "signed bank softmax objective has no samples"
+        );
+
+        SignedBankSoftmaxObjectiveReport {
+            loss: self.loss / self.samples as f32,
+            top1: self.top1 / self.samples as f32,
+            mean_true_probability: self.mean_true_probability / self.samples as f32,
+            samples: self.samples,
         }
     }
 }

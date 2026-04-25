@@ -5,8 +5,8 @@ mod temporal_vision;
 
 use jepra_core::{
     BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
-    ResidualBottleneckPredictor, SignedMarginObjectiveReport, Tensor, projection_stats,
-    representation_stats,
+    ResidualBottleneckPredictor, SignedBankSoftmaxObjectiveReport, SignedMarginObjectiveReport,
+    Tensor, projection_stats, representation_stats,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -14,6 +14,8 @@ use projected_temporal::{
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
     ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
     ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    projected_signed_bank_softmax_objective_loss_and_grad,
+    projected_signed_bank_softmax_objective_report_from_base_seed,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
@@ -140,6 +142,10 @@ fn main() {
         run_config.signed_margin_config.sign_weight,
         run_config.signed_margin_config.speed_weight
     );
+    println!(
+        "temporal run config | signed bank softmax weight {} | temperature {}",
+        run_config.signed_bank_softmax_weight, run_config.signed_bank_softmax_config.temperature,
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
@@ -244,6 +250,8 @@ where
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
+    let initial_signed_bank_softmax_objective_report =
+        maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
     let initial_signed_state_separability =
         maybe_projected_signed_state_separability(&model, run_config);
 
@@ -275,6 +283,10 @@ where
     print_signed_target_bank_separability("initial", initial_signed_target_bank_separability);
     print_signed_prediction_bank_margin("initial", initial_signed_prediction_bank_margin);
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
+    print_signed_bank_softmax_objective_report(
+        "initial",
+        initial_signed_bank_softmax_objective_report,
+    );
     print_signed_state_separability("initial", initial_signed_state_separability);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
@@ -289,13 +301,33 @@ where
             let signed_margin_step = maybe_projected_signed_margin_objective_loss_and_grad(
                 model, run_config, &x_t, &x_t1,
             );
-            let signed_margin_extra_loss = signed_margin_step
+            let signed_bank_softmax_step =
+                maybe_projected_signed_bank_softmax_objective_loss_and_grad(
+                    model, run_config, &x_t, &x_t1,
+                );
+            let extra_prediction_loss = signed_margin_step
                 .as_ref()
                 .map(|(report, _)| run_config.signed_margin_weight * report.weighted_loss)
-                .unwrap_or(0.0);
-            let signed_margin_extra_grad = signed_margin_step
-                .as_ref()
-                .map(|(_, grad)| scale_tensor(grad, run_config.signed_margin_weight));
+                .unwrap_or(0.0)
+                + signed_bank_softmax_step
+                    .as_ref()
+                    .map(|(report, _)| run_config.signed_bank_softmax_weight * report.loss)
+                    .unwrap_or(0.0);
+            let mut extra_prediction_grad = None;
+            if let Some((_, grad)) = signed_margin_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    run_config.signed_margin_weight,
+                );
+            }
+            if let Some((_, grad)) = signed_bank_softmax_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    run_config.signed_bank_softmax_weight,
+                );
+            }
             let (prediction_loss, regularizer_loss, projector_drift_loss, total_loss) =
                 if run_config.encoder_learning_rate > 0.0 {
                     model.step_with_extra_prediction_grad(
@@ -303,8 +335,8 @@ where
                         &x_t1,
                         REGULARIZER_WEIGHT,
                         run_config.projector_drift_weight,
-                        signed_margin_extra_loss,
-                        signed_margin_extra_grad.as_ref(),
+                        extra_prediction_loss,
+                        extra_prediction_grad.as_ref(),
                         PREDICTOR_LR,
                         PROJECTOR_LR,
                         run_config.encoder_learning_rate,
@@ -315,8 +347,8 @@ where
                         &x_t1,
                         REGULARIZER_WEIGHT,
                         run_config.projector_drift_weight,
-                        signed_margin_extra_loss,
-                        signed_margin_extra_grad.as_ref(),
+                        extra_prediction_loss,
+                        extra_prediction_grad.as_ref(),
                         PREDICTOR_LR,
                         PROJECTOR_LR,
                         0.0,
@@ -353,6 +385,12 @@ where
                 }
                 if let Some((report, _)) = signed_margin_step {
                     print_signed_margin_objective_report(
+                        &format!("step {:03} train", step),
+                        Some(report),
+                    );
+                }
+                if let Some((report, _)) = signed_bank_softmax_step {
+                    print_signed_bank_softmax_objective_report(
                         &format!("step {:03} train", step),
                         Some(report),
                     );
@@ -400,6 +438,8 @@ where
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let final_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
+    let final_signed_bank_softmax_objective_report =
+        maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
     let final_signed_state_separability =
         maybe_projected_signed_state_separability(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
@@ -458,6 +498,7 @@ where
     print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
+    print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
     print_signed_state_separability("final", final_signed_state_separability);
 }
 
@@ -465,6 +506,19 @@ fn scale_tensor(tensor: &Tensor, scale: f32) -> Tensor {
     Tensor {
         data: tensor.data.iter().map(|value| value * scale).collect(),
         shape: tensor.shape.clone(),
+    }
+}
+
+fn add_scaled_extra_prediction_grad(accumulator: &mut Option<Tensor>, grad: &Tensor, scale: f32) {
+    if scale == 0.0 {
+        return;
+    }
+
+    let scaled_grad = scale_tensor(grad, scale);
+    if let Some(existing) = accumulator {
+        existing.add_inplace(&scaled_grad);
+    } else {
+        *accumulator = Some(scaled_grad);
     }
 }
 
@@ -695,6 +749,58 @@ where
     ))
 }
 
+fn maybe_projected_signed_bank_softmax_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<(SignedBankSoftmaxObjectiveReport, Tensor)>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_bank_softmax_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed bank softmax objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(projected_signed_bank_softmax_objective_loss_and_grad(
+        model,
+        x_t,
+        x_t1,
+        run_config.signed_bank_softmax_config,
+    ))
+}
+
+fn maybe_projected_signed_bank_softmax_objective_report<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<SignedBankSoftmaxObjectiveReport>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_bank_softmax_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed bank softmax objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(
+        projected_signed_bank_softmax_objective_report_from_base_seed(
+            model,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            run_config.signed_bank_softmax_config,
+        ),
+    )
+}
+
 fn maybe_projected_signed_state_separability<P>(
     model: &ProjectedVisionJepa<P>,
     run_config: temporal_vision::TemporalRunConfig,
@@ -777,6 +883,18 @@ fn print_signed_margin_objective_report(tag: &str, report: Option<SignedMarginOb
             report.active_sign_pairs as f32 / report.sign_pairs as f32,
             report.active_speed_pairs as f32 / report.speed_pairs as f32,
             report.samples,
+        );
+    }
+}
+
+fn print_signed_bank_softmax_objective_report(
+    tag: &str,
+    report: Option<SignedBankSoftmaxObjectiveReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed bank softmax objective loss {:.6} | top1 {:.6} | true_probability {:.6} | samples {}",
+            tag, report.loss, report.top1, report.mean_true_probability, report.samples,
         );
     }
 }

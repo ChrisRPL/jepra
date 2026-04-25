@@ -1,8 +1,8 @@
 #![allow(clippy::items_after_test_module)]
 
 use jepra_core::{
-    Conv2d, ConvEncoder, EmbeddingEncoder, RepresentationHealthStats, SignedMarginObjectiveConfig,
-    Tensor,
+    Conv2d, ConvEncoder, EmbeddingEncoder, RepresentationHealthStats,
+    SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -91,6 +91,8 @@ pub struct TemporalRunConfig {
     pub projector_drift_weight: f32,
     pub signed_margin_weight: f32,
     pub signed_margin_config: SignedMarginObjectiveConfig,
+    pub signed_bank_softmax_weight: f32,
+    pub signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig,
     pub target_projection_momentum: f32,
     pub target_projection_momentum_start: f32,
     pub target_projection_momentum_end: f32,
@@ -142,10 +144,17 @@ impl TemporalRunConfig {
         let projector_drift_weight = projector_drift_weight_from_args(&args);
         let signed_margin_weight = signed_margin_weight_from_args(&args);
         let signed_margin_config = signed_margin_config_from_args(&args);
+        let signed_bank_softmax_weight = signed_bank_softmax_weight_from_args(&args);
+        let signed_bank_softmax_config = signed_bank_softmax_config_from_args(&args);
         assert!(
             signed_margin_weight == 0.0
                 || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
             "signed margin objective is only supported for signed-velocity-trail task"
+        );
+        assert!(
+            signed_bank_softmax_weight == 0.0
+                || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+            "signed bank softmax objective is only supported for signed-velocity-trail task"
         );
         assert_target_projection_momentum(target_projection_momentum_end);
         assert_target_projection_momentum(target_projection_momentum_start);
@@ -173,6 +182,8 @@ impl TemporalRunConfig {
             projector_drift_weight,
             signed_margin_weight,
             signed_margin_config,
+            signed_bank_softmax_weight,
+            signed_bank_softmax_config,
             target_projection_momentum: target_projection_momentum_end,
             target_projection_momentum_start,
             target_projection_momentum_end,
@@ -368,6 +379,36 @@ fn signed_margin_config_from_args(args: &[String]) -> SignedMarginObjectiveConfi
     config
 }
 
+fn signed_bank_softmax_weight_from_args(args: &[String]) -> f32 {
+    parse_arg_value(args, "--signed-bank-softmax-weight")
+        .map(|value| parse_finite_nonnegative_f32(value, "--signed-bank-softmax-weight"))
+        .or_else(|| {
+            std::env::var("JEPRA_SIGNED_BANK_SOFTMAX_WEIGHT")
+                .ok()
+                .map(|value| {
+                    parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_BANK_SOFTMAX_WEIGHT")
+                })
+        })
+        .unwrap_or(0.0)
+}
+
+fn signed_bank_softmax_config_from_args(args: &[String]) -> SignedBankSoftmaxObjectiveConfig {
+    let config = SignedBankSoftmaxObjectiveConfig {
+        temperature: parse_arg_value(args, "--signed-bank-softmax-temperature")
+            .map(|value| parse_finite_positive_f32(value, "--signed-bank-softmax-temperature"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_BANK_SOFTMAX_TEMPERATURE")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_positive_f32(&value, "JEPRA_SIGNED_BANK_SOFTMAX_TEMPERATURE")
+                    })
+            })
+            .unwrap_or(SignedBankSoftmaxObjectiveConfig::default().temperature),
+    };
+    config.assert_valid();
+    config
+}
+
 pub fn training_steps(default_steps: usize) -> usize {
     std::env::var("JEPRA_TRAIN_STEPS")
         .ok()
@@ -416,6 +457,19 @@ fn parse_finite_nonnegative_f32(value: &str, source: &str) -> f32 {
     assert!(
         parsed.is_finite() && parsed >= 0.0,
         "{} must be finite and non-negative, got {}",
+        source,
+        parsed
+    );
+    parsed
+}
+
+fn parse_finite_positive_f32(value: &str, source: &str) -> f32 {
+    let parsed = value
+        .parse::<f32>()
+        .unwrap_or_else(|_| panic!("{source} must be a finite positive float, got {value}"));
+    assert!(
+        parsed.is_finite() && parsed > 0.0,
+        "{} must be finite and positive, got {}",
         source,
         parsed
     );
@@ -537,11 +591,12 @@ pub fn assert_temporal_experiment_improved(
 #[cfg(test)]
 mod temporal_vision_config_tests {
     use super::{
-        CompactEncoderMode, PredictorMode, SignedMarginObjectiveConfig, TemporalRunConfig,
-        TemporalTaskMode, compact_encoder_mode_from_args, predictor_mode_from_args,
-        projector_drift_weight_from_args, residual_delta_scale_from_args,
-        signed_margin_config_from_args, signed_margin_weight_from_args,
-        temporal_task_mode_from_args,
+        CompactEncoderMode, PredictorMode, SignedBankSoftmaxObjectiveConfig,
+        SignedMarginObjectiveConfig, TemporalRunConfig, TemporalTaskMode,
+        compact_encoder_mode_from_args, predictor_mode_from_args, projector_drift_weight_from_args,
+        residual_delta_scale_from_args, signed_bank_softmax_config_from_args,
+        signed_bank_softmax_weight_from_args, signed_margin_config_from_args,
+        signed_margin_weight_from_args, temporal_task_mode_from_args,
     };
 
     fn args_with(values: &[&str]) -> Vec<String> {
@@ -771,6 +826,42 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn signed_bank_softmax_weight_defaults_to_disabled() {
+        assert!((signed_bank_softmax_weight_from_args(&args_with(&[])) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn signed_bank_softmax_weight_parses_explicit_weight() {
+        assert!(
+            (signed_bank_softmax_weight_from_args(&args_with(&[
+                "--signed-bank-softmax-weight",
+                "0.5"
+            ])) - 0.5)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn signed_bank_softmax_config_parses_explicit_temperature() {
+        let config = signed_bank_softmax_config_from_args(&args_with(&[
+            "--signed-bank-softmax-temperature",
+            "0.7",
+        ]));
+
+        assert!((config.temperature - 0.7).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "--signed-bank-softmax-temperature must be finite and positive")]
+    fn signed_bank_softmax_config_rejects_zero_temperature() {
+        signed_bank_softmax_config_from_args(&args_with(&[
+            "--signed-bank-softmax-temperature",
+            "0.0",
+        ]));
+    }
+
+    #[test]
     fn target_projection_momentum_warms_linearly_to_end() {
         let config = TemporalRunConfig {
             train_base_seed: 0,
@@ -784,6 +875,8 @@ mod temporal_vision_config_tests {
             projector_drift_weight: 0.0,
             signed_margin_weight: 0.0,
             signed_margin_config: SignedMarginObjectiveConfig::default(),
+            signed_bank_softmax_weight: 0.0,
+            signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
             target_projection_momentum: 0.5,
             target_projection_momentum_start: 1.0,
             target_projection_momentum_end: 0.5,

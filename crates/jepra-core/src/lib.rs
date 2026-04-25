@@ -5,6 +5,7 @@ pub mod linear;
 pub mod losses;
 pub mod predictor;
 pub mod regularizers;
+pub mod signed_objectives;
 pub mod tensor;
 pub mod vision_jepa;
 
@@ -12,10 +13,7 @@ pub use conv::{Conv2d, Conv2dGrads};
 pub use encoder::{ConvEncoder, ConvEncoderGrads, EmbeddingEncoder, EmbeddingEncoderGrads};
 pub use init::{randn, zeros};
 pub use linear::{Linear, LinearGrads};
-pub use losses::{
-    SignedMarginObjectiveConfig, SignedMarginObjectiveReport, mse_loss, mse_loss_grad,
-    signed_margin_objective_loss_and_grad,
-};
+pub use losses::{mse_loss, mse_loss_grad};
 pub use predictor::{
     BottleneckPredictor, BottleneckPredictorGrads, Predictor, PredictorGrads, PredictorModule,
     ResidualBottleneckPredictor, ResidualBottleneckPredictorGrads,
@@ -25,6 +23,11 @@ pub use regularizers::{
     gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projection_stats,
     projector_drift_regularizer, projector_drift_regularizer_grads, representation_health_stats,
     representation_stats,
+};
+pub use signed_objectives::{
+    SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
+    SignedMarginObjectiveConfig, SignedMarginObjectiveReport,
+    signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
 };
 pub use tensor::Tensor;
 pub use vision_jepa::{ProjectedVisionJepa, VisionJepa};

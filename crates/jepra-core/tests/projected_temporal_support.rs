@@ -6,9 +6,10 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{
-    Linear, LinearGrads, Predictor, ProjectedVisionJepa, SignedMarginObjectiveConfig, Tensor,
-    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
-    projection_stats, projector_drift_regularizer, projector_drift_regularizer_grads,
+    Linear, LinearGrads, Predictor, ProjectedVisionJepa, SignedBankSoftmaxObjectiveConfig,
+    SignedMarginObjectiveConfig, Tensor, combine_projection_grads, gaussian_moment_regularizer,
+    gaussian_moment_regularizer_grad, projection_stats, projector_drift_regularizer,
+    projector_drift_regularizer_grads,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -236,6 +237,8 @@ fn projected_run_with_encoder(
         projector_drift_weight: 0.0,
         signed_margin_weight: 0.0,
         signed_margin_config: SignedMarginObjectiveConfig::default(),
+        signed_bank_softmax_weight: 0.0,
+        signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
         target_projection_momentum: 0.5,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.5,
@@ -1139,6 +1142,8 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         projector_drift_weight: 0.0,
         signed_margin_weight: 0.0,
         signed_margin_config: SignedMarginObjectiveConfig::default(),
+        signed_bank_softmax_weight: 0.0,
+        signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
         target_projection_momentum: 0.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.0,
@@ -1786,6 +1791,8 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             projector_drift_weight: 0.0,
             signed_margin_weight: 0.0,
             signed_margin_config: SignedMarginObjectiveConfig::default(),
+            signed_bank_softmax_weight: 0.0,
+            signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
             target_projection_momentum: momentum,
             target_projection_momentum_start: momentum,
             target_projection_momentum_end: momentum,
