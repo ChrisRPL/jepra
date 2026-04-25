@@ -4,23 +4,21 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{
-    BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
-    ResidualBottleneckPredictor, SignedAngularRadialObjectiveReport,
-    SignedBankSoftmaxObjectiveReport, SignedMarginObjectiveReport, SignedRadialCalibrationReport,
-    StateRadiusPredictor, Tensor, projection_stats, representation_stats,
+    projection_stats, representation_stats, BottleneckPredictor, Linear, Predictor,
+    PredictorModule, ProjectedVisionJepa, ResidualBottleneckPredictor,
+    SignedAngularRadialObjectiveReport, SignedBankSoftmaxObjectiveReport,
+    SignedCenteredRadiusScalarObjectiveReport, SignedMarginObjectiveReport,
+    SignedRadialCalibrationReport, StateRadiusPredictor, Tensor,
 };
 use projected_temporal::{
-    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
-    PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    ProjectedSignedCandidateCentroidIntegration, ProjectedSignedObjectiveErrorBreakdown,
-    ProjectedSignedPredictionBankMargin, ProjectedSignedPredictionBankUnitGeometry,
-    ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedStateSeparability,
-    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, projected_signed_angular_radial_objective_loss_and_grad,
+    projected_signed_angular_radial_objective_loss_and_grad,
     projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
     projected_signed_candidate_centroid_integration_from_base_seed,
+    projected_signed_candidate_radius_delta_loss_and_grad,
+    projected_signed_candidate_radius_head_features,
+    projected_signed_candidate_radius_head_integration_from_base_seed,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
@@ -33,16 +31,24 @@ use projected_temporal::{
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
-    projected_velocity_bank_ranking_from_base_seed,
+    projected_velocity_bank_ranking_from_base_seed, ProjectedSignedCandidateCentroidIntegration,
+    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedObjectiveErrorBreakdown,
+    ProjectedSignedPredictionBankMargin, ProjectedSignedPredictionBankUnitGeometry,
+    ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedStateSeparability,
+    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
+    ProjectedVelocityBankRanking, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
+    PROJECTED_VALIDATION_BASE_SEED, PROJECTED_VALIDATION_BATCHES,
+    PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
 };
 use temporal_vision::{
-    CompactEncoderMode, PredictorMode, TemporalTaskMode, assert_required_motion_modes_for_task,
-    assert_temporal_contract, assert_temporal_experiment_improved, make_compact_frozen_encoder,
+    assert_required_motion_modes_for_task, assert_temporal_contract,
+    assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_signed_direction,
     make_compact_frozen_encoder_signed_direction_magnitude, make_compact_frozen_encoder_stronger,
     make_frozen_encoder, make_train_batch_for_config, make_validation_batch_for_config,
     make_validation_batch_with_required_motion_modes_for_config, print_batch_summary_for_task,
-    print_motion_mode_summary_for_task, print_representation_stats,
+    print_motion_mode_summary_for_task, print_representation_stats, CompactEncoderMode,
+    PredictorMode, TemporalTaskMode,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -53,11 +59,23 @@ const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
 const DEFAULT_SIGNED_CANDIDATE_CENTROID_TEMPERATURE: f32 = 0.25;
+const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_TEMPERATURE: f32 = 0.05;
+const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_LR: f32 = 0.02;
+const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT: f32 = 1.0;
+const SIGNED_CANDIDATE_RADIUS_HEAD_FEATURE_DIM: usize = PROJECTION_DIM * 2 + 4;
 
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateCentroidIntegrationRunConfig {
     enabled: bool,
     softmax_temperature: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateRadiusHeadRunConfig {
+    enabled: bool,
+    softmax_temperature: f32,
+    learning_rate: f32,
+    loss_weight: f32,
 }
 
 fn make_projector() -> Linear {
@@ -111,6 +129,13 @@ fn make_state_radius_predictor() -> StateRadiusPredictor {
     )
 }
 
+fn make_signed_candidate_radius_head() -> Linear {
+    Linear::new(
+        Tensor::zeros(vec![SIGNED_CANDIDATE_RADIUS_HEAD_FEATURE_DIM, 1]),
+        Tensor::zeros(vec![1]),
+    )
+}
+
 impl SignedCandidateCentroidIntegrationRunConfig {
     fn from_args_and_env() -> Self {
         let args = std::env::args().collect::<Vec<_>>();
@@ -134,6 +159,48 @@ impl SignedCandidateCentroidIntegrationRunConfig {
     }
 }
 
+impl SignedCandidateRadiusHeadRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let enabled = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-radius-head")
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD").unwrap_or(false);
+        let softmax_temperature =
+            parse_f32_arg(&args, "--signed-candidate-radius-head-temperature")
+                .or_else(|| {
+                    parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD_TEMPERATURE")
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_TEMPERATURE);
+        let learning_rate = parse_f32_arg(&args, "--signed-candidate-radius-head-lr")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD_LR"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_LR);
+        let loss_weight = parse_f32_arg(&args, "--signed-candidate-radius-head-weight")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT);
+
+        assert!(
+            softmax_temperature.is_finite() && softmax_temperature > 0.0,
+            "signed candidate-radius head temperature must be finite and positive"
+        );
+        assert!(
+            learning_rate.is_finite() && learning_rate > 0.0,
+            "signed candidate-radius head lr must be finite and positive"
+        );
+        assert!(
+            loss_weight.is_finite() && loss_weight > 0.0,
+            "signed candidate-radius head weight must be finite and positive"
+        );
+
+        Self {
+            enabled,
+            softmax_temperature,
+            learning_rate,
+            loss_weight,
+        }
+    }
+}
+
 fn reduction_thresholds_for_run_config(
     run_config: temporal_vision::TemporalRunConfig,
 ) -> (f32, f32) {
@@ -151,6 +218,8 @@ fn main() {
         temporal_vision::TemporalRunConfig::from_args(TRAIN_BASE_SEED, NUM_STEPS, LOG_EVERY, 0.0);
     let signed_candidate_centroid_integration_config =
         SignedCandidateCentroidIntegrationRunConfig::from_args_and_env();
+    let signed_candidate_radius_head_config =
+        SignedCandidateRadiusHeadRunConfig::from_args_and_env();
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",
@@ -211,26 +280,37 @@ fn main() {
         signed_candidate_centroid_integration_config.enabled,
         signed_candidate_centroid_integration_config.softmax_temperature
     );
+    println!(
+        "temporal run config | signed candidate-radius head enabled {} | softmax_temperature {} | lr {} | weight {}",
+        signed_candidate_radius_head_config.enabled,
+        signed_candidate_radius_head_config.softmax_temperature,
+        signed_candidate_radius_head_config.learning_rate,
+        signed_candidate_radius_head_config.loss_weight
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
+            signed_candidate_radius_head_config,
             make_predictor(),
         ),
         PredictorMode::Bottleneck => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
+            signed_candidate_radius_head_config,
             make_bottleneck_predictor(),
         ),
         PredictorMode::ResidualBottleneck => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
+            signed_candidate_radius_head_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
         PredictorMode::StateRadius => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
+            signed_candidate_radius_head_config,
             make_state_radius_predictor(),
         ),
     }
@@ -239,6 +319,7 @@ fn main() {
 fn run_with_predictor<P>(
     run_config: temporal_vision::TemporalRunConfig,
     signed_candidate_centroid_integration_config: SignedCandidateCentroidIntegrationRunConfig,
+    signed_candidate_radius_head_config: SignedCandidateRadiusHeadRunConfig,
     predictor: P,
 ) where
     P: PredictorModule,
@@ -308,6 +389,9 @@ fn run_with_predictor<P>(
     let mut model =
         ProjectedVisionJepa::new(encoder, online_projector, target_projector, predictor)
             .with_target_projection_momentum(run_config.target_projection_momentum_at_step(1));
+    let mut signed_candidate_radius_head = signed_candidate_radius_head_config
+        .enabled
+        .then(make_signed_candidate_radius_head);
 
     let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
@@ -342,6 +426,13 @@ fn run_with_predictor<P>(
             &model,
             run_config,
             signed_candidate_centroid_integration_config,
+        );
+    let initial_signed_candidate_radius_head_integration =
+        maybe_projected_signed_candidate_radius_head_integration(
+            &model,
+            signed_candidate_radius_head.as_ref(),
+            run_config,
+            signed_candidate_radius_head_config,
         );
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
@@ -393,6 +484,10 @@ fn run_with_predictor<P>(
         "initial",
         initial_signed_candidate_centroid_integration,
     );
+    print_signed_candidate_radius_head_integration(
+        "initial",
+        initial_signed_candidate_radius_head_integration,
+    );
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
         "initial",
@@ -427,6 +522,15 @@ fn run_with_predictor<P>(
             let signed_angular_radial_step =
                 maybe_projected_signed_angular_radial_objective_loss_and_grad(
                     model, run_config, &x_t, &x_t1,
+                );
+            let signed_candidate_radius_head_step =
+                maybe_train_projected_signed_candidate_radius_head(
+                    model,
+                    signed_candidate_radius_head.as_mut(),
+                    run_config,
+                    signed_candidate_radius_head_config,
+                    &x_t,
+                    &x_t1,
                 );
             let extra_prediction_loss = signed_margin_step
                 .as_ref()
@@ -552,6 +656,10 @@ fn run_with_predictor<P>(
                         Some(report),
                     );
                 }
+                print_signed_centered_radius_scalar_report(
+                    &format!("step {:03} train", step),
+                    signed_candidate_radius_head_step,
+                );
             }
 
             total_loss
@@ -600,6 +708,13 @@ fn run_with_predictor<P>(
             &model,
             run_config,
             signed_candidate_centroid_integration_config,
+        );
+    let final_signed_candidate_radius_head_integration =
+        maybe_projected_signed_candidate_radius_head_integration(
+            &model,
+            signed_candidate_radius_head.as_ref(),
+            run_config,
+            signed_candidate_radius_head_config,
         );
     let final_signed_objective_error_breakdown =
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
@@ -676,6 +791,10 @@ fn run_with_predictor<P>(
         "final",
         final_signed_candidate_centroid_integration,
     );
+    print_signed_candidate_radius_head_integration(
+        "final",
+        final_signed_candidate_radius_head_integration,
+    );
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
@@ -705,6 +824,45 @@ fn add_scaled_extra_prediction_grad(accumulator: &mut Option<Tensor>, grad: &Ten
     } else {
         *accumulator = Some(scaled_grad);
     }
+}
+
+fn maybe_train_projected_signed_candidate_radius_head<P>(
+    model: &ProjectedVisionJepa<P>,
+    radius_head: Option<&mut Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateRadiusHeadRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<SignedCenteredRadiusScalarObjectiveReport>
+where
+    P: PredictorModule,
+{
+    let radius_head = radius_head?;
+    assert!(head_config.enabled, "candidate radius head missing config");
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate-radius head is only supported for signed-velocity-trail projected runs"
+    );
+
+    let features = projected_signed_candidate_radius_head_features(
+        model,
+        x_t,
+        head_config.softmax_temperature,
+    );
+    let radius_delta = radius_head.forward(&features);
+    let (report, grad_delta) = projected_signed_candidate_radius_delta_loss_and_grad(
+        model,
+        x_t,
+        x_t1,
+        &radius_delta,
+        head_config.softmax_temperature,
+    );
+    let scaled_grad = scale_tensor(&grad_delta, head_config.loss_weight);
+    let grads = radius_head.backward(&features, &scaled_grad);
+    radius_head.sgd_step(&grads, head_config.learning_rate);
+
+    Some(report)
 }
 
 fn parse_arg_value<'a>(args: &'a [String], flag: &'a str) -> Option<&'a str> {
@@ -1059,6 +1217,77 @@ fn print_signed_candidate_centroid_integration(
             integration.softmax_temperature,
             integration.samples,
             integration.candidates,
+        );
+    }
+}
+
+fn maybe_projected_signed_candidate_radius_head_integration<P>(
+    model: &ProjectedVisionJepa<P>,
+    radius_head: Option<&Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateRadiusHeadRunConfig,
+) -> Option<ProjectedSignedCandidateRadiusHeadIntegration>
+where
+    P: PredictorModule,
+{
+    let radius_head = radius_head?;
+    assert!(head_config.enabled, "candidate radius head missing config");
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate-radius head is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(
+        projected_signed_candidate_radius_head_integration_from_base_seed(
+            model,
+            radius_head,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            head_config.softmax_temperature,
+        ),
+    )
+}
+
+fn print_signed_candidate_radius_head_integration(
+    tag: &str,
+    integration: Option<ProjectedSignedCandidateRadiusHeadIntegration>,
+) {
+    if let Some(integration) = integration {
+        println!(
+            "{} | signed candidate-radius head integration learned_radius_mrr {:.6} | learned_radius_top1 {:.6} | learned_radius_margin {:.6} | learned_radius_positive_margin_rate {:.6} | learned_radius_sign_margin {:.6} | learned_radius_speed_margin {:.6} | learned_radius_norm_ratio {:.6} | scalar_loss {:.6} | scalar_prediction_radius {:.6} | scalar_target_radius {:.6} | scalar_radius_ratio {:.6} | softmax_temperature {:.6} | samples {} | candidates {}",
+            tag,
+            integration.learned_radius.mrr,
+            integration.learned_radius.top1,
+            integration.learned_radius.margin,
+            integration.learned_radius.positive_margin_rate,
+            integration.learned_radius.sign_margin,
+            integration.learned_radius.speed_margin,
+            integration.learned_radius.norm_ratio,
+            integration.scalar_report.loss,
+            integration.scalar_report.prediction_radius,
+            integration.scalar_report.target_radius,
+            integration.scalar_report.radius_ratio,
+            integration.softmax_temperature,
+            integration.samples,
+            integration.candidates,
+        );
+    }
+}
+
+fn print_signed_centered_radius_scalar_report(
+    tag: &str,
+    report: Option<SignedCenteredRadiusScalarObjectiveReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed centered radius scalar objective loss {:.6} | prediction_radius {:.6} | target_radius {:.6} | radius_ratio {:.6} | samples {}",
+            tag,
+            report.loss,
+            report.prediction_radius,
+            report.target_radius,
+            report.radius_ratio,
+            report.samples,
         );
     }
 }

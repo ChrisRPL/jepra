@@ -1,16 +1,17 @@
 use super::temporal_vision::{
-    BATCH_SIZE, SIGNED_VELOCITY_BANK_CANDIDATE_DX, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX,
     make_signed_velocity_trail_candidate_target_batch, make_temporal_batch_for_task,
-    make_velocity_trail_candidate_target_batch, signed_motion_dx_for_sample,
+    make_velocity_trail_candidate_target_batch, signed_motion_dx_for_sample, TemporalTaskMode,
+    BATCH_SIZE, SIGNED_VELOCITY_BANK_CANDIDATE_DX, VELOCITY_BANK_CANDIDATE_DX,
 };
 use jepra_core::{
+    gaussian_moment_regularizer, mse_loss, signed_angular_radial_objective_loss_and_grad,
+    signed_bank_softmax_objective_loss_and_grad, signed_centered_radius_scalar_loss_and_grad,
+    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
     EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa,
     SignedAngularRadialObjectiveConfig, SignedAngularRadialObjectiveReport,
     SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
-    SignedMarginObjectiveConfig, SignedMarginObjectiveReport, SignedRadialCalibrationReport,
-    Tensor, gaussian_moment_regularizer, mse_loss, signed_angular_radial_objective_loss_and_grad,
-    signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
-    signed_radial_calibration_loss_and_grad,
+    SignedCenteredRadiusScalarObjectiveReport, SignedMarginObjectiveConfig,
+    SignedMarginObjectiveReport, SignedRadialCalibrationReport, Tensor,
 };
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -18,6 +19,7 @@ pub const PROJECTED_VALIDATION_BATCHES: usize = 8;
 pub const PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 pub const PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 const VELOCITY_BANK_TIE_EPSILON: f32 = 1e-7;
+const CANDIDATE_RADIUS_DELTA_CLAMP: f32 = 2.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedVelocityBankRanking {
@@ -153,6 +155,15 @@ pub struct ProjectedSignedCandidateCentroidIntegration {
     pub candidates: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateRadiusHeadIntegration {
+    pub learned_radius: ProjectedSignedPredictionCounterfactualMetrics,
+    pub scalar_report: SignedCenteredRadiusScalarObjectiveReport,
+    pub softmax_temperature: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedObjectiveErrorBreakdown {
@@ -237,6 +248,11 @@ struct SignedCandidateCentroidIntegrationSampleOutcome {
     mean_radius: SignedPredictionCounterfactualSampleOutcome,
     nearest_unit_radius: SignedPredictionCounterfactualSampleOutcome,
     softmax_radius: SignedPredictionCounterfactualSampleOutcome,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateRadiusHeadIntegrationSampleOutcome {
+    learned_radius: SignedPredictionCounterfactualSampleOutcome,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1683,6 +1699,162 @@ where
     }
 }
 
+pub fn projected_signed_candidate_radius_delta_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    radius_delta: &Tensor,
+    softmax_temperature: f32,
+) -> (SignedCenteredRadiusScalarObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate radius delta objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate radius delta objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius delta objective temperature must be finite and positive"
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+    let anchor_radius = signed_candidate_softmax_anchor_radius(
+        &prediction,
+        &candidate_targets,
+        softmax_temperature,
+    );
+    let predicted_radius = radius_delta_to_centered_radius(radius_delta, &anchor_radius);
+    let (report, grad_radius) = signed_centered_radius_scalar_loss_and_grad(
+        &predicted_radius,
+        &candidate_targets,
+        &true_candidate_indices,
+    );
+    let grad_delta =
+        centered_radius_grad_to_delta_grad(radius_delta, &predicted_radius, &grad_radius);
+
+    (report, grad_delta)
+}
+
+pub fn projected_signed_candidate_radius_head_features<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    softmax_temperature: f32,
+) -> Tensor
+where
+    P: PredictorModule,
+{
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate radius head features expect rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius head feature temperature must be finite and positive"
+    );
+
+    let projection = model.project_latent(x_t);
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+
+    signed_candidate_radius_head_features_from_prediction(
+        &projection,
+        &prediction,
+        &candidate_targets,
+        softmax_temperature,
+    )
+}
+
+pub fn projected_signed_candidate_radius_head_integration_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    radius_head: &Linear,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    softmax_temperature: f32,
+) -> ProjectedSignedCandidateRadiusHeadIntegration
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "candidate radius head integration requires at least one validation batch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius head integration temperature must be finite and positive"
+    );
+
+    let mut learned_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut loss_sum = 0.0f32;
+    let mut prediction_radius_sum = 0.0f32;
+    let mut target_radius_sum = 0.0f32;
+    let mut radius_ratio_sum = 0.0f32;
+    let mut samples = 0usize;
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_radius_head_features(model, &x_t, softmax_temperature);
+        let radius_delta = radius_head.forward(&features);
+        let (report, _) = projected_signed_candidate_radius_delta_loss_and_grad(
+            model,
+            &x_t,
+            &x_t1,
+            &radius_delta,
+            softmax_temperature,
+        );
+        let outcomes = projected_signed_candidate_radius_head_integration_sample_outcomes(
+            model,
+            &x_t,
+            &x_t1,
+            &radius_delta,
+            softmax_temperature,
+        );
+
+        loss_sum += report.loss * report.samples as f32;
+        prediction_radius_sum += report.prediction_radius * report.samples as f32;
+        target_radius_sum += report.target_radius * report.samples as f32;
+        radius_ratio_sum += report.radius_ratio * report.samples as f32;
+        samples += report.samples;
+
+        for outcome in outcomes {
+            learned_radius_totals.observe(outcome.learned_radius);
+        }
+    }
+
+    assert!(samples > 0, "candidate radius head report has no samples");
+    assert_eq!(
+        samples, learned_radius_totals.samples,
+        "candidate radius head sample mismatch"
+    );
+
+    ProjectedSignedCandidateRadiusHeadIntegration {
+        learned_radius: learned_radius_totals.into_metrics(),
+        scalar_report: SignedCenteredRadiusScalarObjectiveReport {
+            loss: loss_sum / samples as f32,
+            prediction_radius: prediction_radius_sum / samples as f32,
+            target_radius: target_radius_sum / samples as f32,
+            radius_ratio: radius_ratio_sum / samples as f32,
+            samples,
+        },
+        softmax_temperature,
+        samples,
+        candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
+}
+
 #[allow(dead_code)]
 pub fn projected_signed_objective_error_breakdown_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
@@ -2738,6 +2910,305 @@ where
     }
 
     outcomes
+}
+
+fn projected_signed_candidate_radius_head_integration_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    radius_delta: &Tensor,
+    softmax_temperature: f32,
+) -> Vec<SignedCandidateRadiusHeadIntegrationSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius head integration temperature must be finite and positive"
+    );
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate radius head integration expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate radius head integration expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let anchor_radius = signed_candidate_softmax_anchor_radius(
+        &prediction,
+        &candidate_targets,
+        softmax_temperature,
+    );
+    let predicted_radius = radius_delta_to_centered_radius(radius_delta, &anchor_radius);
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let target_norm = vector_l2_norm(&target_centered).max(VELOCITY_BANK_TIE_EPSILON);
+        let learned_radius = scalar_tensor_value(&predicted_radius, sample);
+        let learned_radius_centered = scale_vector(&prediction_unit, learned_radius);
+
+        outcomes.push(SignedCandidateRadiusHeadIntegrationSampleOutcome {
+            learned_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &learned_radius_centered,
+                learned_radius / target_norm,
+            ),
+        });
+    }
+
+    outcomes
+}
+
+fn signed_candidate_radius_head_features_from_prediction(
+    projection: &Tensor,
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    softmax_temperature: f32,
+) -> Tensor {
+    assert!(
+        projection.shape.len() == 2,
+        "candidate radius head projection features must be rank-2, got {:?}",
+        projection.shape
+    );
+    assert!(
+        prediction.shape.len() == 2,
+        "candidate radius head prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert_eq!(
+        projection.shape[0], prediction.shape[0],
+        "candidate radius head feature batch mismatch"
+    );
+    assert!(
+        !candidate_targets.is_empty(),
+        "candidate radius head features require non-empty candidate targets"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius head feature temperature must be finite and positive"
+    );
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    let feature_dim = projection.shape[1] + projection_dim + 4;
+    let mut features = Tensor::zeros(vec![batch_size, feature_dim]);
+
+    for candidate_target in candidate_targets {
+        assert_eq!(
+            candidate_target.shape, prediction.shape,
+            "candidate radius head target shape mismatch"
+        );
+    }
+
+    for sample in 0..batch_size {
+        let centroid = signed_candidate_centroid(candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(prediction, sample, &centroid);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let prediction_norm = vector_l2_norm(&prediction_centered);
+        let mut candidate_units = Vec::with_capacity(candidate_targets.len());
+        let mut candidate_radii = Vec::with_capacity(candidate_targets.len());
+
+        for candidate_target in candidate_targets {
+            let candidate_centered = centered_sample_vector(candidate_target, sample, &centroid);
+            candidate_radii.push(vector_l2_norm(&candidate_centered));
+            candidate_units.push(unit_vector(&candidate_centered));
+        }
+
+        let anchor_radius = softmax_weighted_radius(
+            &prediction_unit,
+            &candidate_units,
+            &candidate_radii,
+            softmax_temperature,
+        );
+        let mean_radius = candidate_radii.iter().sum::<f32>() / candidate_radii.len() as f32;
+        let min_radius = candidate_radii
+            .iter()
+            .copied()
+            .fold(f32::INFINITY, |best, radius| best.min(radius));
+        let max_radius = candidate_radii
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, |best, radius| best.max(radius));
+
+        for feature_idx in 0..projection.shape[1] {
+            features.set(
+                &[sample, feature_idx],
+                projection.get(&[sample, feature_idx]),
+            );
+        }
+
+        let centered_offset = projection.shape[1];
+        for (feature_idx, value) in prediction_centered.iter().enumerate() {
+            features.set(&[sample, centered_offset + feature_idx], *value);
+        }
+
+        let scalar_offset = centered_offset + projection_dim;
+        features.set(&[sample, scalar_offset], prediction_norm);
+        features.set(&[sample, scalar_offset + 1], anchor_radius);
+        features.set(&[sample, scalar_offset + 2], mean_radius);
+        features.set(&[sample, scalar_offset + 3], max_radius - min_radius);
+    }
+
+    features
+}
+
+fn signed_candidate_softmax_anchor_radius(
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    softmax_temperature: f32,
+) -> Vec<f32> {
+    assert!(
+        prediction.shape.len() == 2,
+        "candidate radius anchor prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert!(
+        !candidate_targets.is_empty(),
+        "candidate radius anchor requires non-empty candidate targets"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius anchor temperature must be finite and positive"
+    );
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut anchor_radius = Vec::with_capacity(batch_size);
+
+    for candidate_target in candidate_targets {
+        assert_eq!(
+            candidate_target.shape, prediction.shape,
+            "candidate radius anchor target shape mismatch"
+        );
+    }
+
+    for sample in 0..batch_size {
+        let centroid = signed_candidate_centroid(candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(prediction, sample, &centroid);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let mut candidate_units = Vec::with_capacity(candidate_targets.len());
+        let mut candidate_radii = Vec::with_capacity(candidate_targets.len());
+
+        for candidate_target in candidate_targets {
+            let candidate_centered = centered_sample_vector(candidate_target, sample, &centroid);
+            candidate_radii.push(vector_l2_norm(&candidate_centered));
+            candidate_units.push(unit_vector(&candidate_centered));
+        }
+
+        anchor_radius.push(softmax_weighted_radius(
+            &prediction_unit,
+            &candidate_units,
+            &candidate_radii,
+            softmax_temperature,
+        ));
+    }
+
+    anchor_radius
+}
+
+fn radius_delta_to_centered_radius(radius_delta: &Tensor, anchor_radius: &[f32]) -> Tensor {
+    assert_scalar_tensor_shape(radius_delta, anchor_radius.len(), "candidate radius delta");
+
+    let mut predicted_radius = Tensor::zeros(vec![anchor_radius.len(), 1]);
+
+    for (sample, anchor_radius) in anchor_radius.iter().enumerate() {
+        let delta = scalar_tensor_value(radius_delta, sample);
+        let multiplier = clamped_radius_delta_multiplier(delta);
+        let radius = (*anchor_radius).max(VELOCITY_BANK_TIE_EPSILON) * multiplier;
+
+        assert!(
+            radius.is_finite() && radius >= 0.0,
+            "candidate radius delta produced non-finite radius"
+        );
+        predicted_radius.set(&[sample, 0], radius);
+    }
+
+    predicted_radius
+}
+
+fn centered_radius_grad_to_delta_grad(
+    radius_delta: &Tensor,
+    predicted_radius: &Tensor,
+    grad_radius: &Tensor,
+) -> Tensor {
+    assert_eq!(
+        predicted_radius.shape, grad_radius.shape,
+        "candidate radius grad shape mismatch"
+    );
+    assert_scalar_tensor_shape(
+        radius_delta,
+        predicted_radius.shape[0],
+        "candidate radius delta",
+    );
+
+    let mut grad_delta = Tensor::zeros(radius_delta.shape.clone());
+
+    for sample in 0..predicted_radius.shape[0] {
+        let delta = scalar_tensor_value(radius_delta, sample);
+        let grad = if delta.abs() <= CANDIDATE_RADIUS_DELTA_CLAMP {
+            scalar_tensor_value(grad_radius, sample) * scalar_tensor_value(predicted_radius, sample)
+        } else {
+            0.0
+        };
+
+        set_scalar_tensor_value(&mut grad_delta, sample, grad);
+    }
+
+    grad_delta
+}
+
+fn clamped_radius_delta_multiplier(delta: f32) -> f32 {
+    assert!(delta.is_finite(), "candidate radius delta must be finite");
+
+    delta
+        .clamp(-CANDIDATE_RADIUS_DELTA_CLAMP, CANDIDATE_RADIUS_DELTA_CLAMP)
+        .exp()
+}
+
+fn assert_scalar_tensor_shape(tensor: &Tensor, batch_size: usize, context: &str) {
+    assert!(
+        tensor.shape == vec![batch_size, 1] || tensor.shape == vec![batch_size],
+        "{} expects scalar tensor shape [{}, 1] or [{}], got {:?}",
+        context,
+        batch_size,
+        batch_size,
+        tensor.shape
+    );
+}
+
+fn scalar_tensor_value(tensor: &Tensor, sample: usize) -> f32 {
+    match tensor.shape.as_slice() {
+        [_, 1] => tensor.get(&[sample, 0]),
+        [_] => tensor.get(&[sample]),
+        shape => panic!("scalar tensor expected rank 1 or 2, got {:?}", shape),
+    }
+}
+
+fn set_scalar_tensor_value(tensor: &mut Tensor, sample: usize, value: f32) {
+    match tensor.shape.as_slice() {
+        [_, 1] => tensor.set(&[sample, 0], value),
+        [_] => tensor.set(&[sample], value),
+        shape => panic!("scalar tensor expected rank 1 or 2, got {:?}", shape),
+    }
 }
 
 fn projected_signed_target_bank_sample_outcomes<P>(
