@@ -95,6 +95,7 @@ pub struct TemporalRunConfig {
     pub signed_margin_config: SignedMarginObjectiveConfig,
     pub signed_bank_softmax_weight: f32,
     pub signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig,
+    pub signed_radial_weight: f32,
     pub target_projection_momentum: f32,
     pub target_projection_momentum_start: f32,
     pub target_projection_momentum_end: f32,
@@ -148,6 +149,7 @@ impl TemporalRunConfig {
         let signed_margin_config = signed_margin_config_from_args(&args);
         let signed_bank_softmax_weight = signed_bank_softmax_weight_from_args(&args);
         let signed_bank_softmax_config = signed_bank_softmax_config_from_args(&args);
+        let signed_radial_weight = signed_radial_weight_from_args(&args);
         assert!(
             signed_margin_weight == 0.0
                 || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
@@ -157,6 +159,11 @@ impl TemporalRunConfig {
             signed_bank_softmax_weight == 0.0
                 || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
             "signed bank softmax objective is only supported for signed-velocity-trail task"
+        );
+        assert!(
+            signed_radial_weight == 0.0
+                || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+            "signed radial calibration objective is only supported for signed-velocity-trail task"
         );
         assert_target_projection_momentum(target_projection_momentum_end);
         assert_target_projection_momentum(target_projection_momentum_start);
@@ -186,6 +193,7 @@ impl TemporalRunConfig {
             signed_margin_config,
             signed_bank_softmax_weight,
             signed_bank_softmax_config,
+            signed_radial_weight,
             target_projection_momentum: target_projection_momentum_end,
             target_projection_momentum_start,
             target_projection_momentum_end,
@@ -412,6 +420,17 @@ fn signed_bank_softmax_config_from_args(args: &[String]) -> SignedBankSoftmaxObj
     config
 }
 
+fn signed_radial_weight_from_args(args: &[String]) -> f32 {
+    parse_arg_value(args, "--signed-radial-weight")
+        .map(|value| parse_finite_nonnegative_f32(value, "--signed-radial-weight"))
+        .or_else(|| {
+            std::env::var("JEPRA_SIGNED_RADIAL_WEIGHT")
+                .ok()
+                .map(|value| parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_RADIAL_WEIGHT"))
+        })
+        .unwrap_or(0.0)
+}
+
 pub fn training_steps(default_steps: usize) -> usize {
     std::env::var("JEPRA_TRAIN_STEPS")
         .ok()
@@ -599,7 +618,8 @@ mod temporal_vision_config_tests {
         compact_encoder_mode_from_args, predictor_mode_from_args, projector_drift_weight_from_args,
         residual_delta_scale_from_args, signed_bank_softmax_config_from_args,
         signed_bank_softmax_weight_from_args, signed_margin_config_from_args,
-        signed_margin_weight_from_args, temporal_task_mode_from_args,
+        signed_margin_weight_from_args, signed_radial_weight_from_args,
+        temporal_task_mode_from_args,
     };
 
     fn args_with(values: &[&str]) -> Vec<String> {
@@ -876,6 +896,27 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn signed_radial_weight_defaults_to_disabled() {
+        assert!((signed_radial_weight_from_args(&args_with(&[])) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn signed_radial_weight_parses_explicit_weight() {
+        assert!(
+            (signed_radial_weight_from_args(&args_with(&["--signed-radial-weight", "0.25"]))
+                - 0.25)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "--signed-radial-weight must be finite and non-negative")]
+    fn signed_radial_weight_panics_on_negative_value() {
+        signed_radial_weight_from_args(&args_with(&["--signed-radial-weight", "-0.1"]));
+    }
+
+    #[test]
     fn target_projection_momentum_warms_linearly_to_end() {
         let config = TemporalRunConfig {
             train_base_seed: 0,
@@ -891,6 +932,7 @@ mod temporal_vision_config_tests {
             signed_margin_config: SignedMarginObjectiveConfig::default(),
             signed_bank_softmax_weight: 0.0,
             signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
+            signed_radial_weight: 0.0,
             target_projection_momentum: 0.5,
             target_projection_momentum_start: 1.0,
             target_projection_momentum_end: 0.5,

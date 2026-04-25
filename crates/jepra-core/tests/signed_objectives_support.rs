@@ -1,6 +1,7 @@
 use jepra_core::{
     SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
     signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
+    signed_radial_calibration_loss_and_grad,
 };
 
 fn signed_objective_fixture_prediction(value: f32) -> Tensor {
@@ -137,5 +138,41 @@ fn signed_bank_softmax_objective_rejects_non_positive_temperature() {
         &signed_objective_fixture_candidates(),
         &[0usize],
         SignedBankSoftmaxObjectiveConfig { temperature: 0.0 },
+    );
+}
+
+#[test]
+fn signed_radial_calibration_grad_matches_finite_difference() {
+    let candidate_targets = signed_objective_fixture_candidates();
+    let true_indices = [3usize];
+    let prediction = signed_objective_fixture_prediction(0.4);
+    let (report, grad) =
+        signed_radial_calibration_loss_and_grad(&prediction, &candidate_targets, &true_indices);
+
+    assert!(report.loss.is_finite() && report.loss > 0.0);
+    assert!(report.prediction_norm.is_finite() && report.prediction_norm >= 0.0);
+    assert!(report.target_norm.is_finite() && report.target_norm >= 0.0);
+    assert!(report.norm_ratio.is_finite() && report.norm_ratio >= 0.0);
+    assert_eq!(report.samples, 1);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
+
+    let epsilon = 1e-3;
+    let plus = signed_objective_fixture_prediction(0.4 + epsilon);
+    let minus = signed_objective_fixture_prediction(0.4 - epsilon);
+    let plus_loss =
+        signed_radial_calibration_loss_and_grad(&plus, &candidate_targets, &true_indices)
+            .0
+            .loss;
+    let minus_loss =
+        signed_radial_calibration_loss_and_grad(&minus, &candidate_targets, &true_indices)
+            .0
+            .loss;
+    let finite_difference = (plus_loss - minus_loss) / (2.0 * epsilon);
+
+    assert!(
+        (finite_difference - grad.data[0]).abs() < 1e-3,
+        "finite difference {:.6} != grad {:.6}",
+        finite_difference,
+        grad.data[0]
     );
 }

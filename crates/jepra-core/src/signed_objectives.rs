@@ -92,6 +92,15 @@ pub struct SignedBankSoftmaxObjectiveReport {
     pub samples: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignedRadialCalibrationReport {
+    pub loss: f32,
+    pub prediction_norm: f32,
+    pub target_norm: f32,
+    pub norm_ratio: f32,
+    pub samples: usize,
+}
+
 pub fn signed_bank_softmax_objective_loss_and_grad(
     prediction: &Tensor,
     candidate_targets: &[Tensor],
@@ -207,6 +216,104 @@ pub fn signed_bank_softmax_objective_loss_and_grad(
             loss: loss_sum / batch_size as f32,
             top1: top1_count as f32 / batch_size as f32,
             mean_true_probability: true_probability_sum / batch_size as f32,
+            samples: batch_size,
+        },
+        grad,
+    )
+}
+
+pub fn signed_radial_calibration_loss_and_grad(
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+) -> (SignedRadialCalibrationReport, Tensor) {
+    assert!(
+        prediction.ndim() == 2,
+        "signed radial calibration prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert!(
+        candidate_targets.len() >= 2,
+        "signed radial calibration requires at least two candidates"
+    );
+    assert!(
+        true_candidate_indices.len() == prediction.shape[0],
+        "signed radial calibration true-index count {} must match batch {}",
+        true_candidate_indices.len(),
+        prediction.shape[0]
+    );
+
+    for target in candidate_targets {
+        assert!(
+            target.shape == prediction.shape,
+            "signed radial calibration candidate target shape mismatch: prediction {:?}, candidate {:?}",
+            prediction.shape,
+            target.shape
+        );
+    }
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    assert!(
+        projection_dim > 0,
+        "signed radial calibration requires non-empty projection dim"
+    );
+
+    let mut grad = Tensor::zeros(prediction.shape.clone());
+    let mut loss_sum = 0.0f32;
+    let mut prediction_norm_sum = 0.0f32;
+    let mut target_norm_sum = 0.0f32;
+    let mut norm_ratio_sum = 0.0f32;
+
+    for sample in 0..batch_size {
+        let true_index = true_candidate_indices[sample];
+        assert!(
+            true_index < candidate_targets.len(),
+            "signed radial calibration true index {} out of bounds for {} candidates",
+            true_index,
+            candidate_targets.len()
+        );
+
+        let centroid = candidate_target_centroid(candidate_targets, sample, projection_dim);
+        let prediction_centered =
+            centered_sample_features(prediction, sample, projection_dim, &centroid);
+        let target_centered = centered_sample_features(
+            &candidate_targets[true_index],
+            sample,
+            projection_dim,
+            &centroid,
+        );
+        let prediction_norm = vector_norm(&prediction_centered);
+        let target_norm = vector_norm(&target_centered);
+        let norm_error = prediction_norm - target_norm;
+        let loss = norm_error * norm_error;
+
+        assert!(
+            loss.is_finite() && prediction_norm.is_finite() && target_norm.is_finite(),
+            "signed radial calibration produced non-finite metrics"
+        );
+
+        loss_sum += loss;
+        prediction_norm_sum += prediction_norm;
+        target_norm_sum += target_norm;
+        norm_ratio_sum += prediction_norm / target_norm.max(RADIAL_EPSILON);
+
+        if prediction_norm > RADIAL_EPSILON {
+            let grad_scale = 2.0 * norm_error / (batch_size as f32 * prediction_norm);
+            for feature_idx in 0..projection_dim {
+                let value = grad.get(&[sample, feature_idx])
+                    + grad_scale * prediction_centered[feature_idx];
+                grad.set(&[sample, feature_idx], value);
+            }
+        }
+    }
+
+    (
+        SignedRadialCalibrationReport {
+            loss: loss_sum / batch_size as f32,
+            prediction_norm: prediction_norm_sum / batch_size as f32,
+            target_norm: target_norm_sum / batch_size as f32,
+            norm_ratio: norm_ratio_sum / batch_size as f32,
             samples: batch_size,
         },
         grad,
@@ -366,6 +473,53 @@ pub fn signed_margin_objective_loss_and_grad(
         },
         grad,
     )
+}
+
+const RADIAL_EPSILON: f32 = 1e-6;
+
+fn candidate_target_centroid(
+    candidate_targets: &[Tensor],
+    sample: usize,
+    projection_dim: usize,
+) -> Vec<f32> {
+    let mut centroid = vec![0.0f32; projection_dim];
+
+    for target in candidate_targets {
+        for (feature_idx, value) in centroid.iter_mut().enumerate() {
+            *value += target.get(&[sample, feature_idx]);
+        }
+    }
+
+    for value in &mut centroid {
+        *value /= candidate_targets.len() as f32;
+    }
+
+    centroid
+}
+
+fn centered_sample_features(
+    tensor: &Tensor,
+    sample: usize,
+    projection_dim: usize,
+    centroid: &[f32],
+) -> Vec<f32> {
+    assert_eq!(
+        centroid.len(),
+        projection_dim,
+        "signed radial calibration centroid dim mismatch"
+    );
+
+    (0..projection_dim)
+        .map(|feature_idx| tensor.get(&[sample, feature_idx]) - centroid[feature_idx])
+        .collect()
+}
+
+fn vector_norm(features: &[f32]) -> f32 {
+    features
+        .iter()
+        .map(|value| value * value)
+        .sum::<f32>()
+        .sqrt()
 }
 
 fn sample_mean_squared_distance(lhs: &Tensor, rhs: &Tensor, sample: usize) -> f32 {

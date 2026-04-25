@@ -18,6 +18,7 @@ use projected_temporal::{
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_prediction_bank_unit_geometry_from_base_seed,
+    projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
@@ -241,6 +242,7 @@ fn projected_run_with_encoder(
         signed_margin_config: SignedMarginObjectiveConfig::default(),
         signed_bank_softmax_weight: 0.0,
         signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
+        signed_radial_weight: 0.0,
         target_projection_momentum: 0.5,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.5,
@@ -891,6 +893,35 @@ fn projected_signed_prediction_bank_unit_geometry_is_finite_and_bounded() {
 }
 
 #[test]
+fn projected_signed_radial_calibration_report_is_finite_and_bounded() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let report = projected_signed_radial_calibration_report_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for value in [
+        report.loss,
+        report.prediction_norm,
+        report.target_norm,
+        report.norm_ratio,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!(report.loss >= 0.0);
+    assert!(report.prediction_norm >= 0.0);
+    assert!(report.target_norm >= 0.0);
+    assert!(report.norm_ratio >= 0.0);
+    assert_eq!(report.samples, BATCH_SIZE * 2);
+}
+
+#[test]
 #[should_panic(expected = "velocity-bank ranking only supports velocity-trail")]
 fn projected_velocity_bank_ranking_rejects_non_velocity_trail_task() {
     let encoder = make_frozen_encoder();
@@ -1209,6 +1240,7 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         signed_margin_config: SignedMarginObjectiveConfig::default(),
         signed_bank_softmax_weight: 0.0,
         signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
+        signed_radial_weight: 0.0,
         target_projection_momentum: 0.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.0,
@@ -1858,6 +1890,7 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             signed_margin_config: SignedMarginObjectiveConfig::default(),
             signed_bank_softmax_weight: 0.0,
             signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
+            signed_radial_weight: 0.0,
             target_projection_momentum: momentum,
             target_projection_momentum_start: momentum,
             target_projection_momentum_end: momentum,

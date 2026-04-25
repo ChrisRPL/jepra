@@ -6,7 +6,7 @@ mod temporal_vision;
 use jepra_core::{
     BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
     ResidualBottleneckPredictor, SignedBankSoftmaxObjectiveReport, SignedMarginObjectiveReport,
-    Tensor, projection_stats, representation_stats,
+    SignedRadialCalibrationReport, Tensor, projection_stats, representation_stats,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -21,6 +21,8 @@ use projected_temporal::{
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_prediction_bank_unit_geometry_from_base_seed,
+    projected_signed_radial_calibration_loss_and_grad,
+    projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
@@ -148,6 +150,10 @@ fn main() {
         "temporal run config | signed bank softmax weight {} | temperature {}",
         run_config.signed_bank_softmax_weight, run_config.signed_bank_softmax_config.temperature,
     );
+    println!(
+        "temporal run config | signed radial weight {}",
+        run_config.signed_radial_weight
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
@@ -259,6 +265,8 @@ where
         maybe_projected_signed_margin_objective_report(&model, run_config);
     let initial_signed_bank_softmax_objective_report =
         maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
+    let initial_signed_radial_calibration_report =
+        maybe_projected_signed_radial_calibration_report(&model, run_config);
     let initial_signed_state_separability =
         maybe_projected_signed_state_separability(&model, run_config);
 
@@ -298,6 +306,7 @@ where
         "initial",
         initial_signed_bank_softmax_objective_report,
     );
+    print_signed_radial_calibration_report("initial", initial_signed_radial_calibration_report);
     print_signed_state_separability("initial", initial_signed_state_separability);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
@@ -316,6 +325,9 @@ where
                 maybe_projected_signed_bank_softmax_objective_loss_and_grad(
                     model, run_config, &x_t, &x_t1,
                 );
+            let signed_radial_step = maybe_projected_signed_radial_calibration_loss_and_grad(
+                model, run_config, &x_t, &x_t1,
+            );
             let extra_prediction_loss = signed_margin_step
                 .as_ref()
                 .map(|(report, _)| run_config.signed_margin_weight * report.weighted_loss)
@@ -323,6 +335,10 @@ where
                 + signed_bank_softmax_step
                     .as_ref()
                     .map(|(report, _)| run_config.signed_bank_softmax_weight * report.loss)
+                    .unwrap_or(0.0)
+                + signed_radial_step
+                    .as_ref()
+                    .map(|(report, _)| run_config.signed_radial_weight * report.loss)
                     .unwrap_or(0.0);
             let mut extra_prediction_grad = None;
             if let Some((_, grad)) = signed_margin_step.as_ref() {
@@ -337,6 +353,13 @@ where
                     &mut extra_prediction_grad,
                     grad,
                     run_config.signed_bank_softmax_weight,
+                );
+            }
+            if let Some((_, grad)) = signed_radial_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    run_config.signed_radial_weight,
                 );
             }
             let (prediction_loss, regularizer_loss, projector_drift_loss, total_loss) =
@@ -406,6 +429,12 @@ where
                         Some(report),
                     );
                 }
+                if let Some((report, _)) = signed_radial_step {
+                    print_signed_radial_calibration_report(
+                        &format!("step {:03} train", step),
+                        Some(report),
+                    );
+                }
             }
 
             total_loss
@@ -453,6 +482,8 @@ where
         maybe_projected_signed_margin_objective_report(&model, run_config);
     let final_signed_bank_softmax_objective_report =
         maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
+    let final_signed_radial_calibration_report =
+        maybe_projected_signed_radial_calibration_report(&model, run_config);
     let final_signed_state_separability =
         maybe_projected_signed_state_separability(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
@@ -513,6 +544,7 @@ where
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
+    print_signed_radial_calibration_report("final", final_signed_radial_calibration_report);
     print_signed_state_separability("final", final_signed_state_separability);
 }
 
@@ -859,6 +891,52 @@ where
     )
 }
 
+fn maybe_projected_signed_radial_calibration_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<(SignedRadialCalibrationReport, Tensor)>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_radial_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed radial calibration objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(projected_signed_radial_calibration_loss_and_grad(
+        model, x_t, x_t1,
+    ))
+}
+
+fn maybe_projected_signed_radial_calibration_report<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<SignedRadialCalibrationReport>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_radial_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed radial calibration objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(projected_signed_radial_calibration_report_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+    ))
+}
+
 fn maybe_projected_signed_state_separability<P>(
     model: &ProjectedVisionJepa<P>,
     run_config: temporal_vision::TemporalRunConfig,
@@ -953,6 +1031,23 @@ fn print_signed_bank_softmax_objective_report(
         println!(
             "{} | signed bank softmax objective loss {:.6} | top1 {:.6} | true_probability {:.6} | samples {}",
             tag, report.loss, report.top1, report.mean_true_probability, report.samples,
+        );
+    }
+}
+
+fn print_signed_radial_calibration_report(
+    tag: &str,
+    report: Option<SignedRadialCalibrationReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed radial calibration loss {:.6} | prediction_norm {:.6} | target_norm {:.6} | norm_ratio {:.6} | samples {}",
+            tag,
+            report.loss,
+            report.prediction_norm,
+            report.target_norm,
+            report.norm_ratio,
+            report.samples,
         );
     }
 }

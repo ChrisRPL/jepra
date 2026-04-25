@@ -67,6 +67,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--projector-drift-weight <float>` adds an opt-in L2 online-projector-to-target-projector drift regularizer in projected runs (`0.0` disables it)
 - `--signed-bank-softmax-weight <float>` adds an opt-in projected signed-task candidate-bank cross-entropy objective (`0.0` disables it)
 - `--signed-bank-softmax-temperature <float>` controls the signed-bank softmax temperature (`1.0` default; must be > 0)
+- `--signed-radial-weight <float>` adds an opt-in projected signed-task bank-centered radius calibration objective (`0.0` disables it)
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -78,6 +79,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_RESIDUAL_DELTA_SCALE` is an environment fallback for residual-bottleneck delta scale
 - `JEPRA_PROJECTOR_DRIFT_WEIGHT` is an environment fallback for projected online-projector drift regularization
 - `JEPRA_SIGNED_BANK_SOFTMAX_WEIGHT` and `JEPRA_SIGNED_BANK_SOFTMAX_TEMPERATURE` are environment fallbacks for the signed-bank softmax objective
+- `JEPRA_SIGNED_RADIAL_WEIGHT` is the environment fallback for signed radial calibration
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
@@ -94,7 +96,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v13 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_unit_speed_margin_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> state_projection_mrr_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v14 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_unit_speed_margin_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_radial_norm_ratio_end=<n|na> state_projection_mrr_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -193,12 +195,13 @@ Default-off signed-bank softmax objective probe (`jepra_predictor_compare_v12`):
 - Latest narrow evidence (`2026-04-25`, `signed-direction`, baseline, seeds `11000..11002`, weight `0.5`, temperature `1.0`) keeps all rows health-ok but does not improve the margin gate: `ppr=0.281250`, `margin=-1.200875`, `signed_bank_softmax_top1=0.281250`.
 - A high-weight single-seed diagnostic (`weight=5.0`, seed `11000`) lowers softmax loss but still keeps `ppr=0.281250` and worsens signed-bank MRR, so do not promote or tune this objective as the next path.
 
-Signed-direction magnitude and unit-geometry probes (`jepra_predictor_compare_v13`):
+Signed-direction magnitude and unit-geometry probes (`jepra_predictor_compare_v13`/`v14`):
 
 - `--compact-encoder-mode signed-direction-magnitude` adds opt-in local orientation filters plus speed/magnitude conditioning while preserving the 3D latent/projector interface.
 - Unit-geometry diagnostics bank-center prediction/candidates and evaluate direction on normalized vectors, exposing angular signal separately from raw Euclidean radius.
 - Latest combined evidence (`2026-04-25`, projected signed baseline, seeds `11000..11002`) is health-ok and improves validation/margin versus `signed-direction`: `val=0.387471`, raw margin `-0.818459`, but raw PPR remains `0.281250`.
 - Unit geometry is strong enough to guide the next build step: `prediction_unit_mrr=0.631944`, `prediction_unit_top1=0.453125`, and speed margin is near zero (`0.001397`). The blocker is radial calibration/speed geometry, not missing sign signal.
+- `--signed-radial-weight` adds a default-off bank-centered radius calibration objective. First bounded probe (`weight=0.1`, same seeds) is health-ok and raises centered norm ratio to `0.485350`, but raw PPR stays pinned at `0.281250`; keep it as a diagnostic/objective hook, not a promoted fix.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

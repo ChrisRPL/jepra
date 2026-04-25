@@ -26,8 +26,9 @@ pub use regularizers::{
 };
 pub use signed_objectives::{
     SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
-    SignedMarginObjectiveConfig, SignedMarginObjectiveReport,
+    SignedMarginObjectiveConfig, SignedMarginObjectiveReport, SignedRadialCalibrationReport,
     signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
+    signed_radial_calibration_loss_and_grad,
 };
 pub use tensor::Tensor;
 pub use vision_jepa::{ProjectedVisionJepa, VisionJepa};

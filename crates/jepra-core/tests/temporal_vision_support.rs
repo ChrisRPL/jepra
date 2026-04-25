@@ -245,6 +245,7 @@ fn unprojected_run_with_encoder(
         signed_margin_config: SignedMarginObjectiveConfig::default(),
         signed_bank_softmax_weight: 0.0,
         signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
+        signed_radial_weight: 0.0,
         target_projection_momentum: 1.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 1.0,
