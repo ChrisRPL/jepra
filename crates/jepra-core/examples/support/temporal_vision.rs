@@ -52,6 +52,7 @@ pub enum PredictorMode {
     Baseline,
     Bottleneck,
     ResidualBottleneck,
+    StateRadius,
 }
 
 impl PredictorMode {
@@ -60,6 +61,7 @@ impl PredictorMode {
             Self::Baseline => "baseline",
             Self::Bottleneck => "bottleneck",
             Self::ResidualBottleneck => "residual-bottleneck",
+            Self::StateRadius => "state-radius",
         }
     }
 }
@@ -265,8 +267,9 @@ fn predictor_mode_from_args(args: &[String]) -> PredictorMode {
             "baseline" => PredictorMode::Baseline,
             "bottleneck" => PredictorMode::Bottleneck,
             "residual-bottleneck" => PredictorMode::ResidualBottleneck,
+            "state-radius" => PredictorMode::StateRadius,
             _ => panic!(
-                "unsupported value for --predictor-mode: {} (expected baseline|bottleneck|residual-bottleneck)",
+                "unsupported value for --predictor-mode: {} (expected baseline|bottleneck|residual-bottleneck|state-radius)",
                 raw_mode
             ),
         })
@@ -784,6 +787,14 @@ mod temporal_vision_config_tests {
         assert_eq!(
             predictor_mode_from_args(&args_with(&["--predictor-mode", "residual-bottleneck"])),
             PredictorMode::ResidualBottleneck
+        );
+    }
+
+    #[test]
+    fn predictor_mode_parses_state_radius() {
+        assert_eq!(
+            predictor_mode_from_args(&args_with(&["--predictor-mode", "state-radius"])),
+            PredictorMode::StateRadius
         );
     }
 

@@ -4,8 +4,8 @@ mod temporal_validation;
 mod temporal_vision;
 
 use jepra_core::{
-    BottleneckPredictor, Linear, Predictor, PredictorModule, ResidualBottleneckPredictor, Tensor,
-    VisionJepa, representation_stats,
+    BottleneckPredictor, Linear, Predictor, PredictorModule, ResidualBottleneckPredictor,
+    StateRadiusPredictor, Tensor, VisionJepa, representation_stats,
 };
 use temporal_validation::{
     UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, UNPROJECTED_VALIDATION_BASE_SEED,
@@ -123,6 +123,14 @@ fn make_residual_bottleneck_predictor(residual_delta_scale: f32) -> ResidualBott
     )
 }
 
+fn make_state_radius_predictor() -> StateRadiusPredictor {
+    StateRadiusPredictor::new(
+        make_predictor(),
+        Linear::randn(3, 4, 0.1, 1_200),
+        Linear::randn(4, 1, 0.01, 1_201),
+    )
+}
+
 fn reduction_thresholds_for_run_config(
     run_config: temporal_vision::TemporalRunConfig,
 ) -> (f32, f32) {
@@ -187,6 +195,7 @@ pub fn main() {
             run_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
+        PredictorMode::StateRadius => run_with_predictor(run_config, make_state_radius_predictor()),
     }
 }
 

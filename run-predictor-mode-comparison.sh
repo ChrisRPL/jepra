@@ -47,7 +47,7 @@ Usage:
   ./run-predictor-mode-comparison.sh [all|unprojected|projected]
 
 Environment:
-  JEPRA_PREDICTOR_MODES                         Space-separated modes (default: "baseline bottleneck residual-bottleneck")
+  JEPRA_PREDICTOR_MODES                         Space-separated modes (default: "baseline bottleneck residual-bottleneck"; also supports state-radius)
   JEPRA_TRAIN_STEPS                             Train steps per run (default: 300)
   JEPRA_LOG_EVERY                               Log interval passed to examples (default: 25)
   JEPRA_TEMPORAL_TASK                           Temporal task: random-speed|velocity-trail|signed-velocity-trail (default: random-speed)

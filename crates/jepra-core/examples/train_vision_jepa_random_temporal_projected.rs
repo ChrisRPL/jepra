@@ -7,7 +7,7 @@ use jepra_core::{
     BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
     ResidualBottleneckPredictor, SignedAngularRadialObjectiveReport,
     SignedBankSoftmaxObjectiveReport, SignedMarginObjectiveReport, SignedRadialCalibrationReport,
-    Tensor, projection_stats, representation_stats,
+    StateRadiusPredictor, Tensor, projection_stats, representation_stats,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -95,6 +95,14 @@ fn make_residual_bottleneck_predictor(residual_delta_scale: f32) -> ResidualBott
     )
 }
 
+fn make_state_radius_predictor() -> StateRadiusPredictor {
+    StateRadiusPredictor::new(
+        make_predictor(),
+        Linear::randn(PROJECTION_DIM, 4, 0.1, 21_200),
+        Linear::randn(4, 1, 0.01, 21_201),
+    )
+}
+
 fn reduction_thresholds_for_run_config(
     run_config: temporal_vision::TemporalRunConfig,
 ) -> (f32, f32) {
@@ -173,6 +181,7 @@ fn main() {
             run_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
+        PredictorMode::StateRadius => run_with_predictor(run_config, make_state_radius_predictor()),
     }
 }
 

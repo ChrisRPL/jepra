@@ -6,7 +6,7 @@ The crate is published as `jepra-core`.
 ## Current Scope (from `VISION.md`)
 
 - `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline, a compact frozen-encoder option, and optional trainable-encoder updates in temporal JEPA examples
-- baseline two-layer predictors plus opt-in `BottleneckPredictor` and `ResidualBottleneckPredictor` variants for compact-capacity experiments
+- baseline two-layer predictors plus opt-in `BottleneckPredictor`, `ResidualBottleneckPredictor`, and `StateRadiusPredictor` variants for compact-capacity experiments
 - lightweight representation-health telemetry for predictor/target comparisons (`mean_abs`, `mean_std`, `min_std`, mean/max off-diagonal covariance)
 - synthetic temporal batch generation and temporal training examples with held-out validation
 - deterministic regression test coverage for step, trajectory, and loss-contract behavior
@@ -62,8 +62,9 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--encoder-lr` (or `--encoder-learning-rate`) enables encoder updates in temporal JEPA runs; `0.0` keeps a frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
 - `--compact-encoder-mode <base|stronger|signed-direction|signed-direction-magnitude>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`; signed-direction modes are opt-in local trail-orientation probes)
-- `--predictor-mode <baseline|bottleneck|residual-bottleneck>` selects the predictor topology (`baseline` is the default; the others are experimental and non-default)
+- `--predictor-mode <baseline|bottleneck|residual-bottleneck|state-radius>` selects the predictor topology (`baseline` is the default; the others are experimental and non-default)
 - `--residual-delta-scale <float>` scales only the residual-bottleneck delta branch (`1.0` preserves the unscaled identity-plus-delta predictor)
+- `state-radius` learns a positive per-sample gain over the predicted state displacement; it is the current opt-in radius/speed-geometry bottleneck probe.
 - `--projector-drift-weight <float>` adds an opt-in L2 online-projector-to-target-projector drift regularizer in projected runs (`0.0` disables it)
 - `--signed-bank-softmax-weight <float>` adds an opt-in projected signed-task candidate-bank cross-entropy objective (`0.0` disables it)
 - `--signed-bank-softmax-temperature <float>` controls the signed-bank softmax temperature (`1.0` default; must be > 0)
@@ -100,7 +101,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v16 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v16 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck|state-radius> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -207,7 +208,9 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - Unit geometry is strong enough to guide the next build step: `prediction_unit_mrr=0.631944`, `prediction_unit_top1=0.453125`, and speed margin is near zero (`0.001397`). The blocker is radial calibration/speed geometry, not missing sign signal.
 - `--signed-radial-weight` adds a default-off bank-centered radius calibration objective. First bounded probe (`weight=0.1`, same seeds) is health-ok and raises centered norm ratio to `0.485350`, but raw PPR stays pinned at `0.281250`; keep it as a diagnostic/objective hook, not a promoted fix.
 - `--signed-angular-radial-weight` adds a default-off angular/radius objective. First bounded probe (`weight=0.1`, same seeds) is health-ok, but raw PPR stays pinned at `0.281250`.
-- Geometry counterfactual v16 shows the next bottleneck precisely: true-radius snapping raises PPR to `0.447917`, while true-angle and support global rescale both stay at `0.218750`. Next implementation should be a trainable state-conditioned radius/speed geometry path, not another scalar global rescale or broad architecture widening.
+- Geometry counterfactual v16 shows the bottleneck precisely: true-radius snapping raises PPR to `0.447917`, while true-angle and support global rescale both stay at `0.218750`. This justified a trainable state-conditioned radius/speed geometry path rather than another scalar global rescale or broad architecture widening.
+- `--predictor-mode state-radius` adds the first trainable state-conditioned radius/speed path. Bounded evidence (`2026-04-25`, same seeds) is health-ok and slightly improves validation (`0.377447` vs baseline `0.387471`) and raw margin (`-0.730436` vs `-0.818459`), but raw PPR drops to `0.140625` and unit PPR collapses to `0.114583`; reject simple projected-state displacement gain as the fix.
+- Next geometry build should be candidate-centroid-aware: preserve the bank-centered angular signal while learning radius/speed in the signed target-bank frame.
 
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 

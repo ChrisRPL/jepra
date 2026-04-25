@@ -1,5 +1,6 @@
 use jepra_core::{
-    BottleneckPredictor, Linear, ResidualBottleneckPredictor, Tensor, mse_loss, mse_loss_grad,
+    BottleneckPredictor, Linear, Predictor, ResidualBottleneckPredictor, StateRadiusPredictor,
+    Tensor, mse_loss, mse_loss_grad,
 };
 
 fn exact_bottleneck_predictor() -> BottleneckPredictor {
@@ -180,4 +181,66 @@ fn residual_bottleneck_predictor_scale_controls_delta_path() {
     let out = predictor.forward(&x);
 
     assert_eq!(out, Tensor::new(vec![1.25, 2.5], vec![1, 2]));
+}
+
+#[test]
+fn state_radius_predictor_scales_direction_displacement() {
+    let predictor = StateRadiusPredictor::new(
+        Predictor::new(
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::zeros(vec![2]),
+            ),
+            Linear::new(
+                Tensor::new(vec![2.0, 0.0, 0.0, 2.0], vec![2, 2]),
+                Tensor::zeros(vec![2]),
+            ),
+        ),
+        Linear::new(Tensor::zeros(vec![2, 1]), Tensor::new(vec![1.0], vec![1])),
+        Linear::new(
+            Tensor::zeros(vec![1, 1]),
+            Tensor::new(vec![2.0f32.ln()], vec![1]),
+        ),
+    );
+    let x = Tensor::new(vec![1.0, 2.0], vec![1, 2]);
+
+    let out = predictor.forward(&x);
+
+    assert_eq!(out.shape, vec![1, 2]);
+    assert!((out.data[0] - 3.0).abs() < 1e-6);
+    assert!((out.data[1] - 6.0).abs() < 1e-6);
+}
+
+#[test]
+fn state_radius_predictor_backward_shapes_match_layers() {
+    let predictor = StateRadiusPredictor::new(
+        Predictor::new(
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::zeros(vec![2]),
+            ),
+            Linear::new(
+                Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+                Tensor::zeros(vec![2]),
+            ),
+        ),
+        Linear::new(
+            Tensor::new(vec![1.0, 0.0, 0.0, 1.0], vec![2, 2]),
+            Tensor::zeros(vec![2]),
+        ),
+        Linear::new(
+            Tensor::new(vec![0.1, -0.2], vec![2, 1]),
+            Tensor::zeros(vec![1]),
+        ),
+    );
+    let x = Tensor::new(vec![1.0, 2.0, 0.5, 1.5], vec![2, 2]);
+    let grad_out = Tensor::new(vec![0.25, -0.5, 0.75, -1.0], vec![2, 2]);
+
+    let grads = predictor.backward(&x, &grad_out);
+
+    assert_eq!(grads.grad_input.shape, vec![2, 2]);
+    assert_eq!(grads.grad_direction.grad_fc1.grad_weight.shape, vec![2, 2]);
+    assert_eq!(grads.grad_direction.grad_fc2.grad_weight.shape, vec![2, 2]);
+    assert_eq!(grads.grad_radius_fc1.grad_weight.shape, vec![2, 2]);
+    assert_eq!(grads.grad_radius_fc2.grad_weight.shape, vec![2, 1]);
 }

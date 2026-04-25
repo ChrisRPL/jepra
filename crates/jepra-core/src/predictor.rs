@@ -109,6 +109,21 @@ pub struct ResidualBottleneckPredictorGrads {
     pub grad_delta: BottleneckPredictorGrads,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateRadiusPredictor {
+    pub direction: Predictor,
+    pub radius_fc1: Linear,
+    pub radius_fc2: Linear,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateRadiusPredictorGrads {
+    pub grad_input: Tensor,
+    pub grad_direction: PredictorGrads,
+    pub grad_radius_fc1: LinearGrads,
+    pub grad_radius_fc2: LinearGrads,
+}
+
 impl BottleneckPredictor {
     pub fn new(fc1: Linear, fc2: Linear, fc3: Linear) -> Self {
         assert!(
@@ -226,11 +241,150 @@ impl ResidualBottleneckPredictor {
     }
 }
 
+impl StateRadiusPredictor {
+    pub fn new(direction: Predictor, radius_fc1: Linear, radius_fc2: Linear) -> Self {
+        let input_dim = direction.fc1.weight.shape[0];
+        let output_dim = direction.fc2.weight.shape[1];
+        assert!(
+            input_dim == output_dim,
+            "StateRadiusPredictor requires matching input/output dims, got {} -> {}",
+            input_dim,
+            output_dim
+        );
+        assert!(
+            radius_fc1.weight.shape[0] == input_dim,
+            "StateRadiusPredictor radius input dim mismatch: got {}, expected {}",
+            radius_fc1.weight.shape[0],
+            input_dim
+        );
+        assert!(
+            radius_fc1.weight.shape[1] == radius_fc2.weight.shape[0],
+            "StateRadiusPredictor radius layer mismatch: fc1 output {} != fc2 input {}",
+            radius_fc1.weight.shape[1],
+            radius_fc2.weight.shape[0]
+        );
+        assert!(
+            radius_fc2.weight.shape[1] == 1,
+            "StateRadiusPredictor radius head must emit one gain per sample, got {}",
+            radius_fc2.weight.shape[1]
+        );
+
+        Self {
+            direction,
+            radius_fc1,
+            radius_fc2,
+        }
+    }
+
+    pub fn forward(&self, x: &Tensor) -> Tensor {
+        let direction = self.direction.forward(x);
+        let log_radius = self.log_radius(x);
+        let batch_size = x.shape[0];
+        let features = x.shape[1];
+        let mut output = Tensor::zeros(x.shape.clone());
+
+        for sample in 0..batch_size {
+            let scale = positive_radius_scale(log_radius.get(&[sample, 0]));
+            for feature_idx in 0..features {
+                let input_value = x.get(&[sample, feature_idx]);
+                let direction_value = direction.get(&[sample, feature_idx]);
+                output.set(
+                    &[sample, feature_idx],
+                    input_value + scale * (direction_value - input_value),
+                );
+            }
+        }
+
+        output
+    }
+
+    pub fn backward(&self, x: &Tensor, grad_out: &Tensor) -> StateRadiusPredictorGrads {
+        assert!(
+            x.ndim() == 2,
+            "StateRadiusPredictor backward input must be 2D, got shape {:?}",
+            x.shape
+        );
+        assert!(
+            grad_out.shape == x.shape,
+            "StateRadiusPredictor backward grad shape mismatch: got {:?}, expected {:?}",
+            grad_out.shape,
+            x.shape
+        );
+
+        let direction = self.direction.forward(x);
+        let radius_pre = self.radius_fc1.forward(x);
+        let radius_hidden = radius_pre.relu();
+        let log_radius = self.radius_fc2.forward(&radius_hidden);
+        let batch_size = x.shape[0];
+        let features = x.shape[1];
+        let mut grad_direction_out = Tensor::zeros(x.shape.clone());
+        let mut grad_input_direct = Tensor::zeros(x.shape.clone());
+        let mut grad_log_radius = Tensor::zeros(vec![batch_size, 1]);
+
+        for sample in 0..batch_size {
+            let raw_log_radius = log_radius.get(&[sample, 0]);
+            let scale = positive_radius_scale(raw_log_radius);
+            let scale_grad = positive_radius_scale_grad(raw_log_radius);
+            let mut grad_scale = 0.0f32;
+
+            for feature_idx in 0..features {
+                let grad_value = grad_out.get(&[sample, feature_idx]);
+                let input_value = x.get(&[sample, feature_idx]);
+                let direction_value = direction.get(&[sample, feature_idx]);
+                let delta = direction_value - input_value;
+
+                grad_direction_out.set(&[sample, feature_idx], grad_value * scale);
+                grad_input_direct.set(&[sample, feature_idx], grad_value * (1.0 - scale));
+                grad_scale += grad_value * delta;
+            }
+
+            grad_log_radius.set(&[sample, 0], grad_scale * scale_grad);
+        }
+
+        let grad_direction = self.direction.backward(x, &grad_direction_out);
+        let grad_radius_fc2 = self.radius_fc2.backward(&radius_hidden, &grad_log_radius);
+        let grad_radius_hidden_pre = radius_pre.relu_backward(&grad_radius_fc2.grad_input);
+        let grad_radius_fc1 = self.radius_fc1.backward(x, &grad_radius_hidden_pre);
+        let grad_input = grad_input_direct
+            .add(&grad_direction.grad_input)
+            .add(&grad_radius_fc1.grad_input);
+
+        StateRadiusPredictorGrads {
+            grad_input,
+            grad_direction,
+            grad_radius_fc1,
+            grad_radius_fc2,
+        }
+    }
+
+    pub fn sgd_step(&mut self, grads: &StateRadiusPredictorGrads, lr: f32) {
+        self.direction.sgd_step(&grads.grad_direction, lr);
+        self.radius_fc1.sgd_step(&grads.grad_radius_fc1, lr);
+        self.radius_fc2.sgd_step(&grads.grad_radius_fc2, lr);
+    }
+
+    fn log_radius(&self, x: &Tensor) -> Tensor {
+        self.radius_fc2.forward(&self.radius_fc1.forward(x).relu())
+    }
+}
+
 fn scaled_tensor(tensor: &Tensor, scale: f32) -> Tensor {
     Tensor::new(
         tensor.data.iter().map(|value| value * scale).collect(),
         tensor.shape.clone(),
     )
+}
+
+fn positive_radius_scale(raw_log_radius: f32) -> f32 {
+    raw_log_radius.clamp(-4.0, 4.0).exp()
+}
+
+fn positive_radius_scale_grad(raw_log_radius: f32) -> f32 {
+    if (-4.0..=4.0).contains(&raw_log_radius) {
+        positive_radius_scale(raw_log_radius)
+    } else {
+        0.0
+    }
 }
 
 impl PredictorModule for ResidualBottleneckPredictor {
@@ -250,5 +404,25 @@ impl PredictorModule for ResidualBottleneckPredictor {
 
     fn sgd_step(&mut self, grads: &Self::Grads, lr: f32) {
         ResidualBottleneckPredictor::sgd_step(self, grads, lr);
+    }
+}
+
+impl PredictorModule for StateRadiusPredictor {
+    type Grads = StateRadiusPredictorGrads;
+
+    fn forward(&self, x: &Tensor) -> Tensor {
+        StateRadiusPredictor::forward(self, x)
+    }
+
+    fn backward(&self, x: &Tensor, grad_out: &Tensor) -> Self::Grads {
+        StateRadiusPredictor::backward(self, x, grad_out)
+    }
+
+    fn grad_input(grads: &Self::Grads) -> &Tensor {
+        &grads.grad_input
+    }
+
+    fn sgd_step(&mut self, grads: &Self::Grads, lr: f32) {
+        StateRadiusPredictor::sgd_step(self, grads, lr);
     }
 }
