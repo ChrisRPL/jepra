@@ -12,14 +12,15 @@ use jepra_core::{
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
-    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionGeometryCounterfactual,
-    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
-    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
-    projected_signed_angular_radial_objective_loss_and_grad,
+    ProjectedSignedCandidateCentroidIntegration, ProjectedSignedObjectiveErrorBreakdown,
+    ProjectedSignedPredictionBankMargin, ProjectedSignedPredictionBankUnitGeometry,
+    ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedStateSeparability,
+    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
+    ProjectedVelocityBankRanking, projected_signed_angular_radial_objective_loss_and_grad,
     projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
+    projected_signed_candidate_centroid_integration_from_base_seed,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
@@ -51,6 +52,13 @@ const LOG_EVERY: usize = 25;
 const PROJECTOR_LR: f32 = 0.005;
 const PREDICTOR_LR: f32 = 0.02;
 const REGULARIZER_WEIGHT: f32 = 1e-4;
+const DEFAULT_SIGNED_CANDIDATE_CENTROID_TEMPERATURE: f32 = 0.25;
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateCentroidIntegrationRunConfig {
+    enabled: bool,
+    softmax_temperature: f32,
+}
 
 fn make_projector() -> Linear {
     Linear::new(
@@ -103,6 +111,29 @@ fn make_state_radius_predictor() -> StateRadiusPredictor {
     )
 }
 
+impl SignedCandidateCentroidIntegrationRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let enabled = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-centroid-integration")
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_CENTROID_INTEGRATION").unwrap_or(false);
+        let softmax_temperature = parse_f32_arg(&args, "--signed-candidate-centroid-temperature")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_CENTROID_TEMPERATURE"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_CENTROID_TEMPERATURE);
+
+        assert!(
+            softmax_temperature.is_finite() && softmax_temperature > 0.0,
+            "signed candidate-centroid temperature must be finite and positive"
+        );
+
+        Self {
+            enabled,
+            softmax_temperature,
+        }
+    }
+}
+
 fn reduction_thresholds_for_run_config(
     run_config: temporal_vision::TemporalRunConfig,
 ) -> (f32, f32) {
@@ -118,6 +149,8 @@ fn reduction_thresholds_for_run_config(
 fn main() {
     let run_config =
         temporal_vision::TemporalRunConfig::from_args(TRAIN_BASE_SEED, NUM_STEPS, LOG_EVERY, 0.0);
+    let signed_candidate_centroid_integration_config =
+        SignedCandidateCentroidIntegrationRunConfig::from_args_and_env();
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",
@@ -173,20 +206,41 @@ fn main() {
         run_config.signed_angular_radial_config.angular_weight,
         run_config.signed_angular_radial_config.radial_weight
     );
+    println!(
+        "temporal run config | signed candidate-centroid integration enabled {} | softmax_temperature {}",
+        signed_candidate_centroid_integration_config.enabled,
+        signed_candidate_centroid_integration_config.softmax_temperature
+    );
 
     match run_config.predictor_mode {
-        PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
-        PredictorMode::Bottleneck => run_with_predictor(run_config, make_bottleneck_predictor()),
+        PredictorMode::Baseline => run_with_predictor(
+            run_config,
+            signed_candidate_centroid_integration_config,
+            make_predictor(),
+        ),
+        PredictorMode::Bottleneck => run_with_predictor(
+            run_config,
+            signed_candidate_centroid_integration_config,
+            make_bottleneck_predictor(),
+        ),
         PredictorMode::ResidualBottleneck => run_with_predictor(
             run_config,
+            signed_candidate_centroid_integration_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
-        PredictorMode::StateRadius => run_with_predictor(run_config, make_state_radius_predictor()),
+        PredictorMode::StateRadius => run_with_predictor(
+            run_config,
+            signed_candidate_centroid_integration_config,
+            make_state_radius_predictor(),
+        ),
     }
 }
 
-fn run_with_predictor<P>(run_config: temporal_vision::TemporalRunConfig, predictor: P)
-where
+fn run_with_predictor<P>(
+    run_config: temporal_vision::TemporalRunConfig,
+    signed_candidate_centroid_integration_config: SignedCandidateCentroidIntegrationRunConfig,
+    predictor: P,
+) where
     P: PredictorModule,
 {
     let (train_probe_t, train_probe_t1) = make_train_batch_for_config(run_config, 0);
@@ -283,6 +337,12 @@ where
         maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
     let initial_signed_prediction_geometry_counterfactual =
         maybe_projected_signed_prediction_geometry_counterfactual(&model, run_config);
+    let initial_signed_candidate_centroid_integration =
+        maybe_projected_signed_candidate_centroid_integration(
+            &model,
+            run_config,
+            signed_candidate_centroid_integration_config,
+        );
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
     let initial_signed_bank_softmax_objective_report =
@@ -328,6 +388,10 @@ where
     print_signed_prediction_geometry_counterfactual(
         "initial",
         initial_signed_prediction_geometry_counterfactual,
+    );
+    print_signed_candidate_centroid_integration(
+        "initial",
+        initial_signed_candidate_centroid_integration,
     );
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
@@ -531,6 +595,12 @@ where
         maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
     let final_signed_prediction_geometry_counterfactual =
         maybe_projected_signed_prediction_geometry_counterfactual(&model, run_config);
+    let final_signed_candidate_centroid_integration =
+        maybe_projected_signed_candidate_centroid_integration(
+            &model,
+            run_config,
+            signed_candidate_centroid_integration_config,
+        );
     let final_signed_objective_error_breakdown =
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let final_signed_margin_objective_report =
@@ -602,6 +672,10 @@ where
         "final",
         final_signed_prediction_geometry_counterfactual,
     );
+    print_signed_candidate_centroid_integration(
+        "final",
+        final_signed_candidate_centroid_integration,
+    );
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
@@ -631,6 +705,39 @@ fn add_scaled_extra_prediction_grad(accumulator: &mut Option<Tensor>, grad: &Ten
     } else {
         *accumulator = Some(scaled_grad);
     }
+}
+
+fn parse_arg_value<'a>(args: &'a [String], flag: &'a str) -> Option<&'a str> {
+    args.windows(2).find_map(|window| {
+        if window[0] == flag {
+            Some(window[1].as_str())
+        } else {
+            None
+        }
+    })
+}
+
+fn parse_f32_arg(args: &[String], flag: &str) -> Option<f32> {
+    parse_arg_value(args, flag)
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn parse_positive_f32_env(name: &str) -> Option<f32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn parse_bool_env(name: &str) -> Option<bool> {
+    std::env::var(name)
+        .ok()
+        .map(|value| match value.trim().to_ascii_lowercase().as_str() {
+            "1" | "true" | "yes" | "on" => true,
+            "0" | "false" | "no" | "off" => false,
+            raw => panic!("{} must be boolean-like, got {}", name, raw),
+        })
 }
 
 fn maybe_projected_velocity_bank_ranking<P>(
@@ -889,6 +996,69 @@ fn print_signed_prediction_geometry_counterfactual(
             counterfactual.support_samples,
             counterfactual.query_samples,
             counterfactual.candidates,
+        );
+    }
+}
+
+fn maybe_projected_signed_candidate_centroid_integration<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    integration_config: SignedCandidateCentroidIntegrationRunConfig,
+) -> Option<ProjectedSignedCandidateCentroidIntegration>
+where
+    P: PredictorModule,
+{
+    if !integration_config.enabled {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate-centroid integration is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(
+        projected_signed_candidate_centroid_integration_from_base_seed(
+            model,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            integration_config.softmax_temperature,
+        ),
+    )
+}
+
+fn print_signed_candidate_centroid_integration(
+    tag: &str,
+    integration: Option<ProjectedSignedCandidateCentroidIntegration>,
+) {
+    if let Some(integration) = integration {
+        println!(
+            "{} | signed candidate-centroid integration mean_radius_mrr {:.6} | mean_radius_top1 {:.6} | mean_radius_margin {:.6} | mean_radius_positive_margin_rate {:.6} | mean_radius_sign_margin {:.6} | mean_radius_speed_margin {:.6} | mean_radius_norm_ratio {:.6} | nearest_unit_radius_mrr {:.6} | nearest_unit_radius_top1 {:.6} | nearest_unit_radius_margin {:.6} | nearest_unit_radius_positive_margin_rate {:.6} | nearest_unit_radius_sign_margin {:.6} | nearest_unit_radius_speed_margin {:.6} | nearest_unit_radius_norm_ratio {:.6} | softmax_radius_mrr {:.6} | softmax_radius_top1 {:.6} | softmax_radius_margin {:.6} | softmax_radius_positive_margin_rate {:.6} | softmax_radius_sign_margin {:.6} | softmax_radius_speed_margin {:.6} | softmax_radius_norm_ratio {:.6} | softmax_temperature {:.6} | samples {} | candidates {}",
+            tag,
+            integration.mean_radius.mrr,
+            integration.mean_radius.top1,
+            integration.mean_radius.margin,
+            integration.mean_radius.positive_margin_rate,
+            integration.mean_radius.sign_margin,
+            integration.mean_radius.speed_margin,
+            integration.mean_radius.norm_ratio,
+            integration.nearest_unit_radius.mrr,
+            integration.nearest_unit_radius.top1,
+            integration.nearest_unit_radius.margin,
+            integration.nearest_unit_radius.positive_margin_rate,
+            integration.nearest_unit_radius.sign_margin,
+            integration.nearest_unit_radius.speed_margin,
+            integration.nearest_unit_radius.norm_ratio,
+            integration.softmax_radius.mrr,
+            integration.softmax_radius.top1,
+            integration.softmax_radius.margin,
+            integration.softmax_radius.positive_margin_rate,
+            integration.softmax_radius.sign_margin,
+            integration.softmax_radius.speed_margin,
+            integration.softmax_radius.norm_ratio,
+            integration.softmax_temperature,
+            integration.samples,
+            integration.candidates,
         );
     }
 }

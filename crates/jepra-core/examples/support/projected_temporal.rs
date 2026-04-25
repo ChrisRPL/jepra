@@ -143,6 +143,16 @@ pub struct ProjectedSignedPredictionGeometryCounterfactual {
     pub candidates: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateCentroidIntegration {
+    pub mean_radius: ProjectedSignedPredictionCounterfactualMetrics,
+    pub nearest_unit_radius: ProjectedSignedPredictionCounterfactualMetrics,
+    pub softmax_radius: ProjectedSignedPredictionCounterfactualMetrics,
+    pub softmax_temperature: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedObjectiveErrorBreakdown {
@@ -220,6 +230,13 @@ struct SignedPredictionGeometryCounterfactualSampleOutcome {
     oracle_radius: SignedPredictionCounterfactualSampleOutcome,
     oracle_angle: SignedPredictionCounterfactualSampleOutcome,
     support_global_rescale: SignedPredictionCounterfactualSampleOutcome,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateCentroidIntegrationSampleOutcome {
+    mean_radius: SignedPredictionCounterfactualSampleOutcome,
+    nearest_unit_radius: SignedPredictionCounterfactualSampleOutcome,
+    softmax_radius: SignedPredictionCounterfactualSampleOutcome,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1604,6 +1621,68 @@ where
     }
 }
 
+pub fn projected_signed_candidate_centroid_integration_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    softmax_temperature: f32,
+) -> ProjectedSignedCandidateCentroidIntegration
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "candidate-centroid integration requires at least one validation batch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate-centroid integration temperature must be finite and positive"
+    );
+
+    let mut mean_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut nearest_unit_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut softmax_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let outcomes = projected_signed_candidate_centroid_integration_sample_outcomes(
+            model,
+            &x_t,
+            &x_t1,
+            softmax_temperature,
+        );
+
+        for outcome in outcomes {
+            mean_radius_totals.observe(outcome.mean_radius);
+            nearest_unit_radius_totals.observe(outcome.nearest_unit_radius);
+            softmax_radius_totals.observe(outcome.softmax_radius);
+        }
+    }
+
+    let samples = mean_radius_totals.samples;
+    assert_eq!(
+        samples, nearest_unit_radius_totals.samples,
+        "candidate-centroid nearest radius sample mismatch"
+    );
+    assert_eq!(
+        samples, softmax_radius_totals.samples,
+        "candidate-centroid softmax radius sample mismatch"
+    );
+
+    ProjectedSignedCandidateCentroidIntegration {
+        mean_radius: mean_radius_totals.into_metrics(),
+        nearest_unit_radius: nearest_unit_radius_totals.into_metrics(),
+        softmax_radius: softmax_radius_totals.into_metrics(),
+        softmax_temperature,
+        samples,
+        candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
+}
+
 #[allow(dead_code)]
 pub fn projected_signed_objective_error_breakdown_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
@@ -2562,6 +2641,105 @@ where
     outcomes
 }
 
+fn projected_signed_candidate_centroid_integration_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    softmax_temperature: f32,
+) -> Vec<SignedCandidateCentroidIntegrationSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate-centroid integration temperature must be finite and positive"
+    );
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate-centroid integration expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate-centroid integration expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let target_norm = vector_l2_norm(&target_centered).max(VELOCITY_BANK_TIE_EPSILON);
+        let mut candidate_units = Vec::with_capacity(candidate_targets.len());
+        let mut candidate_radii = Vec::with_capacity(candidate_targets.len());
+
+        for candidate_target in &candidate_targets {
+            let candidate_centered = centered_sample_vector(candidate_target, sample, &centroid);
+            candidate_radii.push(vector_l2_norm(&candidate_centered));
+            candidate_units.push(unit_vector(&candidate_centered));
+        }
+
+        let mean_radius = candidate_radii.iter().sum::<f32>() / candidate_radii.len() as f32;
+        let nearest_index = nearest_unit_candidate_index(&prediction_unit, &candidate_units);
+        let nearest_radius = candidate_radii[nearest_index];
+        let softmax_radius = softmax_weighted_radius(
+            &prediction_unit,
+            &candidate_units,
+            &candidate_radii,
+            softmax_temperature,
+        );
+
+        let mean_radius_centered = scale_vector(&prediction_unit, mean_radius);
+        let nearest_unit_radius_centered = scale_vector(&prediction_unit, nearest_radius);
+        let softmax_radius_centered = scale_vector(&prediction_unit, softmax_radius);
+
+        outcomes.push(SignedCandidateCentroidIntegrationSampleOutcome {
+            mean_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &mean_radius_centered,
+                mean_radius / target_norm,
+            ),
+            nearest_unit_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &nearest_unit_radius_centered,
+                nearest_radius / target_norm,
+            ),
+            softmax_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &softmax_radius_centered,
+                softmax_radius / target_norm,
+            ),
+        });
+    }
+
+    outcomes
+}
+
 fn projected_signed_target_bank_sample_outcomes<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -2743,6 +2921,72 @@ fn counterfactual_prediction_distances(
             distance
         })
         .collect()
+}
+
+fn nearest_unit_candidate_index(prediction_unit: &[f32], candidate_units: &[Vec<f32>]) -> usize {
+    assert!(
+        !candidate_units.is_empty(),
+        "candidate-centroid integration requires non-empty candidate units"
+    );
+
+    let mut best_index = 0usize;
+    let mut best_distance = vector_squared_distance(prediction_unit, &candidate_units[0]);
+
+    for (candidate_index, candidate_unit) in candidate_units.iter().enumerate().skip(1) {
+        let distance = vector_squared_distance(prediction_unit, candidate_unit);
+        if distance < best_distance - VELOCITY_BANK_TIE_EPSILON {
+            best_index = candidate_index;
+            best_distance = distance;
+        }
+    }
+
+    best_index
+}
+
+fn softmax_weighted_radius(
+    prediction_unit: &[f32],
+    candidate_units: &[Vec<f32>],
+    candidate_radii: &[f32],
+    temperature: f32,
+) -> f32 {
+    assert_eq!(
+        candidate_units.len(),
+        candidate_radii.len(),
+        "candidate-centroid integration unit/radius count mismatch"
+    );
+    assert!(
+        !candidate_units.is_empty(),
+        "candidate-centroid integration requires non-empty candidates"
+    );
+    assert!(
+        temperature.is_finite() && temperature > 0.0,
+        "candidate-centroid integration temperature must be finite and positive"
+    );
+
+    let logits = candidate_units
+        .iter()
+        .map(|candidate_unit| {
+            -vector_squared_distance(prediction_unit, candidate_unit) / temperature
+        })
+        .collect::<Vec<_>>();
+    let max_logit = logits
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, |best, value| best.max(value));
+    let mut weight_sum = 0.0f32;
+    let mut radius_sum = 0.0f32;
+
+    for (logit, radius) in logits.iter().zip(candidate_radii.iter()) {
+        let weight = (*logit - max_logit).exp();
+        weight_sum += weight;
+        radius_sum += weight * radius;
+    }
+
+    if weight_sum <= VELOCITY_BANK_TIE_EPSILON {
+        candidate_radii.iter().sum::<f32>() / candidate_radii.len() as f32
+    } else {
+        radius_sum / weight_sum
+    }
 }
 
 fn signed_candidate_centroid(
