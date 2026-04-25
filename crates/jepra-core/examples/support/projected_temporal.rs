@@ -1773,6 +1773,84 @@ where
     )
 }
 
+pub fn projected_signed_candidate_radius_logit_head_features<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    softmax_temperature: f32,
+) -> Tensor
+where
+    P: PredictorModule,
+{
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate radius logit head features expect rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius logit head feature temperature must be finite and positive"
+    );
+
+    let projection = model.project_latent(x_t);
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+
+    signed_candidate_radius_logit_head_features_from_prediction(
+        &projection,
+        &prediction,
+        &candidate_targets,
+        softmax_temperature,
+    )
+}
+
+pub fn projected_signed_candidate_radius_logit_mixing_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    residual_logits: &Tensor,
+    softmax_temperature: f32,
+) -> (SignedCenteredRadiusScalarObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate radius logit objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate radius logit objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius logit objective temperature must be finite and positive"
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+    let (predicted_radius, weights, candidate_radii) = radius_logits_to_centered_radius_and_weights(
+        residual_logits,
+        &prediction,
+        &candidate_targets,
+        softmax_temperature,
+    );
+    let (report, grad_radius) = signed_centered_radius_scalar_loss_and_grad(
+        &predicted_radius,
+        &candidate_targets,
+        &true_candidate_indices,
+    );
+    let grad_logits = centered_radius_grad_to_residual_logits_grad(
+        &predicted_radius,
+        &grad_radius,
+        &weights,
+        &candidate_radii,
+    );
+
+    (report, grad_logits)
+}
+
 pub fn projected_signed_candidate_radius_head_integration_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
     radius_head: &Linear,
@@ -1838,6 +1916,91 @@ where
     assert_eq!(
         samples, learned_radius_totals.samples,
         "candidate radius head sample mismatch"
+    );
+
+    ProjectedSignedCandidateRadiusHeadIntegration {
+        learned_radius: learned_radius_totals.into_metrics(),
+        scalar_report: SignedCenteredRadiusScalarObjectiveReport {
+            loss: loss_sum / samples as f32,
+            prediction_radius: prediction_radius_sum / samples as f32,
+            target_radius: target_radius_sum / samples as f32,
+            radius_ratio: radius_ratio_sum / samples as f32,
+            samples,
+        },
+        softmax_temperature,
+        samples,
+        candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
+}
+
+pub fn projected_signed_candidate_radius_logit_head_integration_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    radius_head: &Linear,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    softmax_temperature: f32,
+) -> ProjectedSignedCandidateRadiusHeadIntegration
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "candidate radius logit head integration requires at least one validation batch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius logit head integration temperature must be finite and positive"
+    );
+
+    let mut learned_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut loss_sum = 0.0f32;
+    let mut prediction_radius_sum = 0.0f32;
+    let mut target_radius_sum = 0.0f32;
+    let mut radius_ratio_sum = 0.0f32;
+    let mut samples = 0usize;
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_radius_logit_head_features(model, &x_t, softmax_temperature);
+        let residual_logits = radius_head.forward(&features);
+        let (report, _) = projected_signed_candidate_radius_logit_mixing_loss_and_grad(
+            model,
+            &x_t,
+            &x_t1,
+            &residual_logits,
+            softmax_temperature,
+        );
+        let outcomes = projected_signed_candidate_radius_logit_head_integration_sample_outcomes(
+            model,
+            &x_t,
+            &x_t1,
+            &residual_logits,
+            softmax_temperature,
+        );
+
+        loss_sum += report.loss * report.samples as f32;
+        prediction_radius_sum += report.prediction_radius * report.samples as f32;
+        target_radius_sum += report.target_radius * report.samples as f32;
+        radius_ratio_sum += report.radius_ratio * report.samples as f32;
+        samples += report.samples;
+
+        for outcome in outcomes {
+            learned_radius_totals.observe(outcome.learned_radius);
+        }
+    }
+
+    assert!(
+        samples > 0,
+        "candidate radius logit head report has no samples"
+    );
+    assert_eq!(
+        samples, learned_radius_totals.samples,
+        "candidate radius logit head sample mismatch"
     );
 
     ProjectedSignedCandidateRadiusHeadIntegration {
@@ -2978,6 +3141,72 @@ where
     outcomes
 }
 
+fn projected_signed_candidate_radius_logit_head_integration_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    residual_logits: &Tensor,
+    softmax_temperature: f32,
+) -> Vec<SignedCandidateRadiusHeadIntegrationSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius logit head integration temperature must be finite and positive"
+    );
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate radius logit head integration expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate radius logit head integration expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let (predicted_radius, _, _) = radius_logits_to_centered_radius_and_weights(
+        residual_logits,
+        &prediction,
+        &candidate_targets,
+        softmax_temperature,
+    );
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let target_norm = vector_l2_norm(&target_centered).max(VELOCITY_BANK_TIE_EPSILON);
+        let learned_radius = scalar_tensor_value(&predicted_radius, sample);
+        let learned_radius_centered = scale_vector(&prediction_unit, learned_radius);
+
+        outcomes.push(SignedCandidateRadiusHeadIntegrationSampleOutcome {
+            learned_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &learned_radius_centered,
+                learned_radius / target_norm,
+            ),
+        });
+    }
+
+    outcomes
+}
+
 fn signed_candidate_radius_head_features_from_prediction(
     projection: &Tensor,
     prediction: &Tensor,
@@ -3071,6 +3300,78 @@ fn signed_candidate_radius_head_features_from_prediction(
     features
 }
 
+fn signed_candidate_radius_logit_head_features_from_prediction(
+    projection: &Tensor,
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    softmax_temperature: f32,
+) -> Tensor {
+    assert!(
+        projection.shape.len() == 2,
+        "candidate radius logit head projection features must be rank-2, got {:?}",
+        projection.shape
+    );
+    assert!(
+        prediction.shape.len() == 2,
+        "candidate radius logit head prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert_eq!(
+        projection.shape[0], prediction.shape[0],
+        "candidate radius logit head feature batch mismatch"
+    );
+    assert!(
+        !candidate_targets.is_empty(),
+        "candidate radius logit head features require non-empty candidate targets"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius logit head feature temperature must be finite and positive"
+    );
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    let candidates = candidate_targets.len();
+    let feature_dim = projection.shape[1] + candidates * 2;
+    let mut features = Tensor::zeros(vec![batch_size, feature_dim]);
+
+    for candidate_target in candidate_targets {
+        assert_eq!(
+            candidate_target.shape, prediction.shape,
+            "candidate radius logit head target shape mismatch"
+        );
+    }
+
+    for sample in 0..batch_size {
+        let (prior_logits, candidate_radii) = signed_candidate_prior_logits_and_radii(
+            prediction,
+            candidate_targets,
+            sample,
+            projection_dim,
+            softmax_temperature,
+        );
+
+        for feature_idx in 0..projection.shape[1] {
+            features.set(
+                &[sample, feature_idx],
+                projection.get(&[sample, feature_idx]),
+            );
+        }
+
+        let prior_offset = projection.shape[1];
+        for (candidate_idx, prior_logit) in prior_logits.iter().enumerate() {
+            features.set(&[sample, prior_offset + candidate_idx], *prior_logit);
+        }
+
+        let radius_offset = prior_offset + candidates;
+        for (candidate_idx, radius) in candidate_radii.iter().enumerate() {
+            features.set(&[sample, radius_offset + candidate_idx], *radius);
+        }
+    }
+
+    features
+}
+
 fn signed_candidate_softmax_anchor_radius(
     prediction: &Tensor,
     candidate_targets: &[Tensor],
@@ -3123,6 +3424,130 @@ fn signed_candidate_softmax_anchor_radius(
     }
 
     anchor_radius
+}
+
+fn radius_logits_to_centered_radius_and_weights(
+    residual_logits: &Tensor,
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    softmax_temperature: f32,
+) -> (Tensor, Vec<Vec<f32>>, Vec<Vec<f32>>) {
+    assert!(
+        prediction.shape.len() == 2,
+        "candidate radius logit prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert!(
+        !candidate_targets.is_empty(),
+        "candidate radius logit mixing requires non-empty candidate targets"
+    );
+    assert_eq!(
+        residual_logits.shape,
+        vec![prediction.shape[0], candidate_targets.len()],
+        "candidate radius residual logits shape mismatch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate radius logit mixing temperature must be finite and positive"
+    );
+
+    for candidate_target in candidate_targets {
+        assert_eq!(
+            candidate_target.shape, prediction.shape,
+            "candidate radius logit target shape mismatch"
+        );
+    }
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    let candidates = candidate_targets.len();
+    let mut predicted_radius = Tensor::zeros(vec![batch_size, 1]);
+    let mut all_weights = Vec::with_capacity(batch_size);
+    let mut all_candidate_radii = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let (prior_logits, candidate_radii) = signed_candidate_prior_logits_and_radii(
+            prediction,
+            candidate_targets,
+            sample,
+            projection_dim,
+            softmax_temperature,
+        );
+        let scores = (0..candidates)
+            .map(|candidate_idx| {
+                prior_logits[candidate_idx] + residual_logits.get(&[sample, candidate_idx])
+            })
+            .collect::<Vec<_>>();
+        let weights = stable_softmax(&scores, "candidate radius logit mixing");
+        let radius = weights
+            .iter()
+            .zip(candidate_radii.iter())
+            .map(|(weight, candidate_radius)| weight * candidate_radius)
+            .sum::<f32>();
+
+        assert!(
+            radius.is_finite() && radius >= 0.0,
+            "candidate radius logit mixing produced non-finite radius"
+        );
+        predicted_radius.set(&[sample, 0], radius);
+        all_weights.push(weights);
+        all_candidate_radii.push(candidate_radii);
+    }
+
+    (predicted_radius, all_weights, all_candidate_radii)
+}
+
+fn centered_radius_grad_to_residual_logits_grad(
+    predicted_radius: &Tensor,
+    grad_radius: &Tensor,
+    weights: &[Vec<f32>],
+    candidate_radii: &[Vec<f32>],
+) -> Tensor {
+    assert_eq!(
+        predicted_radius.shape, grad_radius.shape,
+        "candidate radius logit grad radius shape mismatch"
+    );
+    assert_eq!(
+        weights.len(),
+        predicted_radius.shape[0],
+        "candidate radius logit weight batch mismatch"
+    );
+    assert_eq!(
+        candidate_radii.len(),
+        predicted_radius.shape[0],
+        "candidate radius logit radius batch mismatch"
+    );
+
+    let batch_size = predicted_radius.shape[0];
+    let candidates = weights
+        .first()
+        .map(|row| row.len())
+        .expect("candidate radius logit grad requires non-empty weights");
+    let mut grad_logits = Tensor::zeros(vec![batch_size, candidates]);
+
+    for sample in 0..batch_size {
+        assert_eq!(
+            weights[sample].len(),
+            candidates,
+            "candidate radius logit weight candidate count mismatch"
+        );
+        assert_eq!(
+            candidate_radii[sample].len(),
+            candidates,
+            "candidate radius logit radius candidate count mismatch"
+        );
+
+        let grad = scalar_tensor_value(grad_radius, sample);
+        let radius = scalar_tensor_value(predicted_radius, sample);
+        for candidate_idx in 0..candidates {
+            let value = grad
+                * weights[sample][candidate_idx]
+                * (candidate_radii[sample][candidate_idx] - radius);
+            grad_logits.set(&[sample, candidate_idx], value);
+        }
+    }
+
+    grad_logits
 }
 
 fn radius_delta_to_centered_radius(radius_delta: &Tensor, anchor_radius: &[f32]) -> Tensor {
@@ -3458,6 +3883,62 @@ fn softmax_weighted_radius(
     } else {
         radius_sum / weight_sum
     }
+}
+
+fn signed_candidate_prior_logits_and_radii(
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    sample: usize,
+    projection_dim: usize,
+    softmax_temperature: f32,
+) -> (Vec<f32>, Vec<f32>) {
+    let centroid = signed_candidate_centroid(candidate_targets, sample, projection_dim);
+    let prediction_centered = centered_sample_vector(prediction, sample, &centroid);
+    let prediction_unit = unit_vector(&prediction_centered);
+    let mut prior_logits = Vec::with_capacity(candidate_targets.len());
+    let mut candidate_radii = Vec::with_capacity(candidate_targets.len());
+
+    for candidate_target in candidate_targets {
+        let candidate_centered = centered_sample_vector(candidate_target, sample, &centroid);
+        let candidate_unit = unit_vector(&candidate_centered);
+
+        prior_logits.push(
+            -vector_squared_distance(&prediction_unit, &candidate_unit) / softmax_temperature,
+        );
+        candidate_radii.push(vector_l2_norm(&candidate_centered));
+    }
+
+    (prior_logits, candidate_radii)
+}
+
+fn stable_softmax(logits: &[f32], context: &str) -> Vec<f32> {
+    assert!(!logits.is_empty(), "{} requires non-empty logits", context);
+
+    let max_logit = logits
+        .iter()
+        .copied()
+        .fold(f32::NEG_INFINITY, |best, value| best.max(value));
+    let mut weight_sum = 0.0f32;
+    let mut weights = Vec::with_capacity(logits.len());
+
+    for logit in logits {
+        let weight = (*logit - max_logit).exp();
+        weight_sum += weight;
+        weights.push(weight);
+    }
+
+    assert!(
+        weight_sum.is_finite() && weight_sum > VELOCITY_BANK_TIE_EPSILON,
+        "{} produced invalid softmax normalizer {}",
+        context,
+        weight_sum
+    );
+
+    for weight in &mut weights {
+        *weight /= weight_sum;
+    }
+
+    weights
 }
 
 fn signed_candidate_centroid(

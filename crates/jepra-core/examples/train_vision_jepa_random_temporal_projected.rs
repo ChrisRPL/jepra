@@ -19,6 +19,9 @@ use projected_temporal::{
     projected_signed_candidate_radius_delta_loss_and_grad,
     projected_signed_candidate_radius_head_features,
     projected_signed_candidate_radius_head_integration_from_base_seed,
+    projected_signed_candidate_radius_logit_head_features,
+    projected_signed_candidate_radius_logit_head_integration_from_base_seed,
+    projected_signed_candidate_radius_logit_mixing_loss_and_grad,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
@@ -48,7 +51,7 @@ use temporal_vision::{
     make_frozen_encoder, make_train_batch_for_config, make_validation_batch_for_config,
     make_validation_batch_with_required_motion_modes_for_config, print_batch_summary_for_task,
     print_motion_mode_summary_for_task, print_representation_stats, CompactEncoderMode,
-    PredictorMode, TemporalTaskMode,
+    PredictorMode, TemporalTaskMode, SIGNED_VELOCITY_BANK_CANDIDATE_DX,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -61,8 +64,13 @@ const REGULARIZER_WEIGHT: f32 = 1e-4;
 const DEFAULT_SIGNED_CANDIDATE_CENTROID_TEMPERATURE: f32 = 0.25;
 const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_LR: f32 = 0.02;
+const DEFAULT_SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_LR: f32 = 0.01;
 const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT: f32 = 1.0;
 const SIGNED_CANDIDATE_RADIUS_HEAD_FEATURE_DIM: usize = PROJECTION_DIM * 2 + 4;
+const SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_FEATURE_DIM: usize =
+    PROJECTION_DIM + SIGNED_VELOCITY_BANK_CANDIDATE_DX.len() * 2;
+const SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_OUTPUT_DIM: usize =
+    SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
 
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateCentroidIntegrationRunConfig {
@@ -73,9 +81,25 @@ struct SignedCandidateCentroidIntegrationRunConfig {
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateRadiusHeadRunConfig {
     enabled: bool,
+    mode: SignedCandidateRadiusHeadMode,
     softmax_temperature: f32,
     learning_rate: f32,
     loss_weight: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignedCandidateRadiusHeadMode {
+    ScalarResidual,
+    LogitResidual,
+}
+
+impl SignedCandidateRadiusHeadMode {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::ScalarResidual => "scalar-residual",
+            Self::LogitResidual => "logit-residual",
+        }
+    }
 }
 
 fn make_projector() -> Linear {
@@ -129,11 +153,20 @@ fn make_state_radius_predictor() -> StateRadiusPredictor {
     )
 }
 
-fn make_signed_candidate_radius_head() -> Linear {
-    Linear::new(
-        Tensor::zeros(vec![SIGNED_CANDIDATE_RADIUS_HEAD_FEATURE_DIM, 1]),
-        Tensor::zeros(vec![1]),
-    )
+fn make_signed_candidate_radius_head(mode: SignedCandidateRadiusHeadMode) -> Linear {
+    match mode {
+        SignedCandidateRadiusHeadMode::ScalarResidual => Linear::new(
+            Tensor::zeros(vec![SIGNED_CANDIDATE_RADIUS_HEAD_FEATURE_DIM, 1]),
+            Tensor::zeros(vec![1]),
+        ),
+        SignedCandidateRadiusHeadMode::LogitResidual => Linear::new(
+            Tensor::zeros(vec![
+                SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_FEATURE_DIM,
+                SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_OUTPUT_DIM,
+            ]),
+            Tensor::zeros(vec![SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_OUTPUT_DIM]),
+        ),
+    }
 }
 
 impl SignedCandidateCentroidIntegrationRunConfig {
@@ -162,10 +195,27 @@ impl SignedCandidateCentroidIntegrationRunConfig {
 impl SignedCandidateRadiusHeadRunConfig {
     fn from_args_and_env() -> Self {
         let args = std::env::args().collect::<Vec<_>>();
-        let enabled = args
+        let scalar_flag = args
             .iter()
-            .any(|arg| arg == "--signed-candidate-radius-head")
+            .any(|arg| arg == "--signed-candidate-radius-head");
+        let logit_flag = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-radius-logit-head")
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD").unwrap_or(false);
+        let enabled = scalar_flag
+            || logit_flag
             || parse_bool_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD").unwrap_or(false);
+        let parsed_mode = parse_candidate_radius_head_mode(&args).unwrap_or_else(|| {
+            if logit_flag {
+                SignedCandidateRadiusHeadMode::LogitResidual
+            } else {
+                SignedCandidateRadiusHeadMode::ScalarResidual
+            }
+        });
+        assert!(
+            !(logit_flag && parsed_mode == SignedCandidateRadiusHeadMode::ScalarResidual),
+            "--signed-candidate-radius-logit-head cannot be combined with scalar-residual mode"
+        );
         let softmax_temperature =
             parse_f32_arg(&args, "--signed-candidate-radius-head-temperature")
                 .or_else(|| {
@@ -174,7 +224,14 @@ impl SignedCandidateRadiusHeadRunConfig {
                 .unwrap_or(DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_TEMPERATURE);
         let learning_rate = parse_f32_arg(&args, "--signed-candidate-radius-head-lr")
             .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD_LR"))
-            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_LR);
+            .unwrap_or(match parsed_mode {
+                SignedCandidateRadiusHeadMode::ScalarResidual => {
+                    DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_LR
+                }
+                SignedCandidateRadiusHeadMode::LogitResidual => {
+                    DEFAULT_SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_LR
+                }
+            });
         let loss_weight = parse_f32_arg(&args, "--signed-candidate-radius-head-weight")
             .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT"))
             .unwrap_or(DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT);
@@ -194,10 +251,32 @@ impl SignedCandidateRadiusHeadRunConfig {
 
         Self {
             enabled,
+            mode: parsed_mode,
             softmax_temperature,
             learning_rate,
             loss_weight,
         }
+    }
+}
+
+fn parse_candidate_radius_head_mode(args: &[String]) -> Option<SignedCandidateRadiusHeadMode> {
+    parse_arg_value(args, "--signed-candidate-radius-head-mode")
+        .map(|raw_mode| parse_candidate_radius_head_mode_value(raw_mode))
+        .or_else(|| {
+            std::env::var("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD_MODE")
+                .ok()
+                .map(|raw_mode| parse_candidate_radius_head_mode_value(&raw_mode))
+        })
+}
+
+fn parse_candidate_radius_head_mode_value(raw_mode: &str) -> SignedCandidateRadiusHeadMode {
+    match raw_mode {
+        "scalar" | "scalar-residual" => SignedCandidateRadiusHeadMode::ScalarResidual,
+        "logit" | "logits" | "logit-residual" => SignedCandidateRadiusHeadMode::LogitResidual,
+        _ => panic!(
+            "unsupported signed candidate-radius head mode: {} (expected scalar-residual|logit-residual)",
+            raw_mode
+        ),
     }
 }
 
@@ -281,8 +360,9 @@ fn main() {
         signed_candidate_centroid_integration_config.softmax_temperature
     );
     println!(
-        "temporal run config | signed candidate-radius head enabled {} | softmax_temperature {} | lr {} | weight {}",
+        "temporal run config | signed candidate-radius head enabled {} | mode {} | softmax_temperature {} | lr {} | weight {}",
         signed_candidate_radius_head_config.enabled,
+        signed_candidate_radius_head_config.mode.as_str(),
         signed_candidate_radius_head_config.softmax_temperature,
         signed_candidate_radius_head_config.learning_rate,
         signed_candidate_radius_head_config.loss_weight
@@ -391,7 +471,7 @@ fn run_with_predictor<P>(
             .with_target_projection_momentum(run_config.target_projection_momentum_at_step(1));
     let mut signed_candidate_radius_head = signed_candidate_radius_head_config
         .enabled
-        .then(make_signed_candidate_radius_head);
+        .then(|| make_signed_candidate_radius_head(signed_candidate_radius_head_config.mode));
 
     let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
@@ -845,20 +925,44 @@ where
         "signed candidate-radius head is only supported for signed-velocity-trail projected runs"
     );
 
-    let features = projected_signed_candidate_radius_head_features(
-        model,
-        x_t,
-        head_config.softmax_temperature,
-    );
-    let radius_delta = radius_head.forward(&features);
-    let (report, grad_delta) = projected_signed_candidate_radius_delta_loss_and_grad(
-        model,
-        x_t,
-        x_t1,
-        &radius_delta,
-        head_config.softmax_temperature,
-    );
-    let scaled_grad = scale_tensor(&grad_delta, head_config.loss_weight);
+    let (features, report, grad_out) = match head_config.mode {
+        SignedCandidateRadiusHeadMode::ScalarResidual => {
+            let features = projected_signed_candidate_radius_head_features(
+                model,
+                x_t,
+                head_config.softmax_temperature,
+            );
+            let radius_delta = radius_head.forward(&features);
+            let (report, grad_delta) = projected_signed_candidate_radius_delta_loss_and_grad(
+                model,
+                x_t,
+                x_t1,
+                &radius_delta,
+                head_config.softmax_temperature,
+            );
+
+            (features, report, grad_delta)
+        }
+        SignedCandidateRadiusHeadMode::LogitResidual => {
+            let features = projected_signed_candidate_radius_logit_head_features(
+                model,
+                x_t,
+                head_config.softmax_temperature,
+            );
+            let residual_logits = radius_head.forward(&features);
+            let (report, grad_logits) =
+                projected_signed_candidate_radius_logit_mixing_loss_and_grad(
+                    model,
+                    x_t,
+                    x_t1,
+                    &residual_logits,
+                    head_config.softmax_temperature,
+                );
+
+            (features, report, grad_logits)
+        }
+    };
+    let scaled_grad = scale_tensor(&grad_out, head_config.loss_weight);
     let grads = radius_head.backward(&features, &scaled_grad);
     radius_head.sgd_step(&grads, head_config.learning_rate);
 
@@ -1238,15 +1342,26 @@ where
         "signed candidate-radius head is only supported for signed-velocity-trail projected runs"
     );
 
-    Some(
-        projected_signed_candidate_radius_head_integration_from_base_seed(
-            model,
-            radius_head,
-            PROJECTED_VALIDATION_BASE_SEED,
-            PROJECTED_VALIDATION_BATCHES,
-            head_config.softmax_temperature,
-        ),
-    )
+    Some(match head_config.mode {
+        SignedCandidateRadiusHeadMode::ScalarResidual => {
+            projected_signed_candidate_radius_head_integration_from_base_seed(
+                model,
+                radius_head,
+                PROJECTED_VALIDATION_BASE_SEED,
+                PROJECTED_VALIDATION_BATCHES,
+                head_config.softmax_temperature,
+            )
+        }
+        SignedCandidateRadiusHeadMode::LogitResidual => {
+            projected_signed_candidate_radius_logit_head_integration_from_base_seed(
+                model,
+                radius_head,
+                PROJECTED_VALIDATION_BASE_SEED,
+                PROJECTED_VALIDATION_BATCHES,
+                head_config.softmax_temperature,
+            )
+        }
+    })
 }
 
 fn print_signed_candidate_radius_head_integration(
