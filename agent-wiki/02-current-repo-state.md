@@ -37,6 +37,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
   - do not expand the signed-margin grid; v11 shows the current signed state representation is not direction-separable enough for another loss-only pass,
   - next high-value build step is candidate-centroid-aware signed geometry, because simple state-displacement gain damages the bank-centered angular signal,
+  - evaluate that build with existing v16 parser fields: same-run baseline versus candidate, raw PPR closing at least half of the oracle-radius gap, unit PPR/MRR within `0.03` of baseline, centered norm-ratio error reduced by at least `25%`, and health/drift intact,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.

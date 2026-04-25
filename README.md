@@ -212,6 +212,17 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - `--predictor-mode state-radius` adds the first trainable state-conditioned radius/speed path. Bounded evidence (`2026-04-25`, same seeds) is health-ok and slightly improves validation (`0.377447` vs baseline `0.387471`) and raw margin (`-0.730436` vs `-0.818459`), but raw PPR drops to `0.140625` and unit PPR collapses to `0.114583`; reject simple projected-state displacement gain as the fix.
 - Next geometry build should be candidate-centroid-aware: preserve the bank-centered angular signal while learning radius/speed in the signed target-bank frame.
 
+Candidate-centroid-aware geometry acceptance gate:
+
+- Use the existing `jepra_predictor_compare_v16` fields; no schema change is needed for the first candidate-centroid-aware patch unless the model emits a new report line that cannot be derived from current prediction-bank/unit/counterfactual fields.
+- Run fixed comparison against same-run baseline: `JEPRA_TEMPORAL_TASK=signed-velocity-trail`, `JEPRA_COMPACT_ENCODER_MODE=signed-direction-magnitude`, `JEPRA_PREDICTOR_MODES='baseline <candidate-mode>'`, seeds `11000 11001 11002`, `JEPRA_TRAIN_STEPS=300`, report CSV enabled.
+- Hard health gate: every candidate row has `status=ok`; mean `val_pred_end <= 1.05 * baseline_val_pred_end`; mean `target_drift_end <= max(0.02, 2.5 * baseline_target_drift_end)`.
+- Hard raw-ranking gate: mean `prediction_bank_positive_margin_rate_end >= baseline_raw_ppr + 0.5 * (baseline_oracle_radius_ppr - baseline_raw_ppr)`; with current evidence this is approximately `>= 0.364583`. This proves at least half of the radius-counterfactual gap is closed.
+- Hard angular-preservation gate: mean `prediction_unit_positive_margin_rate_end >= baseline_unit_ppr - 0.03` and mean `prediction_unit_mrr_end >= baseline_unit_mrr - 0.03`; with current evidence this means roughly `unit_ppr >= 0.423125` and `unit_mrr >= 0.601944`. This prevents another state-radius-style direction collapse.
+- Hard radius gate: compute `prediction_unit_prediction_center_norm_end / prediction_unit_true_target_center_norm_end`; its absolute error from `1.0` must shrink by at least `25%` versus same-run baseline and must stay in `[0.50, 1.50]`.
+- Secondary diagnostics: `prediction_bank_margin_end`, `prediction_bank_sign_margin_end`, and `prediction_bank_speed_margin_end` should improve versus baseline on at least two of three seeds. Do not reject solely on mean margin if the raw PPR and radius gates pass; oracle-radius already showed PPR can improve while mean margin remains negative.
+- Rejection signatures: raw PPR improves but unit PPR/MRR collapses means the head destroyed signed direction; unit metrics stay strong but norm-ratio does not improve means radius learning failed; health/drift fails means regularize or anchor before widening.
+
 Projected momentum hardening protocol (fixed-seed sweeps) for `train_vision_jepa_random_temporal_projected`:
 
 ```bash
