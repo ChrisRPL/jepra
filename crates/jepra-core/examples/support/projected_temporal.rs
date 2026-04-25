@@ -185,6 +185,30 @@ pub struct ProjectedSignedCandidateUnitMixHeadIntegration {
     pub candidates: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateSelectorProbeMetrics {
+    pub loss: f32,
+    pub mrr: f32,
+    pub top1: f32,
+    pub true_probability: f32,
+    pub entropy: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateSelectorProbe {
+    pub prior_anchor: ProjectedSignedCandidateSelectorProbeMetrics,
+    pub support_trained_probe: ProjectedSignedCandidateSelectorProbeMetrics,
+    pub trained_probe: ProjectedSignedCandidateSelectorProbeMetrics,
+    pub softmax_temperature: f32,
+    pub probe_steps: usize,
+    pub learning_rate: f32,
+    pub support_samples: usize,
+    pub query_samples: usize,
+    pub candidates: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedObjectiveErrorBreakdown {
@@ -279,6 +303,16 @@ struct SignedCandidateRadiusHeadIntegrationSampleOutcome {
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateUnitMixHeadIntegrationSampleOutcome {
     learned_mix: SignedPredictionCounterfactualSampleOutcome,
+}
+
+#[derive(Debug, Default)]
+struct SignedCandidateSelectorProbeMetricTotals {
+    loss: f32,
+    reciprocal_rank: f32,
+    top1: usize,
+    true_probability: f32,
+    entropy: f32,
+    samples: usize,
 }
 
 #[derive(Debug, Clone)]
@@ -1009,6 +1043,78 @@ impl SignedPredictionCounterfactualMetricTotals {
             sign_margin: self.sign_margin / self.samples as f32,
             speed_margin: self.speed_margin / self.samples as f32,
             norm_ratio: self.norm_ratio / self.samples as f32,
+        }
+    }
+}
+
+impl SignedCandidateSelectorProbeMetricTotals {
+    fn observe_logits(&mut self, logits: &Tensor, true_candidate_indices: &[usize]) {
+        assert!(
+            logits.shape.len() == 2,
+            "candidate selector probe logits must be rank-2, got {:?}",
+            logits.shape
+        );
+        let batch_size = logits.shape[0];
+        let candidates = logits.shape[1];
+        assert_eq!(
+            true_candidate_indices.len(),
+            batch_size,
+            "candidate selector probe label batch mismatch"
+        );
+        assert!(candidates > 0, "candidate selector probe has no candidates");
+
+        for (sample, true_index) in true_candidate_indices.iter().copied().enumerate() {
+            assert!(
+                true_index < candidates,
+                "candidate selector probe true index {} exceeds candidate count {}",
+                true_index,
+                candidates
+            );
+
+            let sample_logits = (0..candidates)
+                .map(|candidate_idx| logits.get(&[sample, candidate_idx]))
+                .collect::<Vec<_>>();
+            let probabilities = stable_softmax(&sample_logits, "candidate selector probe");
+            let true_probability = probabilities[true_index];
+            let loss_probability = true_probability.max(VELOCITY_BANK_TIE_EPSILON);
+            let true_logit = sample_logits[true_index];
+            let mut rank = 1usize;
+            let mut entropy = 0.0f32;
+
+            for (candidate_idx, probability) in probabilities.iter().enumerate() {
+                if *probability > VELOCITY_BANK_TIE_EPSILON {
+                    entropy -= probability * probability.ln();
+                }
+                if candidate_idx != true_index
+                    && sample_logits[candidate_idx] >= true_logit - VELOCITY_BANK_TIE_EPSILON
+                {
+                    rank += 1;
+                }
+            }
+
+            self.loss += -loss_probability.ln();
+            self.reciprocal_rank += 1.0 / rank as f32;
+            self.top1 += usize::from(rank == 1);
+            self.true_probability += true_probability;
+            self.entropy += entropy;
+            self.samples += 1;
+        }
+    }
+
+    fn into_metrics(self, candidates: usize) -> ProjectedSignedCandidateSelectorProbeMetrics {
+        assert!(
+            self.samples > 0,
+            "candidate selector probe metrics have no samples"
+        );
+
+        ProjectedSignedCandidateSelectorProbeMetrics {
+            loss: self.loss / self.samples as f32,
+            mrr: self.reciprocal_rank / self.samples as f32,
+            top1: self.top1 as f32 / self.samples as f32,
+            true_probability: self.true_probability / self.samples as f32,
+            entropy: self.entropy / self.samples as f32,
+            samples: self.samples,
+            candidates,
         }
     }
 }
@@ -2210,6 +2316,156 @@ where
         softmax_temperature,
         samples,
         candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
+}
+
+pub fn projected_signed_candidate_selector_probe_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    softmax_temperature: f32,
+    probe_steps: usize,
+    learning_rate: f32,
+) -> ProjectedSignedCandidateSelectorProbe
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches >= 2,
+        "candidate selector probe requires at least one support and one query batch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate selector probe temperature must be finite and positive"
+    );
+    assert!(
+        learning_rate.is_finite() && learning_rate >= 0.0,
+        "candidate selector probe learning rate must be finite and non-negative"
+    );
+
+    let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+    assert_eq!(
+        candidates, 4,
+        "candidate selector probe expects signed-velocity-trail K=4"
+    );
+
+    let support_batches = validation_batches / 2;
+    let query_batches = validation_batches - support_batches;
+    assert!(
+        support_batches > 0 && query_batches > 0,
+        "candidate selector probe requires non-empty support and query splits"
+    );
+
+    let (sample_x_t, _) = make_temporal_batch_for_task(
+        BATCH_SIZE,
+        validation_base_seed,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let sample_features =
+        projected_signed_candidate_unit_mix_head_features(model, &sample_x_t, softmax_temperature);
+    let feature_dim = sample_features.shape[1];
+    let (feature_mean, feature_inv_std) = signed_candidate_selector_feature_normalizer(
+        model,
+        validation_base_seed,
+        support_batches,
+        softmax_temperature,
+        feature_dim,
+    );
+    let mut selector = Linear::new(
+        Tensor::zeros(vec![feature_dim, candidates]),
+        Tensor::zeros(vec![candidates]),
+    );
+    let support_samples = support_batches * BATCH_SIZE;
+
+    for _ in 0..probe_steps {
+        for batch_idx in 0..support_batches {
+            let (x_t, x_t1) = make_temporal_batch_for_task(
+                BATCH_SIZE,
+                validation_base_seed + batch_idx as u64,
+                TemporalTaskMode::SignedVelocityTrail,
+            );
+            let features =
+                projected_signed_candidate_unit_mix_head_features(model, &x_t, softmax_temperature);
+            let normalized_features = normalize_signed_candidate_selector_features(
+                &features,
+                &feature_mean,
+                &feature_inv_std,
+            );
+            let true_candidate_indices = signed_velocity_true_candidate_indices(&x_t, &x_t1);
+            let logits = selector.forward(&normalized_features);
+            let (_, grad_logits) = signed_candidate_selector_softmax_ce_loss_and_grad(
+                &logits,
+                &true_candidate_indices,
+            );
+            let grads = selector.backward(&normalized_features, &grad_logits);
+            selector.sgd_step(&grads, learning_rate);
+        }
+    }
+
+    let mut prior_totals = SignedCandidateSelectorProbeMetricTotals::default();
+    let mut support_trained_totals = SignedCandidateSelectorProbeMetricTotals::default();
+    let mut query_trained_totals = SignedCandidateSelectorProbeMetricTotals::default();
+
+    for batch_idx in 0..support_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_unit_mix_head_features(model, &x_t, softmax_temperature);
+        let normalized_features = normalize_signed_candidate_selector_features(
+            &features,
+            &feature_mean,
+            &feature_inv_std,
+        );
+        let true_candidate_indices = signed_velocity_true_candidate_indices(&x_t, &x_t1);
+        let trained_logits = selector.forward(&normalized_features);
+
+        support_trained_totals.observe_logits(&trained_logits, &true_candidate_indices);
+    }
+
+    for query_idx in 0..query_batches {
+        let batch_idx = support_batches + query_idx;
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_unit_mix_head_features(model, &x_t, softmax_temperature);
+        let normalized_features = normalize_signed_candidate_selector_features(
+            &features,
+            &feature_mean,
+            &feature_inv_std,
+        );
+        let true_candidate_indices = signed_velocity_true_candidate_indices(&x_t, &x_t1);
+        let prior_logits =
+            signed_candidate_selector_prior_logits_from_features(&features, candidates);
+        let trained_logits = selector.forward(&normalized_features);
+
+        prior_totals.observe_logits(&prior_logits, &true_candidate_indices);
+        query_trained_totals.observe_logits(&trained_logits, &true_candidate_indices);
+    }
+
+    let prior_anchor = prior_totals.into_metrics(candidates);
+    let support_trained_probe = support_trained_totals.into_metrics(candidates);
+    let trained_probe = query_trained_totals.into_metrics(candidates);
+    assert_eq!(
+        prior_anchor.samples, trained_probe.samples,
+        "candidate selector probe query sample mismatch"
+    );
+
+    ProjectedSignedCandidateSelectorProbe {
+        prior_anchor,
+        support_trained_probe,
+        trained_probe,
+        softmax_temperature,
+        probe_steps,
+        learning_rate,
+        support_samples,
+        query_samples: trained_probe.samples,
+        candidates,
     }
 }
 
@@ -3637,6 +3893,141 @@ fn signed_candidate_radius_logit_head_features_from_prediction(
     features
 }
 
+fn signed_candidate_selector_feature_normalizer<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    support_batches: usize,
+    softmax_temperature: f32,
+    feature_dim: usize,
+) -> (Vec<f32>, Vec<f32>)
+where
+    P: PredictorModule,
+{
+    assert!(support_batches > 0, "selector probe needs support batches");
+    assert!(
+        feature_dim > 0,
+        "selector probe feature dim must be positive"
+    );
+
+    let mut feature_sum = vec![0.0f32; feature_dim];
+    let mut feature_square_sum = vec![0.0f32; feature_dim];
+    let mut samples = 0usize;
+
+    for batch_idx in 0..support_batches {
+        let (x_t, _) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_unit_mix_head_features(model, &x_t, softmax_temperature);
+        assert_eq!(
+            features.shape,
+            vec![BATCH_SIZE, feature_dim],
+            "candidate selector probe support feature shape mismatch"
+        );
+
+        for sample in 0..BATCH_SIZE {
+            for feature_idx in 0..feature_dim {
+                let value = features.get(&[sample, feature_idx]);
+                feature_sum[feature_idx] += value;
+                feature_square_sum[feature_idx] += value * value;
+            }
+            samples += 1;
+        }
+    }
+
+    assert!(
+        samples > 1,
+        "selector probe needs at least two support samples"
+    );
+    let mut feature_mean = vec![0.0f32; feature_dim];
+    let mut feature_inv_std = vec![0.0f32; feature_dim];
+
+    for feature_idx in 0..feature_dim {
+        let mean = feature_sum[feature_idx] / samples as f32;
+        let square_mean = feature_square_sum[feature_idx] / samples as f32;
+        let variance = (square_mean - mean * mean).max(0.0);
+        let std = variance.sqrt();
+
+        feature_mean[feature_idx] = mean;
+        feature_inv_std[feature_idx] = if std > VELOCITY_BANK_TIE_EPSILON {
+            1.0 / std
+        } else {
+            0.0
+        };
+    }
+
+    (feature_mean, feature_inv_std)
+}
+
+fn normalize_signed_candidate_selector_features(
+    features: &Tensor,
+    feature_mean: &[f32],
+    feature_inv_std: &[f32],
+) -> Tensor {
+    assert!(
+        features.shape.len() == 2,
+        "candidate selector probe normalized features must be rank-2, got {:?}",
+        features.shape
+    );
+    assert_eq!(
+        feature_mean.len(),
+        features.shape[1],
+        "candidate selector probe mean feature mismatch"
+    );
+    assert_eq!(
+        feature_inv_std.len(),
+        features.shape[1],
+        "candidate selector probe std feature mismatch"
+    );
+
+    let mut normalized = Tensor::zeros(features.shape.clone());
+
+    for sample in 0..features.shape[0] {
+        for feature_idx in 0..features.shape[1] {
+            let value = (features.get(&[sample, feature_idx]) - feature_mean[feature_idx])
+                * feature_inv_std[feature_idx];
+            normalized.set(&[sample, feature_idx], value);
+        }
+    }
+
+    normalized
+}
+
+fn signed_candidate_selector_prior_logits_from_features(
+    features: &Tensor,
+    candidates: usize,
+) -> Tensor {
+    assert!(
+        features.shape.len() == 2,
+        "candidate selector probe features must be rank-2, got {:?}",
+        features.shape
+    );
+    assert!(candidates > 0, "candidate selector probe has no candidates");
+    assert!(
+        features.shape[1] >= candidates * 2,
+        "candidate selector probe feature dim {} cannot contain prior logits and radii for {} candidates",
+        features.shape[1],
+        candidates
+    );
+
+    let batch_size = features.shape[0];
+    let prior_offset = features.shape[1] - candidates * 2;
+    let mut prior_logits = Tensor::zeros(vec![batch_size, candidates]);
+
+    for sample in 0..batch_size {
+        for candidate_idx in 0..candidates {
+            prior_logits.set(
+                &[sample, candidate_idx],
+                features.get(&[sample, prior_offset + candidate_idx]),
+            );
+        }
+    }
+
+    prior_logits
+}
+
 fn signed_candidate_softmax_anchor_radius(
     prediction: &Tensor,
     candidate_targets: &[Tensor],
@@ -3760,6 +4151,60 @@ fn radius_logits_to_centered_radius_and_weights(
     }
 
     (predicted_radius, all_weights, all_candidate_radii)
+}
+
+fn signed_candidate_selector_softmax_ce_loss_and_grad(
+    logits: &Tensor,
+    true_candidate_indices: &[usize],
+) -> (ProjectedSignedCandidateSelectorProbeMetrics, Tensor) {
+    assert!(
+        logits.shape.len() == 2,
+        "candidate selector probe logits must be rank-2, got {:?}",
+        logits.shape
+    );
+
+    let batch_size = logits.shape[0];
+    let candidates = logits.shape[1];
+    assert_eq!(
+        true_candidate_indices.len(),
+        batch_size,
+        "candidate selector probe label batch mismatch"
+    );
+    assert!(batch_size > 0, "candidate selector probe has no samples");
+    assert!(candidates > 0, "candidate selector probe has no candidates");
+
+    let mut totals = SignedCandidateSelectorProbeMetricTotals::default();
+    let mut grad_logits = Tensor::zeros(vec![batch_size, candidates]);
+
+    for (sample, true_index) in true_candidate_indices.iter().copied().enumerate() {
+        assert!(
+            true_index < candidates,
+            "candidate selector probe true index {} exceeds candidate count {}",
+            true_index,
+            candidates
+        );
+
+        let sample_logits = (0..candidates)
+            .map(|candidate_idx| logits.get(&[sample, candidate_idx]))
+            .collect::<Vec<_>>();
+        let probabilities = stable_softmax(&sample_logits, "candidate selector probe train");
+
+        for (candidate_idx, probability) in probabilities.iter().enumerate() {
+            let target = if candidate_idx == true_index {
+                1.0
+            } else {
+                0.0
+            };
+            grad_logits.set(
+                &[sample, candidate_idx],
+                (*probability - target) / batch_size as f32,
+            );
+        }
+    }
+
+    totals.observe_logits(logits, true_candidate_indices);
+
+    (totals.into_metrics(candidates), grad_logits)
 }
 
 fn centered_radius_grad_to_residual_logits_grad(

@@ -187,11 +187,12 @@ Velocity-trail task axis:
 - `VISION.md` now frames compact predictor-capacity work as the active implementation path.
 - Projected hardening remains a regression gate, not the main build loop.
 - Candidate-radius and candidate-unit-mix heads are diagnostic hooks only; do not treat them as promoted architecture.
+- The selector probe is report-only evidence; it diagnoses available signal and is not itself a model promotion.
 
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use signed state separability, raw prediction-bank margin, unit prediction geometry, radial calibration, candidate-head diagnostics, and representation health as the current proof gate; improve candidate selection/representation reliability before another objective grid, bounce, or widening the model.
+2. Use signed state separability, raw prediction-bank margin, unit prediction geometry, radial calibration, candidate-head diagnostics, selector-probe evidence, and representation health as the current proof gate; improve trainable candidate selection without collapse before another objective grid, bounce, or widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed`, `velocity-trail`, and `signed-velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.
@@ -221,7 +222,8 @@ The proof comes from a compact model that learns useful temporal structure.
 - Signed-direction-magnitude preserves useful unit geometry, but raw PPR remains pinned.
 - Scalar/logit candidate-radius heads and the candidate unit-mix head failed seed-`11000` kill-switches.
 - Unit-mix failure mode is selector collapse: healthy base validation/drift and preserved unit geometry, but near-zero entropy and average true weight near random.
-- Next implementation should diagnose or improve selector signal/representation coupling before wider architecture or low-level kernels.
+- The normalized supervised selector probe shows current candidate features do contain signal (`query_trained_top1=0.437500` on seed `11000`, 300 steps), so the immediate bottleneck is trainable selector collapse control, not missing signal.
+- Next implementation should add an anti-collapse trainable selector path or regularized selector objective before wider architecture or low-level kernels.
 
 ## Decision Rule
 

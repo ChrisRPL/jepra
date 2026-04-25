@@ -22,6 +22,7 @@ use projected_temporal::{
     projected_signed_candidate_radius_logit_head_features,
     projected_signed_candidate_radius_logit_head_integration_from_base_seed,
     projected_signed_candidate_radius_logit_mixing_loss_and_grad,
+    projected_signed_candidate_selector_probe_from_base_seed,
     projected_signed_candidate_unit_mix_head_features,
     projected_signed_candidate_unit_mix_head_integration_from_base_seed,
     projected_signed_candidate_unit_mix_loss_and_grad,
@@ -38,14 +39,14 @@ use projected_temporal::{
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed, ProjectedSignedCandidateCentroidIntegration,
-    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedCandidateUnitMixHeadIntegration,
-    ProjectedSignedCandidateUnitMixObjectiveReport, ProjectedSignedObjectiveErrorBreakdown,
-    ProjectedSignedPredictionBankMargin, ProjectedSignedPredictionBankUnitGeometry,
-    ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedStateSeparability,
-    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO,
-    PROJECTED_VALIDATION_BASE_SEED, PROJECTED_VALIDATION_BATCHES,
-    PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedCandidateSelectorProbe,
+    ProjectedSignedCandidateUnitMixHeadIntegration, ProjectedSignedCandidateUnitMixObjectiveReport,
+    ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
+    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionGeometryCounterfactual,
+    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
+    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
+    PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
 };
 use temporal_vision::{
     assert_required_motion_modes_for_task, assert_temporal_contract,
@@ -73,6 +74,9 @@ const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_LR: f32 = 0.01;
 const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_WEIGHT: f32 = 1.0;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE: f32 = 0.05;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS: usize = 200;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR: f32 = 0.05;
 const SIGNED_CANDIDATE_RADIUS_HEAD_FEATURE_DIM: usize = PROJECTION_DIM * 2 + 4;
 const SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_FEATURE_DIM: usize =
     PROJECTION_DIM + SIGNED_VELOCITY_BANK_CANDIDATE_DX.len() * 2;
@@ -103,6 +107,14 @@ struct SignedCandidateUnitMixHeadRunConfig {
     softmax_temperature: f32,
     learning_rate: f32,
     loss_weight: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateSelectorProbeRunConfig {
+    enabled: bool,
+    softmax_temperature: f32,
+    probe_steps: usize,
+    learning_rate: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -326,6 +338,48 @@ impl SignedCandidateUnitMixHeadRunConfig {
     }
 }
 
+impl SignedCandidateSelectorProbeRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let enabled = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-selector-probe")
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE").unwrap_or(false);
+        let softmax_temperature =
+            parse_f32_arg(&args, "--signed-candidate-selector-probe-temperature")
+                .or_else(|| {
+                    parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE")
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE);
+        let probe_steps = parse_usize_arg(&args, "--signed-candidate-selector-probe-steps")
+            .or_else(|| parse_positive_usize_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS);
+        let learning_rate = parse_f32_arg(&args, "--signed-candidate-selector-probe-lr")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_LR"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR);
+
+        assert!(
+            softmax_temperature.is_finite() && softmax_temperature > 0.0,
+            "signed candidate selector probe temperature must be finite and positive"
+        );
+        assert!(
+            probe_steps > 0,
+            "signed candidate selector probe steps must be positive"
+        );
+        assert!(
+            learning_rate.is_finite() && learning_rate > 0.0,
+            "signed candidate selector probe lr must be finite and positive"
+        );
+
+        Self {
+            enabled,
+            softmax_temperature,
+            probe_steps,
+            learning_rate,
+        }
+    }
+}
+
 fn parse_candidate_radius_head_mode(args: &[String]) -> Option<SignedCandidateRadiusHeadMode> {
     parse_arg_value(args, "--signed-candidate-radius-head-mode")
         .map(|raw_mode| parse_candidate_radius_head_mode_value(raw_mode))
@@ -368,6 +422,8 @@ fn main() {
         SignedCandidateRadiusHeadRunConfig::from_args_and_env();
     let signed_candidate_unit_mix_head_config =
         SignedCandidateUnitMixHeadRunConfig::from_args_and_env();
+    let signed_candidate_selector_probe_config =
+        SignedCandidateSelectorProbeRunConfig::from_args_and_env();
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",
@@ -443,6 +499,13 @@ fn main() {
         signed_candidate_unit_mix_head_config.learning_rate,
         signed_candidate_unit_mix_head_config.loss_weight
     );
+    println!(
+        "temporal run config | signed candidate selector probe enabled {} | softmax_temperature {} | steps {} | lr {}",
+        signed_candidate_selector_probe_config.enabled,
+        signed_candidate_selector_probe_config.softmax_temperature,
+        signed_candidate_selector_probe_config.probe_steps,
+        signed_candidate_selector_probe_config.learning_rate
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(
@@ -450,6 +513,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_probe_config,
             make_predictor(),
         ),
         PredictorMode::Bottleneck => run_with_predictor(
@@ -457,6 +521,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_probe_config,
             make_bottleneck_predictor(),
         ),
         PredictorMode::ResidualBottleneck => run_with_predictor(
@@ -464,6 +529,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_probe_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
         PredictorMode::StateRadius => run_with_predictor(
@@ -471,6 +537,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_probe_config,
             make_state_radius_predictor(),
         ),
     }
@@ -481,6 +548,7 @@ fn run_with_predictor<P>(
     signed_candidate_centroid_integration_config: SignedCandidateCentroidIntegrationRunConfig,
     signed_candidate_radius_head_config: SignedCandidateRadiusHeadRunConfig,
     signed_candidate_unit_mix_head_config: SignedCandidateUnitMixHeadRunConfig,
+    signed_candidate_selector_probe_config: SignedCandidateSelectorProbeRunConfig,
     predictor: P,
 ) where
     P: PredictorModule,
@@ -605,6 +673,11 @@ fn run_with_predictor<P>(
             run_config,
             signed_candidate_unit_mix_head_config,
         );
+    let initial_signed_candidate_selector_probe = maybe_projected_signed_candidate_selector_probe(
+        &model,
+        run_config,
+        signed_candidate_selector_probe_config,
+    );
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
     let initial_signed_bank_softmax_objective_report =
@@ -663,6 +736,7 @@ fn run_with_predictor<P>(
         "initial",
         initial_signed_candidate_unit_mix_head_integration,
     );
+    print_signed_candidate_selector_probe("initial", initial_signed_candidate_selector_probe);
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
         "initial",
@@ -911,6 +985,11 @@ fn run_with_predictor<P>(
             run_config,
             signed_candidate_unit_mix_head_config,
         );
+    let final_signed_candidate_selector_probe = maybe_projected_signed_candidate_selector_probe(
+        &model,
+        run_config,
+        signed_candidate_selector_probe_config,
+    );
     let final_signed_objective_error_breakdown =
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let final_signed_margin_objective_report =
@@ -994,6 +1073,7 @@ fn run_with_predictor<P>(
         "final",
         final_signed_candidate_unit_mix_head_integration,
     );
+    print_signed_candidate_selector_probe("final", final_signed_candidate_selector_probe);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
@@ -1146,11 +1226,24 @@ fn parse_f32_arg(args: &[String], flag: &str) -> Option<f32> {
         .filter(|value| value.is_finite() && *value > 0.0)
 }
 
+fn parse_usize_arg(args: &[String], flag: &str) -> Option<usize> {
+    parse_arg_value(args, flag)
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+}
+
 fn parse_positive_f32_env(name: &str) -> Option<f32> {
     std::env::var(name)
         .ok()
         .and_then(|value| value.parse::<f32>().ok())
         .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn parse_positive_usize_env(name: &str) -> Option<usize> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
 }
 
 fn parse_bool_env(name: &str) -> Option<bool> {
@@ -1607,6 +1700,66 @@ fn print_signed_candidate_unit_mix_head_integration(
             integration.softmax_temperature,
             integration.samples,
             integration.candidates,
+        );
+    }
+}
+
+fn maybe_projected_signed_candidate_selector_probe<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    probe_config: SignedCandidateSelectorProbeRunConfig,
+) -> Option<ProjectedSignedCandidateSelectorProbe>
+where
+    P: PredictorModule,
+{
+    if !probe_config.enabled {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate selector probe is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(projected_signed_candidate_selector_probe_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+        probe_config.softmax_temperature,
+        probe_config.probe_steps,
+        probe_config.learning_rate,
+    ))
+}
+
+fn print_signed_candidate_selector_probe(
+    tag: &str,
+    probe: Option<ProjectedSignedCandidateSelectorProbe>,
+) {
+    if let Some(probe) = probe {
+        println!(
+            "{} | signed candidate selector probe prior_loss {:.6} | prior_mrr {:.6} | prior_top1 {:.6} | prior_true_probability {:.6} | prior_entropy {:.6} | support_trained_loss {:.6} | support_trained_mrr {:.6} | support_trained_top1 {:.6} | support_trained_true_probability {:.6} | support_trained_entropy {:.6} | query_trained_loss {:.6} | query_trained_mrr {:.6} | query_trained_top1 {:.6} | query_trained_true_probability {:.6} | query_trained_entropy {:.6} | softmax_temperature {:.6} | steps {} | lr {:.6} | support_samples {} | query_samples {} | candidates {}",
+            tag,
+            probe.prior_anchor.loss,
+            probe.prior_anchor.mrr,
+            probe.prior_anchor.top1,
+            probe.prior_anchor.true_probability,
+            probe.prior_anchor.entropy,
+            probe.support_trained_probe.loss,
+            probe.support_trained_probe.mrr,
+            probe.support_trained_probe.top1,
+            probe.support_trained_probe.true_probability,
+            probe.support_trained_probe.entropy,
+            probe.trained_probe.loss,
+            probe.trained_probe.mrr,
+            probe.trained_probe.top1,
+            probe.trained_probe.true_probability,
+            probe.trained_probe.entropy,
+            probe.softmax_temperature,
+            probe.probe_steps,
+            probe.learning_rate,
+            probe.support_samples,
+            probe.query_samples,
+            probe.candidates,
         );
     }
 }

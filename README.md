@@ -74,6 +74,8 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--signed-angular-radial-radius-weight <float>` controls the signed angular-radial radius component weight (`1.0` default)
 - `--signed-candidate-unit-mix-head` enables an opt-in trainable candidate-centroid unit/radius mixer head for the signed task; it is a diagnostic hook and does not train the base predictor.
 - `--signed-candidate-unit-mix-temperature`, `--signed-candidate-unit-mix-lr`, and `--signed-candidate-unit-mix-weight` configure that diagnostic head.
+- `--signed-candidate-selector-probe` enables a report-only supervised selector probe over current candidate features; it trains a detached linear classifier on support batches and reports held-out query metrics without changing the base model.
+- `--signed-candidate-selector-probe-temperature`, `--signed-candidate-selector-probe-steps`, and `--signed-candidate-selector-probe-lr` configure that report-only probe.
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -88,6 +90,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_SIGNED_RADIAL_WEIGHT` is the environment fallback for signed radial calibration
 - `JEPRA_SIGNED_ANGULAR_RADIAL_WEIGHT`, `JEPRA_SIGNED_ANGULAR_WEIGHT`, and `JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT` are environment fallbacks for signed angular-radial probes
 - `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_HEAD`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_LR`, and `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_WEIGHT` are environment fallbacks for the candidate unit-mix diagnostic head
+- `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_LR` are environment fallbacks for the report-only selector probe
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
@@ -218,7 +221,8 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - `--signed-candidate-radius-head` adds the first opt-in trainable candidate-centered scalar radius residual. Seed `11000`, `300` steps, temperature `0.05`, keeps validation/drift healthy and improves radius calibration (`learned_radius_norm_ratio=1.164618` versus report-only softmax `1.379775`), but ranking stays below proof (`learned_radius_top1=0.328125`, gate `~0.364583`). Temperature `0.25` worsens top1 to `0.250000`.
 - `--signed-candidate-radius-logit-head` adds the candidate-logit residual radius mixer. It zero-initializes residual logits so the initial prediction matches report-only softmax radius, then trains only residual logits with the centered-radius scalar primitive. Seed `11000`, `300` steps, temperature `0.05`, keeps validation/drift healthy but fails the kill-switch: `learned_radius_top1=0.343750`, matching report-only softmax on that seed and below the `~0.364583` proof gate, while norm ratio worsens to `1.540515`.
 - `--signed-candidate-unit-mix-head` adds a zero-initialized candidate-centroid unit/radius mixer. Seed `11000`, `300` steps, temperature `0.05`, keeps base validation/drift and unit geometry healthy (`val=0.387588`, `drift=0.009244`, `unit_ppr=0.453125`, `unit_mrr=0.635417`), but the head collapses to near-deterministic wrong selection (`learned_mix_top1=0.250000`, `objective_entropy=0.000008`, `objective_true_weight=0.249999`). Keep it as a diagnostic hook, not a promoted fix.
-- Decision: scalar/logit radius heads and the candidate unit-mix head are useful diagnostic/training hooks, not final fixes. The current bottleneck is now candidate selection/representation reliability, not CUDA, another radius-only sweep, or a broader objective grid.
+- `--signed-candidate-selector-probe` adds a report-only normalized linear selector probe over `[projection, prior_logits, candidate_radii]`. Seed `11000`, `300` steps, temperature `0.05`, probe steps `20`, keeps base validation/drift unchanged and shows held-out selector signal (`query_trained_top1=0.437500`, `query_trained_mrr=0.640625`, entropy `1.205694`) above prior-only (`prior_top1=0.375000`).
+- Decision: scalar/logit radius heads and the candidate unit-mix head are useful diagnostic/training hooks, not final fixes. The selector probe indicates current features contain actionable selector signal, so the next build should add an anti-collapse trainable selector path rather than CUDA, another radius-only sweep, or a broader objective grid.
 
 Candidate-centroid-aware geometry acceptance gate:
 
