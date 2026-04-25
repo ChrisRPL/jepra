@@ -1,8 +1,9 @@
 use jepra_core::{
+    signed_angular_radial_objective_loss_and_grad, signed_bank_softmax_objective_loss_and_grad,
+    signed_candidate_centered_radius_targets, signed_centered_radius_scalar_loss_and_grad,
+    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
     SignedAngularRadialObjectiveConfig, SignedBankSoftmaxObjectiveConfig,
-    SignedMarginObjectiveConfig, Tensor, signed_angular_radial_objective_loss_and_grad,
-    signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
-    signed_radial_calibration_loss_and_grad,
+    SignedMarginObjectiveConfig, Tensor,
 };
 
 fn signed_objective_fixture_prediction(value: f32) -> Tensor {
@@ -28,6 +29,14 @@ fn angular_radial_fixture_candidates() -> Vec<Tensor> {
         Tensor::new(vec![0.6, 0.2], vec![1, 2]),
         Tensor::new(vec![0.7, -0.1], vec![1, 2]),
         Tensor::new(vec![1.0, 0.8], vec![1, 2]),
+    ]
+}
+
+fn centered_radius_fixture_candidates() -> Vec<Tensor> {
+    vec![
+        Tensor::new(vec![0.0, 0.0, 1.0, 1.0], vec![2, 2]),
+        Tensor::new(vec![2.0, 0.0, 1.0, 3.0], vec![2, 2]),
+        Tensor::new(vec![0.0, 2.0, 4.0, 1.0], vec![2, 2]),
     ]
 }
 
@@ -189,6 +198,67 @@ fn signed_radial_calibration_grad_matches_finite_difference() {
         finite_difference,
         grad.data[0]
     );
+}
+
+#[test]
+fn signed_candidate_centered_radius_targets_match_bank_centroid_geometry() {
+    let candidate_targets = centered_radius_fixture_candidates();
+    let true_indices = [1usize, 2usize];
+    let targets = signed_candidate_centered_radius_targets(&candidate_targets, &true_indices);
+
+    assert_eq!(targets.shape, vec![2, 1]);
+    assert!((targets.get(&[0, 0]) - 20.0f32.sqrt() / 3.0).abs() < 1e-6);
+    assert!((targets.get(&[1, 0]) - 40.0f32.sqrt() / 3.0).abs() < 1e-6);
+}
+
+#[test]
+fn signed_centered_radius_scalar_grad_matches_finite_difference() {
+    let candidate_targets = centered_radius_fixture_candidates();
+    let true_indices = [1usize, 2usize];
+    let prediction = Tensor::new(vec![1.0, 2.0], vec![2, 1]);
+    let (report, grad) =
+        signed_centered_radius_scalar_loss_and_grad(&prediction, &candidate_targets, &true_indices);
+
+    assert!(report.loss.is_finite() && report.loss > 0.0);
+    assert!(report.prediction_radius.is_finite());
+    assert!(report.target_radius.is_finite() && report.target_radius >= 0.0);
+    assert!(report.radius_ratio.is_finite());
+    assert_eq!(report.samples, 2);
+    assert_eq!(grad.shape, vec![2, 1]);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
+
+    let epsilon = 1e-3;
+    let plus = Tensor::new(vec![1.0 + epsilon, 2.0], vec![2, 1]);
+    let minus = Tensor::new(vec![1.0 - epsilon, 2.0], vec![2, 1]);
+    let plus_loss =
+        signed_centered_radius_scalar_loss_and_grad(&plus, &candidate_targets, &true_indices)
+            .0
+            .loss;
+    let minus_loss =
+        signed_centered_radius_scalar_loss_and_grad(&minus, &candidate_targets, &true_indices)
+            .0
+            .loss;
+    let finite_difference = (plus_loss - minus_loss) / (2.0 * epsilon);
+
+    assert!(
+        (finite_difference - grad.data[0]).abs() < 1e-3,
+        "finite difference {:.6} != grad {:.6}",
+        finite_difference,
+        grad.data[0]
+    );
+}
+
+#[test]
+fn signed_centered_radius_scalar_accepts_rank_one_predictions() {
+    let candidate_targets = centered_radius_fixture_candidates();
+    let true_indices = [1usize, 2usize];
+    let prediction = Tensor::new(vec![1.0, 2.0], vec![2]);
+    let (report, grad) =
+        signed_centered_radius_scalar_loss_and_grad(&prediction, &candidate_targets, &true_indices);
+
+    assert!(report.loss.is_finite());
+    assert_eq!(grad.shape, vec![2]);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
 }
 
 #[test]

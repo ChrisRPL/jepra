@@ -149,6 +149,15 @@ pub struct SignedRadialCalibrationReport {
     pub samples: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignedCenteredRadiusScalarObjectiveReport {
+    pub loss: f32,
+    pub prediction_radius: f32,
+    pub target_radius: f32,
+    pub radius_ratio: f32,
+    pub samples: usize,
+}
+
 pub fn signed_bank_softmax_objective_loss_and_grad(
     prediction: &Tensor,
     candidate_targets: &[Tensor],
@@ -362,6 +371,103 @@ pub fn signed_radial_calibration_loss_and_grad(
             prediction_norm: prediction_norm_sum / batch_size as f32,
             target_norm: target_norm_sum / batch_size as f32,
             norm_ratio: norm_ratio_sum / batch_size as f32,
+            samples: batch_size,
+        },
+        grad,
+    )
+}
+
+pub fn signed_candidate_centered_radius_targets(
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+) -> Tensor {
+    let (batch_size, projection_dim) = validate_signed_candidate_bank(
+        "signed candidate centered radius targets",
+        candidate_targets,
+        true_candidate_indices,
+    );
+    let mut targets = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_index = true_candidate_indices[sample];
+        assert!(
+            true_index < candidate_targets.len(),
+            "signed candidate centered radius true index {} out of bounds for {} candidates",
+            true_index,
+            candidate_targets.len()
+        );
+
+        let centroid = candidate_target_centroid(candidate_targets, sample, projection_dim);
+        let target_centered = centered_sample_features(
+            &candidate_targets[true_index],
+            sample,
+            projection_dim,
+            &centroid,
+        );
+        let target_radius = vector_norm(&target_centered);
+        assert!(
+            target_radius.is_finite(),
+            "signed candidate centered radius produced non-finite target"
+        );
+        targets.push(target_radius);
+    }
+
+    Tensor::new(targets, vec![batch_size, 1])
+}
+
+pub fn signed_centered_radius_scalar_loss_and_grad(
+    predicted_centered_radius: &Tensor,
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+) -> (SignedCenteredRadiusScalarObjectiveReport, Tensor) {
+    let (batch_size, _) = validate_signed_candidate_bank(
+        "signed centered radius scalar objective",
+        candidate_targets,
+        true_candidate_indices,
+    );
+    assert_scalar_prediction_shape(
+        predicted_centered_radius,
+        batch_size,
+        "signed centered radius scalar objective",
+    );
+
+    let target_centered_radius =
+        signed_candidate_centered_radius_targets(candidate_targets, true_candidate_indices);
+    let mut grad = Tensor::zeros(predicted_centered_radius.shape.clone());
+    let mut loss_sum = 0.0f32;
+    let mut prediction_radius_sum = 0.0f32;
+    let mut target_radius_sum = 0.0f32;
+    let mut radius_ratio_sum = 0.0f32;
+
+    for sample in 0..batch_size {
+        let prediction_radius = scalar_prediction_value(predicted_centered_radius, sample);
+        let target_radius = target_centered_radius.get(&[sample, 0]);
+        assert!(
+            prediction_radius.is_finite(),
+            "signed centered radius scalar prediction must be finite"
+        );
+
+        let radius_error = prediction_radius - target_radius;
+        let loss = radius_error * radius_error;
+        assert!(
+            loss.is_finite(),
+            "signed centered radius scalar produced non-finite loss"
+        );
+
+        loss_sum += loss;
+        prediction_radius_sum += prediction_radius;
+        target_radius_sum += target_radius;
+        radius_ratio_sum += prediction_radius / target_radius.max(RADIAL_EPSILON);
+
+        set_scalar_prediction_value(&mut grad, sample, 2.0 * radius_error / batch_size as f32);
+    }
+
+    (
+        SignedCenteredRadiusScalarObjectiveReport {
+            loss: loss_sum / batch_size as f32,
+            prediction_radius: prediction_radius_sum / batch_size as f32,
+            target_radius: target_radius_sum / batch_size as f32,
+            radius_ratio: radius_ratio_sum / batch_size as f32,
             samples: batch_size,
         },
         grad,
@@ -660,6 +766,90 @@ pub fn signed_margin_objective_loss_and_grad(
 }
 
 const RADIAL_EPSILON: f32 = 1e-6;
+
+fn validate_signed_candidate_bank(
+    context: &str,
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+) -> (usize, usize) {
+    assert!(
+        candidate_targets.len() >= 2,
+        "{} requires at least two candidates",
+        context
+    );
+    assert!(
+        candidate_targets[0].ndim() == 2,
+        "{} candidate targets must be rank-2, got {:?}",
+        context,
+        candidate_targets[0].shape
+    );
+
+    let batch_size = candidate_targets[0].shape[0];
+    let projection_dim = candidate_targets[0].shape[1];
+    assert!(batch_size > 0, "{} requires a non-empty batch", context);
+    assert!(
+        projection_dim > 0,
+        "{} requires non-empty projection dim",
+        context
+    );
+    assert!(
+        true_candidate_indices.len() == batch_size,
+        "{} true-index count {} must match batch {}",
+        context,
+        true_candidate_indices.len(),
+        batch_size
+    );
+
+    for target in candidate_targets {
+        assert!(
+            target.shape == candidate_targets[0].shape,
+            "{} candidate target shape mismatch: first {:?}, candidate {:?}",
+            context,
+            candidate_targets[0].shape,
+            target.shape
+        );
+    }
+
+    (batch_size, projection_dim)
+}
+
+fn assert_scalar_prediction_shape(prediction: &Tensor, batch_size: usize, context: &str) {
+    match prediction.ndim() {
+        1 => assert!(
+            prediction.shape[0] == batch_size,
+            "{} prediction batch {} must match target batch {}",
+            context,
+            prediction.shape[0],
+            batch_size
+        ),
+        2 => assert!(
+            prediction.shape[0] == batch_size && prediction.shape[1] == 1,
+            "{} prediction must have shape [batch] or [batch, 1], got {:?}",
+            context,
+            prediction.shape
+        ),
+        _ => panic!(
+            "{} prediction must have shape [batch] or [batch, 1], got {:?}",
+            context, prediction.shape
+        ),
+    }
+}
+
+fn scalar_prediction_value(prediction: &Tensor, sample: usize) -> f32 {
+    match prediction.ndim() {
+        1 => prediction.get(&[sample]),
+        2 => prediction.get(&[sample, 0]),
+        _ => unreachable!("scalar prediction rank validated before use"),
+    }
+}
+
+fn set_scalar_prediction_value(tensor: &mut Tensor, sample: usize, value: f32) {
+    match tensor.ndim() {
+        1 => tensor.set(&[sample], value),
+        2 => tensor.set(&[sample, 0], value),
+        _ => unreachable!("scalar prediction rank validated before use"),
+    }
+}
 
 fn candidate_target_centroid(
     candidate_targets: &[Tensor],
