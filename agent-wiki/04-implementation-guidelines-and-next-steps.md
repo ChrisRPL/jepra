@@ -41,8 +41,9 @@ Current high-value implementation path:
 11. Treat signed state separability v11 as implemented: current latent and projected state are near random on signed direction, so another loss-only pass is not the next best build step.
 12. Treat `--compact-encoder-mode signed-direction` as the active opt-in representation probe: scaled responses preserve state separability and pass prediction health, but prediction-bank margin remains negative, so it is not promotable yet.
 13. Treat signed-bank softmax v12 as implemented and blocked: it gives a direct candidate-bank cross-entropy probe, but narrow signed-direction evidence leaves positive-margin rate unchanged, so do not promote or tune it broadly.
-14. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
-15. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
+14. Treat `signed-direction-magnitude` and unit-geometry v13 as implemented: magnitude conditioning improves validation/raw margin, and bank-centered unit geometry exposes useful signed direction, but raw PPR remains pinned.
+15. Keep projector drift regularization as an opt-in control knob; use it to test exact drift confounds, not as a promoted default.
+16. Keep projected momentum/default policy locked unless the established sweep gate remains clean.
 
 ## Predictor Evidence Snapshot
 
@@ -95,7 +96,8 @@ Velocity-trail task axis:
 - Signed state separability v11 (`2026-04-24`, same sweep): baseline and residual both have latent MRR `0.518229`, latent sign-top1 `0.468750`, projection MRR `0.518229`, and projection sign-top1 `0.468750`; four-candidate random references are MRR `0.520833` and top1 `0.25`.
 - Signed-direction compact encoder probe (`2026-04-24`, projected signed 300-step baseline, seeds `11000..11002`): response scaling keeps all rows health-ok with mean `pred_min_std=0.158783`, `target_min_std=0.750253`, state MRR `0.619792`, sign-top1 `0.609375`, target drift `0.008791`, but prediction-bank positive-margin rate is only `0.281250` and margins remain negative.
 - Signed-bank softmax v12 (`2026-04-25`, signed-direction projected baseline): weight `0.5` keeps all rows health-ok but leaves `ppr=0.281250`, `margin=-1.200875`, and softmax top1 `0.281250`; a high-weight seed-11000 diagnostic lowers softmax loss but still leaves `ppr=0.281250` and worsens signed-bank MRR.
-- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show predictions closer to wrong signed futures than true targets on most samples, v9 shows negative-direction loss dominates, v10 shows uniform signed-margin shaping is too weak, v11 shows current state representation is not direction-separable, signed-direction proves local orientation features can be health-ok, and v12 shows candidate cross-entropy alone does not close ranking. Next valid step: improve signed-direction speed/magnitude conditioning and target geometry while preserving health before bounce/architecture widening.
+- Signed-direction-magnitude + unit geometry v13 (`2026-04-25`, projected signed baseline): all rows health-ok; validation improves to `0.387471`, raw margin improves to `-0.818459`, raw PPR remains `0.281250`, unit MRR is `0.631944`, unit top1/PPR is `0.453125`, and unit speed margin is near zero (`0.001397`).
+- Decision: signed evidence blocks residual promotion, depthwise convolution, and spatial predictor work. Target-bank construction is valid, prediction-bank margins show predictions closer to wrong signed futures than true targets on most samples, v9 shows negative-direction loss dominates, v10 shows uniform signed-margin shaping is too weak, v11 shows current state representation is not direction-separable, signed-direction proves local orientation features can be health-ok, v12 shows candidate cross-entropy alone does not close ranking, and v13 shows angular signal is usable but raw radial calibration is wrong. Next valid step: implement an opt-in angular/radial-decoupled signed prediction geometry or radial calibration probe before bounce/architecture widening.
 
 ## Focused Review (Projected Path Hardening)
 
@@ -106,7 +108,7 @@ Velocity-trail task axis:
   - zero/one momentum edge behavior,
   - frozen/trainable protocol parity while warmup is active.
 - Protocol evidence is now established for fixed-seed projected behavior across `{1.0, 0.5, 0.0}` momentum under the explicit entrypoint path.
-- Predictor comparison now uses schema `jepra_predictor_compare_v12`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, prediction-bank margin fields, signed objective error decomposition fields, signed-margin objective fields, signed-bank softmax objective fields, signed state separability fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
+- Predictor comparison now uses schema `jepra_predictor_compare_v13`, emits `temporal_task`, velocity-bank fields for projected trail tasks, signed-task breakdown fields, target-bank oracle fields, prediction-bank margin fields, prediction-bank unit geometry fields, signed objective error decomposition fields, signed-margin objective fields, signed-bank softmax objective fields, signed state separability fields, `residual_delta_scale`, and `projector_drift_weight`, and rejects low-std representation collapse by default (`JEPRA_MIN_STD_THRESHOLD=0.05`).
 - Projected hardening remains a regression gate, not the main build target for the next implementation step.
 
 ## Promotion/Regression Gate
@@ -168,7 +170,7 @@ Velocity-trail task axis:
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use signed state separability, prediction-bank margin, and representation health as the current proof gate; improve `signed-direction` speed/magnitude conditioning before another objective grid, bounce, or widening the model.
+2. Use signed state separability, raw prediction-bank margin, unit prediction geometry, and representation health as the current proof gate; improve radial calibration / angular-radial prediction geometry before another objective grid, bounce, or widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed`, `velocity-trail`, and `signed-velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.
