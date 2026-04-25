@@ -22,6 +22,9 @@ use projected_temporal::{
     projected_signed_candidate_radius_logit_head_features,
     projected_signed_candidate_radius_logit_head_integration_from_base_seed,
     projected_signed_candidate_radius_logit_mixing_loss_and_grad,
+    projected_signed_candidate_unit_mix_head_features,
+    projected_signed_candidate_unit_mix_head_integration_from_base_seed,
+    projected_signed_candidate_unit_mix_loss_and_grad,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
@@ -35,7 +38,8 @@ use projected_temporal::{
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed, ProjectedSignedCandidateCentroidIntegration,
-    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedObjectiveErrorBreakdown,
+    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedCandidateUnitMixHeadIntegration,
+    ProjectedSignedCandidateUnitMixObjectiveReport, ProjectedSignedObjectiveErrorBreakdown,
     ProjectedSignedPredictionBankMargin, ProjectedSignedPredictionBankUnitGeometry,
     ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedStateSeparability,
     ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
@@ -66,11 +70,17 @@ const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_LR: f32 = 0.02;
 const DEFAULT_SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_LR: f32 = 0.01;
 const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT: f32 = 1.0;
+const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_TEMPERATURE: f32 = 0.05;
+const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_LR: f32 = 0.01;
+const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_WEIGHT: f32 = 1.0;
 const SIGNED_CANDIDATE_RADIUS_HEAD_FEATURE_DIM: usize = PROJECTION_DIM * 2 + 4;
 const SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_FEATURE_DIM: usize =
     PROJECTION_DIM + SIGNED_VELOCITY_BANK_CANDIDATE_DX.len() * 2;
 const SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_OUTPUT_DIM: usize =
     SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+const SIGNED_CANDIDATE_UNIT_MIX_HEAD_FEATURE_DIM: usize =
+    SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_FEATURE_DIM;
+const SIGNED_CANDIDATE_UNIT_MIX_HEAD_OUTPUT_DIM: usize = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
 
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateCentroidIntegrationRunConfig {
@@ -82,6 +92,14 @@ struct SignedCandidateCentroidIntegrationRunConfig {
 struct SignedCandidateRadiusHeadRunConfig {
     enabled: bool,
     mode: SignedCandidateRadiusHeadMode,
+    softmax_temperature: f32,
+    learning_rate: f32,
+    loss_weight: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateUnitMixHeadRunConfig {
+    enabled: bool,
     softmax_temperature: f32,
     learning_rate: f32,
     loss_weight: f32,
@@ -167,6 +185,16 @@ fn make_signed_candidate_radius_head(mode: SignedCandidateRadiusHeadMode) -> Lin
             Tensor::zeros(vec![SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_OUTPUT_DIM]),
         ),
     }
+}
+
+fn make_signed_candidate_unit_mix_head() -> Linear {
+    Linear::new(
+        Tensor::zeros(vec![
+            SIGNED_CANDIDATE_UNIT_MIX_HEAD_FEATURE_DIM,
+            SIGNED_CANDIDATE_UNIT_MIX_HEAD_OUTPUT_DIM,
+        ]),
+        Tensor::zeros(vec![SIGNED_CANDIDATE_UNIT_MIX_HEAD_OUTPUT_DIM]),
+    )
 }
 
 impl SignedCandidateCentroidIntegrationRunConfig {
@@ -259,6 +287,45 @@ impl SignedCandidateRadiusHeadRunConfig {
     }
 }
 
+impl SignedCandidateUnitMixHeadRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let enabled = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-unit-mix-head")
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_UNIT_MIX_HEAD").unwrap_or(false);
+        let softmax_temperature = parse_f32_arg(&args, "--signed-candidate-unit-mix-temperature")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_UNIT_MIX_TEMPERATURE"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_TEMPERATURE);
+        let learning_rate = parse_f32_arg(&args, "--signed-candidate-unit-mix-lr")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_UNIT_MIX_LR"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_LR);
+        let loss_weight = parse_f32_arg(&args, "--signed-candidate-unit-mix-weight")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_UNIT_MIX_WEIGHT"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_WEIGHT);
+
+        assert!(
+            softmax_temperature.is_finite() && softmax_temperature > 0.0,
+            "signed candidate unit-mix temperature must be finite and positive"
+        );
+        assert!(
+            learning_rate.is_finite() && learning_rate > 0.0,
+            "signed candidate unit-mix lr must be finite and positive"
+        );
+        assert!(
+            loss_weight.is_finite() && loss_weight > 0.0,
+            "signed candidate unit-mix weight must be finite and positive"
+        );
+
+        Self {
+            enabled,
+            softmax_temperature,
+            learning_rate,
+            loss_weight,
+        }
+    }
+}
+
 fn parse_candidate_radius_head_mode(args: &[String]) -> Option<SignedCandidateRadiusHeadMode> {
     parse_arg_value(args, "--signed-candidate-radius-head-mode")
         .map(|raw_mode| parse_candidate_radius_head_mode_value(raw_mode))
@@ -299,6 +366,8 @@ fn main() {
         SignedCandidateCentroidIntegrationRunConfig::from_args_and_env();
     let signed_candidate_radius_head_config =
         SignedCandidateRadiusHeadRunConfig::from_args_and_env();
+    let signed_candidate_unit_mix_head_config =
+        SignedCandidateUnitMixHeadRunConfig::from_args_and_env();
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",
@@ -367,30 +436,41 @@ fn main() {
         signed_candidate_radius_head_config.learning_rate,
         signed_candidate_radius_head_config.loss_weight
     );
+    println!(
+        "temporal run config | signed candidate unit-mix head enabled {} | softmax_temperature {} | lr {} | weight {}",
+        signed_candidate_unit_mix_head_config.enabled,
+        signed_candidate_unit_mix_head_config.softmax_temperature,
+        signed_candidate_unit_mix_head_config.learning_rate,
+        signed_candidate_unit_mix_head_config.loss_weight
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
+            signed_candidate_unit_mix_head_config,
             make_predictor(),
         ),
         PredictorMode::Bottleneck => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
+            signed_candidate_unit_mix_head_config,
             make_bottleneck_predictor(),
         ),
         PredictorMode::ResidualBottleneck => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
+            signed_candidate_unit_mix_head_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
         PredictorMode::StateRadius => run_with_predictor(
             run_config,
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
+            signed_candidate_unit_mix_head_config,
             make_state_radius_predictor(),
         ),
     }
@@ -400,6 +480,7 @@ fn run_with_predictor<P>(
     run_config: temporal_vision::TemporalRunConfig,
     signed_candidate_centroid_integration_config: SignedCandidateCentroidIntegrationRunConfig,
     signed_candidate_radius_head_config: SignedCandidateRadiusHeadRunConfig,
+    signed_candidate_unit_mix_head_config: SignedCandidateUnitMixHeadRunConfig,
     predictor: P,
 ) where
     P: PredictorModule,
@@ -472,6 +553,9 @@ fn run_with_predictor<P>(
     let mut signed_candidate_radius_head = signed_candidate_radius_head_config
         .enabled
         .then(|| make_signed_candidate_radius_head(signed_candidate_radius_head_config.mode));
+    let mut signed_candidate_unit_mix_head = signed_candidate_unit_mix_head_config
+        .enabled
+        .then(make_signed_candidate_unit_mix_head);
 
     let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
@@ -513,6 +597,13 @@ fn run_with_predictor<P>(
             signed_candidate_radius_head.as_ref(),
             run_config,
             signed_candidate_radius_head_config,
+        );
+    let initial_signed_candidate_unit_mix_head_integration =
+        maybe_projected_signed_candidate_unit_mix_head_integration(
+            &model,
+            signed_candidate_unit_mix_head.as_ref(),
+            run_config,
+            signed_candidate_unit_mix_head_config,
         );
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
@@ -568,6 +659,10 @@ fn run_with_predictor<P>(
         "initial",
         initial_signed_candidate_radius_head_integration,
     );
+    print_signed_candidate_unit_mix_head_integration(
+        "initial",
+        initial_signed_candidate_unit_mix_head_integration,
+    );
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
         "initial",
@@ -609,6 +704,15 @@ fn run_with_predictor<P>(
                     signed_candidate_radius_head.as_mut(),
                     run_config,
                     signed_candidate_radius_head_config,
+                    &x_t,
+                    &x_t1,
+                );
+            let signed_candidate_unit_mix_head_step =
+                maybe_train_projected_signed_candidate_unit_mix_head(
+                    model,
+                    signed_candidate_unit_mix_head.as_mut(),
+                    run_config,
+                    signed_candidate_unit_mix_head_config,
                     &x_t,
                     &x_t1,
                 );
@@ -740,6 +844,10 @@ fn run_with_predictor<P>(
                     &format!("step {:03} train", step),
                     signed_candidate_radius_head_step,
                 );
+                print_signed_candidate_unit_mix_objective_report(
+                    &format!("step {:03} train", step),
+                    signed_candidate_unit_mix_head_step,
+                );
             }
 
             total_loss
@@ -795,6 +903,13 @@ fn run_with_predictor<P>(
             signed_candidate_radius_head.as_ref(),
             run_config,
             signed_candidate_radius_head_config,
+        );
+    let final_signed_candidate_unit_mix_head_integration =
+        maybe_projected_signed_candidate_unit_mix_head_integration(
+            &model,
+            signed_candidate_unit_mix_head.as_ref(),
+            run_config,
+            signed_candidate_unit_mix_head_config,
         );
     let final_signed_objective_error_breakdown =
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
@@ -874,6 +989,10 @@ fn run_with_predictor<P>(
     print_signed_candidate_radius_head_integration(
         "final",
         final_signed_candidate_radius_head_integration,
+    );
+    print_signed_candidate_unit_mix_head_integration(
+        "final",
+        final_signed_candidate_unit_mix_head_integration,
     );
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
@@ -965,6 +1084,48 @@ where
     let scaled_grad = scale_tensor(&grad_out, head_config.loss_weight);
     let grads = radius_head.backward(&features, &scaled_grad);
     radius_head.sgd_step(&grads, head_config.learning_rate);
+
+    Some(report)
+}
+
+fn maybe_train_projected_signed_candidate_unit_mix_head<P>(
+    model: &ProjectedVisionJepa<P>,
+    unit_mix_head: Option<&mut Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateUnitMixHeadRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<ProjectedSignedCandidateUnitMixObjectiveReport>
+where
+    P: PredictorModule,
+{
+    let unit_mix_head = unit_mix_head?;
+    assert!(
+        head_config.enabled,
+        "candidate unit-mix head missing config"
+    );
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate unit-mix head is only supported for signed-velocity-trail projected runs"
+    );
+
+    let features = projected_signed_candidate_unit_mix_head_features(
+        model,
+        x_t,
+        head_config.softmax_temperature,
+    );
+    let residual_logits = unit_mix_head.forward(&features);
+    let (report, grad_logits) = projected_signed_candidate_unit_mix_loss_and_grad(
+        model,
+        x_t,
+        x_t1,
+        &residual_logits,
+        head_config.softmax_temperature,
+    );
+    let scaled_grad = scale_tensor(&grad_logits, head_config.loss_weight);
+    let grads = unit_mix_head.backward(&features, &scaled_grad);
+    unit_mix_head.sgd_step(&grads, head_config.learning_rate);
 
     Some(report)
 }
@@ -1386,6 +1547,86 @@ fn print_signed_candidate_radius_head_integration(
             integration.softmax_temperature,
             integration.samples,
             integration.candidates,
+        );
+    }
+}
+
+fn maybe_projected_signed_candidate_unit_mix_head_integration<P>(
+    model: &ProjectedVisionJepa<P>,
+    unit_mix_head: Option<&Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateUnitMixHeadRunConfig,
+) -> Option<ProjectedSignedCandidateUnitMixHeadIntegration>
+where
+    P: PredictorModule,
+{
+    let unit_mix_head = unit_mix_head?;
+    assert!(
+        head_config.enabled,
+        "candidate unit-mix head missing config"
+    );
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate unit-mix head is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(
+        projected_signed_candidate_unit_mix_head_integration_from_base_seed(
+            model,
+            unit_mix_head,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            head_config.softmax_temperature,
+        ),
+    )
+}
+
+fn print_signed_candidate_unit_mix_head_integration(
+    tag: &str,
+    integration: Option<ProjectedSignedCandidateUnitMixHeadIntegration>,
+) {
+    if let Some(integration) = integration {
+        println!(
+            "{} | signed candidate unit-mix head integration learned_mix_mrr {:.6} | learned_mix_top1 {:.6} | learned_mix_margin {:.6} | learned_mix_positive_margin_rate {:.6} | learned_mix_sign_margin {:.6} | learned_mix_speed_margin {:.6} | learned_mix_norm_ratio {:.6} | objective_loss {:.6} | objective_prediction_radius {:.6} | objective_target_radius {:.6} | objective_radius_ratio {:.6} | objective_entropy {:.6} | objective_max_weight {:.6} | objective_true_weight {:.6} | softmax_temperature {:.6} | samples {} | candidates {}",
+            tag,
+            integration.learned_mix.mrr,
+            integration.learned_mix.top1,
+            integration.learned_mix.margin,
+            integration.learned_mix.positive_margin_rate,
+            integration.learned_mix.sign_margin,
+            integration.learned_mix.speed_margin,
+            integration.learned_mix.norm_ratio,
+            integration.objective_report.loss,
+            integration.objective_report.prediction_radius,
+            integration.objective_report.target_radius,
+            integration.objective_report.radius_ratio,
+            integration.objective_report.entropy,
+            integration.objective_report.max_weight,
+            integration.objective_report.true_weight,
+            integration.softmax_temperature,
+            integration.samples,
+            integration.candidates,
+        );
+    }
+}
+
+fn print_signed_candidate_unit_mix_objective_report(
+    tag: &str,
+    report: Option<ProjectedSignedCandidateUnitMixObjectiveReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed candidate unit-mix objective loss {:.6} | prediction_radius {:.6} | target_radius {:.6} | radius_ratio {:.6} | entropy {:.6} | max_weight {:.6} | true_weight {:.6} | samples {}",
+            tag,
+            report.loss,
+            report.prediction_radius,
+            report.target_radius,
+            report.radius_ratio,
+            report.entropy,
+            report.max_weight,
+            report.true_weight,
+            report.samples,
         );
     }
 }

@@ -72,6 +72,8 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--signed-angular-radial-weight <float>` adds an opt-in projected signed-task bank-centered angular/radius objective (`0.0` disables it)
 - `--signed-angular-weight <float>` controls the signed angular component weight (`1.0` default)
 - `--signed-angular-radial-radius-weight <float>` controls the signed angular-radial radius component weight (`1.0` default)
+- `--signed-candidate-unit-mix-head` enables an opt-in trainable candidate-centroid unit/radius mixer head for the signed task; it is a diagnostic hook and does not train the base predictor.
+- `--signed-candidate-unit-mix-temperature`, `--signed-candidate-unit-mix-lr`, and `--signed-candidate-unit-mix-weight` configure that diagnostic head.
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -85,6 +87,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_SIGNED_BANK_SOFTMAX_WEIGHT` and `JEPRA_SIGNED_BANK_SOFTMAX_TEMPERATURE` are environment fallbacks for the signed-bank softmax objective
 - `JEPRA_SIGNED_RADIAL_WEIGHT` is the environment fallback for signed radial calibration
 - `JEPRA_SIGNED_ANGULAR_RADIAL_WEIGHT`, `JEPRA_SIGNED_ANGULAR_WEIGHT`, and `JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT` are environment fallbacks for signed angular-radial probes
+- `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_HEAD`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_LR`, and `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_WEIGHT` are environment fallbacks for the candidate unit-mix diagnostic head
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
@@ -214,7 +217,8 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - `--signed-candidate-centroid-integration` adds a report-only candidate-bank radius probe. First 3-seed evidence at temperature `0.05` improves the candidate-frame nearest/softmax radius PPR to `0.348958` versus raw `0.281250`, while unit PPR stays `0.453125`; useful direction, but still below the `~0.364583` proof gate, so hard candidate radius selection is not enough.
 - `--signed-candidate-radius-head` adds the first opt-in trainable candidate-centered scalar radius residual. Seed `11000`, `300` steps, temperature `0.05`, keeps validation/drift healthy and improves radius calibration (`learned_radius_norm_ratio=1.164618` versus report-only softmax `1.379775`), but ranking stays below proof (`learned_radius_top1=0.328125`, gate `~0.364583`). Temperature `0.25` worsens top1 to `0.250000`.
 - `--signed-candidate-radius-logit-head` adds the candidate-logit residual radius mixer. It zero-initializes residual logits so the initial prediction matches report-only softmax radius, then trains only residual logits with the centered-radius scalar primitive. Seed `11000`, `300` steps, temperature `0.05`, keeps validation/drift healthy but fails the kill-switch: `learned_radius_top1=0.343750`, matching report-only softmax on that seed and below the `~0.364583` proof gate, while norm ratio worsens to `1.540515`.
-- Decision: keep scalar and logit radius heads as diagnostic/training hooks, not final fixes. Radius-only candidate mixing is now likely insufficient; the next implementation should test candidate-conditioned direction/selection rather than another scalar/logit radius sweep.
+- `--signed-candidate-unit-mix-head` adds a zero-initialized candidate-centroid unit/radius mixer. Seed `11000`, `300` steps, temperature `0.05`, keeps base validation/drift and unit geometry healthy (`val=0.387588`, `drift=0.009244`, `unit_ppr=0.453125`, `unit_mrr=0.635417`), but the head collapses to near-deterministic wrong selection (`learned_mix_top1=0.250000`, `objective_entropy=0.000008`, `objective_true_weight=0.249999`). Keep it as a diagnostic hook, not a promoted fix.
+- Decision: scalar/logit radius heads and the candidate unit-mix head are useful diagnostic/training hooks, not final fixes. The current bottleneck is now candidate selection/representation reliability, not CUDA, another radius-only sweep, or a broader objective grid.
 
 Candidate-centroid-aware geometry acceptance gate:
 

@@ -186,11 +186,12 @@ Velocity-trail task axis:
 ## Stale Guidance Audit
 - `VISION.md` now frames compact predictor-capacity work as the active implementation path.
 - Projected hardening remains a regression gate, not the main build loop.
+- Candidate-radius and candidate-unit-mix heads are diagnostic hooks only; do not treat them as promoted architecture.
 
 ## Approved Implementation Sequence
 
 1. Keep the core Rust surface small and understandable.
-2. Use signed state separability, raw prediction-bank margin, unit prediction geometry, radial calibration, and representation health as the current proof gate; improve angular-radial signed candidate geometry before another objective grid, bounce, or widening the model.
+2. Use signed state separability, raw prediction-bank margin, unit prediction geometry, radial calibration, candidate-head diagnostics, and representation health as the current proof gate; improve candidate selection/representation reliability before another objective grid, bounce, or widening the model.
 3. Keep regression coverage focused on task shape, determinism, and loss behavior.
 4. Only after `random-speed`, `velocity-trail`, and `signed-velocity-trail` evidence are credible, widen the model or data path.
 5. Only after the JEPA proof is stable, consider performance work or lower-level acceleration.
@@ -213,6 +214,14 @@ The proof comes from a compact model that learns useful temporal structure.
 - keep projected regression coverage in `tests/projected_temporal_support.rs`
 - keep JEPA projection regularizer math in core `regularizers.rs`
 - keep one source of truth for training/validation math in core and shared support helpers
+- keep candidate-head work opt-in and CPU-side until a small proof run crosses the signed candidate gate; no CUDA/perf work before that.
+
+## Current Bottleneck
+
+- Signed-direction-magnitude preserves useful unit geometry, but raw PPR remains pinned.
+- Scalar/logit candidate-radius heads and the candidate unit-mix head failed seed-`11000` kill-switches.
+- Unit-mix failure mode is selector collapse: healthy base validation/drift and preserved unit geometry, but near-zero entropy and average true weight near random.
+- Next implementation should diagnose or improve selector signal/representation coupling before wider architecture or low-level kernels.
 
 ## Decision Rule
 

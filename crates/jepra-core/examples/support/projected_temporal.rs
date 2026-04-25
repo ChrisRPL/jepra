@@ -164,6 +164,27 @@ pub struct ProjectedSignedCandidateRadiusHeadIntegration {
     pub candidates: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateUnitMixObjectiveReport {
+    pub loss: f32,
+    pub prediction_radius: f32,
+    pub target_radius: f32,
+    pub radius_ratio: f32,
+    pub entropy: f32,
+    pub max_weight: f32,
+    pub true_weight: f32,
+    pub samples: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateUnitMixHeadIntegration {
+    pub learned_mix: ProjectedSignedPredictionCounterfactualMetrics,
+    pub objective_report: ProjectedSignedCandidateUnitMixObjectiveReport,
+    pub softmax_temperature: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedObjectiveErrorBreakdown {
@@ -253,6 +274,23 @@ struct SignedCandidateCentroidIntegrationSampleOutcome {
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateRadiusHeadIntegrationSampleOutcome {
     learned_radius: SignedPredictionCounterfactualSampleOutcome,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateUnitMixHeadIntegrationSampleOutcome {
+    learned_mix: SignedPredictionCounterfactualSampleOutcome,
+}
+
+#[derive(Debug, Clone)]
+struct SignedCandidateUnitMixComponents {
+    centered_prediction: Vec<f32>,
+    mixed_unit: Vec<f32>,
+    mixed_unit_norm: f32,
+    mixed_radius: f32,
+    predicted_radius: f32,
+    weights: Vec<f32>,
+    candidate_radii: Vec<f32>,
+    candidate_units: Vec<Vec<f32>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1803,6 +1841,36 @@ where
     )
 }
 
+pub fn projected_signed_candidate_unit_mix_head_features<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    softmax_temperature: f32,
+) -> Tensor
+where
+    P: PredictorModule,
+{
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate unit-mix head features expect rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate unit-mix head feature temperature must be finite and positive"
+    );
+
+    let projection = model.project_latent(x_t);
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+
+    signed_candidate_radius_logit_head_features_from_prediction(
+        &projection,
+        &prediction,
+        &candidate_targets,
+        softmax_temperature,
+    )
+}
+
 pub fn projected_signed_candidate_radius_logit_mixing_loss_and_grad<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -1849,6 +1917,42 @@ where
     );
 
     (report, grad_logits)
+}
+
+pub fn projected_signed_candidate_unit_mix_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    residual_logits: &Tensor,
+    softmax_temperature: f32,
+) -> (ProjectedSignedCandidateUnitMixObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate unit-mix objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate unit-mix objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate unit-mix objective temperature must be finite and positive"
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+    candidate_unit_mix_loss_and_grad_from_prediction(
+        &prediction,
+        &candidate_targets,
+        &true_candidate_indices,
+        residual_logits,
+        softmax_temperature,
+    )
 }
 
 pub fn projected_signed_candidate_radius_head_integration_from_base_seed<P>(
@@ -2010,6 +2114,97 @@ where
             prediction_radius: prediction_radius_sum / samples as f32,
             target_radius: target_radius_sum / samples as f32,
             radius_ratio: radius_ratio_sum / samples as f32,
+            samples,
+        },
+        softmax_temperature,
+        samples,
+        candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
+}
+
+pub fn projected_signed_candidate_unit_mix_head_integration_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    unit_mix_head: &Linear,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    softmax_temperature: f32,
+) -> ProjectedSignedCandidateUnitMixHeadIntegration
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "candidate unit-mix head integration requires at least one validation batch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate unit-mix head integration temperature must be finite and positive"
+    );
+
+    let mut learned_mix_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut loss_sum = 0.0f32;
+    let mut prediction_radius_sum = 0.0f32;
+    let mut target_radius_sum = 0.0f32;
+    let mut radius_ratio_sum = 0.0f32;
+    let mut entropy_sum = 0.0f32;
+    let mut max_weight_sum = 0.0f32;
+    let mut true_weight_sum = 0.0f32;
+    let mut samples = 0usize;
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_unit_mix_head_features(model, &x_t, softmax_temperature);
+        let residual_logits = unit_mix_head.forward(&features);
+        let (report, _) = projected_signed_candidate_unit_mix_loss_and_grad(
+            model,
+            &x_t,
+            &x_t1,
+            &residual_logits,
+            softmax_temperature,
+        );
+        let outcomes = projected_signed_candidate_unit_mix_head_integration_sample_outcomes(
+            model,
+            &x_t,
+            &x_t1,
+            &residual_logits,
+            softmax_temperature,
+        );
+
+        loss_sum += report.loss * report.samples as f32;
+        prediction_radius_sum += report.prediction_radius * report.samples as f32;
+        target_radius_sum += report.target_radius * report.samples as f32;
+        radius_ratio_sum += report.radius_ratio * report.samples as f32;
+        entropy_sum += report.entropy * report.samples as f32;
+        max_weight_sum += report.max_weight * report.samples as f32;
+        true_weight_sum += report.true_weight * report.samples as f32;
+        samples += report.samples;
+
+        for outcome in outcomes {
+            learned_mix_totals.observe(outcome.learned_mix);
+        }
+    }
+
+    assert!(samples > 0, "candidate unit-mix head report has no samples");
+    assert_eq!(
+        samples, learned_mix_totals.samples,
+        "candidate unit-mix head sample mismatch"
+    );
+
+    ProjectedSignedCandidateUnitMixHeadIntegration {
+        learned_mix: learned_mix_totals.into_metrics(),
+        objective_report: ProjectedSignedCandidateUnitMixObjectiveReport {
+            loss: loss_sum / samples as f32,
+            prediction_radius: prediction_radius_sum / samples as f32,
+            target_radius: target_radius_sum / samples as f32,
+            radius_ratio: radius_ratio_sum / samples as f32,
+            entropy: entropy_sum / samples as f32,
+            max_weight: max_weight_sum / samples as f32,
+            true_weight: true_weight_sum / samples as f32,
             samples,
         },
         softmax_temperature,
@@ -3207,6 +3402,76 @@ where
     outcomes
 }
 
+fn projected_signed_candidate_unit_mix_head_integration_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    residual_logits: &Tensor,
+    softmax_temperature: f32,
+) -> Vec<SignedCandidateUnitMixHeadIntegrationSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate unit-mix head integration temperature must be finite and positive"
+    );
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate unit-mix head integration expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate unit-mix head integration expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    assert_eq!(
+        residual_logits.shape,
+        vec![batch_size, candidate_targets.len()],
+        "candidate unit-mix residual logits shape mismatch"
+    );
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let target_norm = vector_l2_norm(&target_centered).max(VELOCITY_BANK_TIE_EPSILON);
+        let components = signed_candidate_unit_mix_components(
+            residual_logits,
+            &prediction,
+            &candidate_targets,
+            sample,
+            &centroid,
+            softmax_temperature,
+        );
+
+        outcomes.push(SignedCandidateUnitMixHeadIntegrationSampleOutcome {
+            learned_mix: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &components.centered_prediction,
+                components.predicted_radius / target_norm,
+            ),
+        });
+    }
+
+    outcomes
+}
+
 fn signed_candidate_radius_head_features_from_prediction(
     projection: &Tensor,
     prediction: &Tensor,
@@ -3548,6 +3813,252 @@ fn centered_radius_grad_to_residual_logits_grad(
     }
 
     grad_logits
+}
+
+fn candidate_unit_mix_loss_and_grad_from_prediction(
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+    residual_logits: &Tensor,
+    softmax_temperature: f32,
+) -> (ProjectedSignedCandidateUnitMixObjectiveReport, Tensor) {
+    assert!(
+        prediction.shape.len() == 2,
+        "candidate unit-mix prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert!(
+        !candidate_targets.is_empty(),
+        "candidate unit-mix requires non-empty candidate targets"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate unit-mix temperature must be finite and positive"
+    );
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    let candidates = candidate_targets.len();
+    assert_eq!(
+        true_candidate_indices.len(),
+        batch_size,
+        "candidate unit-mix true index batch mismatch"
+    );
+    assert_eq!(
+        residual_logits.shape,
+        vec![batch_size, candidates],
+        "candidate unit-mix residual logits shape mismatch"
+    );
+    for candidate_target in candidate_targets {
+        assert_eq!(
+            candidate_target.shape, prediction.shape,
+            "candidate unit-mix target shape mismatch"
+        );
+    }
+
+    let mut grad_logits = Tensor::zeros(vec![batch_size, candidates]);
+    let mut loss_sum = 0.0f32;
+    let mut prediction_radius_sum = 0.0f32;
+    let mut target_radius_sum = 0.0f32;
+    let mut radius_ratio_sum = 0.0f32;
+    let mut entropy_sum = 0.0f32;
+    let mut max_weight_sum = 0.0f32;
+    let mut true_weight_sum = 0.0f32;
+
+    for (sample, true_index) in true_candidate_indices.iter().copied().enumerate() {
+        assert!(
+            true_index < candidates,
+            "candidate unit-mix true index {} exceeds candidate count {}",
+            true_index,
+            candidates
+        );
+
+        let centroid = signed_candidate_centroid(candidate_targets, sample, projection_dim);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let components = signed_candidate_unit_mix_components(
+            residual_logits,
+            prediction,
+            candidate_targets,
+            sample,
+            &centroid,
+            softmax_temperature,
+        );
+        let mut sample_loss = 0.0f32;
+        let mut grad_centered = vec![0.0f32; projection_dim];
+
+        for feature_idx in 0..projection_dim {
+            let diff = components.centered_prediction[feature_idx] - target_centered[feature_idx];
+            sample_loss += diff * diff;
+            grad_centered[feature_idx] = 2.0 * diff / (batch_size * projection_dim) as f32;
+        }
+
+        let target_radius = vector_l2_norm(&target_centered);
+        let target_radius_safe = target_radius.max(VELOCITY_BANK_TIE_EPSILON);
+        let entropy = components
+            .weights
+            .iter()
+            .map(|weight| {
+                if *weight <= VELOCITY_BANK_TIE_EPSILON {
+                    0.0
+                } else {
+                    -weight * weight.ln()
+                }
+            })
+            .sum::<f32>();
+        let max_weight = components
+            .weights
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, |best, weight| best.max(weight));
+
+        loss_sum += sample_loss / projection_dim as f32;
+        prediction_radius_sum += components.predicted_radius;
+        target_radius_sum += target_radius;
+        radius_ratio_sum += components.predicted_radius / target_radius_safe;
+        entropy_sum += entropy;
+        max_weight_sum += max_weight;
+        true_weight_sum += components.weights[true_index];
+
+        if components.mixed_unit_norm > VELOCITY_BANK_TIE_EPSILON {
+            let grad_dot_unit = vector_dot(&grad_centered, &components.mixed_unit);
+            let grad_radius = grad_dot_unit;
+            let grad_mixed_sum = (0..projection_dim)
+                .map(|feature_idx| {
+                    components.mixed_radius / components.mixed_unit_norm
+                        * (grad_centered[feature_idx]
+                            - components.mixed_unit[feature_idx] * grad_dot_unit)
+                })
+                .collect::<Vec<_>>();
+            let candidate_scores = (0..candidates)
+                .map(|candidate_idx| {
+                    grad_radius * components.candidate_radii[candidate_idx]
+                        + vector_dot(&grad_mixed_sum, &components.candidate_units[candidate_idx])
+                })
+                .collect::<Vec<_>>();
+            let expected_score = components
+                .weights
+                .iter()
+                .zip(candidate_scores.iter())
+                .map(|(weight, score)| weight * score)
+                .sum::<f32>();
+
+            for (candidate_idx, score) in candidate_scores.iter().enumerate() {
+                let value = components.weights[candidate_idx] * (*score - expected_score);
+                assert!(
+                    value.is_finite(),
+                    "candidate unit-mix produced non-finite logit gradient"
+                );
+                grad_logits.set(&[sample, candidate_idx], value);
+            }
+        }
+    }
+
+    assert!(batch_size > 0, "candidate unit-mix report has no samples");
+
+    (
+        ProjectedSignedCandidateUnitMixObjectiveReport {
+            loss: loss_sum / batch_size as f32,
+            prediction_radius: prediction_radius_sum / batch_size as f32,
+            target_radius: target_radius_sum / batch_size as f32,
+            radius_ratio: radius_ratio_sum / batch_size as f32,
+            entropy: entropy_sum / batch_size as f32,
+            max_weight: max_weight_sum / batch_size as f32,
+            true_weight: true_weight_sum / batch_size as f32,
+            samples: batch_size,
+        },
+        grad_logits,
+    )
+}
+
+fn signed_candidate_unit_mix_components(
+    residual_logits: &Tensor,
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    sample: usize,
+    centroid: &[f32],
+    softmax_temperature: f32,
+) -> SignedCandidateUnitMixComponents {
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate unit-mix component temperature must be finite and positive"
+    );
+    assert!(
+        !candidate_targets.is_empty(),
+        "candidate unit-mix components require non-empty candidate targets"
+    );
+    assert_eq!(
+        residual_logits.shape,
+        vec![prediction.shape[0], candidate_targets.len()],
+        "candidate unit-mix residual logits shape mismatch"
+    );
+
+    let projection_dim = prediction.shape[1];
+    let candidates = candidate_targets.len();
+    let prediction_centered = centered_sample_vector(prediction, sample, centroid);
+    let prediction_unit = unit_vector(&prediction_centered);
+    let mut candidate_radii = Vec::with_capacity(candidates);
+    let mut candidate_units = Vec::with_capacity(candidates);
+    let mut prior_logits = Vec::with_capacity(candidates);
+
+    for candidate_target in candidate_targets {
+        let candidate_centered = centered_sample_vector(candidate_target, sample, centroid);
+        let candidate_radius = vector_l2_norm(&candidate_centered);
+        let candidate_unit = unit_vector(&candidate_centered);
+
+        prior_logits.push(
+            -vector_squared_distance(&prediction_unit, &candidate_unit) / softmax_temperature,
+        );
+        candidate_radii.push(candidate_radius);
+        candidate_units.push(candidate_unit);
+    }
+
+    let scores = (0..candidates)
+        .map(|candidate_idx| {
+            prior_logits[candidate_idx] + residual_logits.get(&[sample, candidate_idx])
+        })
+        .collect::<Vec<_>>();
+    let weights = stable_softmax(&scores, "candidate unit-mix");
+    let mixed_radius = weights
+        .iter()
+        .zip(candidate_radii.iter())
+        .map(|(weight, radius)| weight * radius)
+        .sum::<f32>();
+    let mut mixed_unit_sum = vec![0.0f32; projection_dim];
+
+    for (weight, candidate_unit) in weights.iter().zip(candidate_units.iter()) {
+        for feature_idx in 0..projection_dim {
+            mixed_unit_sum[feature_idx] += weight * candidate_unit[feature_idx];
+        }
+    }
+
+    let mixed_unit_norm = vector_l2_norm(&mixed_unit_sum);
+    let mixed_unit = if mixed_unit_norm <= VELOCITY_BANK_TIE_EPSILON {
+        vec![0.0f32; projection_dim]
+    } else {
+        mixed_unit_sum
+            .iter()
+            .map(|value| value / mixed_unit_norm)
+            .collect::<Vec<_>>()
+    };
+    let centered_prediction = scale_vector(&mixed_unit, mixed_radius);
+    let predicted_radius = vector_l2_norm(&centered_prediction);
+
+    assert!(
+        predicted_radius.is_finite() && predicted_radius >= 0.0,
+        "candidate unit-mix produced non-finite radius"
+    );
+
+    SignedCandidateUnitMixComponents {
+        centered_prediction,
+        mixed_unit,
+        mixed_unit_norm,
+        mixed_radius,
+        predicted_radius,
+        weights,
+        candidate_radii,
+        candidate_units,
+    }
 }
 
 fn radius_delta_to_centered_radius(radius_delta: &Tensor, anchor_radius: &[f32]) -> Tensor {
@@ -4010,6 +4521,19 @@ fn vector_squared_distance(left: &[f32], right: &[f32]) -> f32 {
             let diff = left_value - right_value;
             diff * diff
         })
+        .sum()
+}
+
+fn vector_dot(left: &[f32], right: &[f32]) -> f32 {
+    assert_eq!(
+        left.len(),
+        right.len(),
+        "vector dot expects matching lengths"
+    );
+
+    left.iter()
+        .zip(right.iter())
+        .map(|(left_value, right_value)| left_value * right_value)
         .sum()
 }
 
