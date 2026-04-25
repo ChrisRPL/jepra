@@ -93,6 +93,54 @@ pub struct SignedBankSoftmaxObjectiveReport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignedAngularRadialObjectiveConfig {
+    pub angular_weight: f32,
+    pub radial_weight: f32,
+}
+
+impl Default for SignedAngularRadialObjectiveConfig {
+    fn default() -> Self {
+        Self {
+            angular_weight: 1.0,
+            radial_weight: 1.0,
+        }
+    }
+}
+
+impl SignedAngularRadialObjectiveConfig {
+    pub fn assert_valid(&self) {
+        for (name, value) in [
+            ("angular_weight", self.angular_weight),
+            ("radial_weight", self.radial_weight),
+        ] {
+            assert!(
+                value.is_finite() && value >= 0.0,
+                "signed angular-radial {} must be finite and non-negative, got {}",
+                name,
+                value
+            );
+        }
+
+        assert!(
+            self.angular_weight > 0.0 || self.radial_weight > 0.0,
+            "signed angular-radial objective requires at least one positive component weight"
+        );
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignedAngularRadialObjectiveReport {
+    pub loss: f32,
+    pub angular_loss: f32,
+    pub radial_loss: f32,
+    pub cosine: f32,
+    pub prediction_norm: f32,
+    pub target_norm: f32,
+    pub norm_ratio: f32,
+    pub samples: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SignedRadialCalibrationReport {
     pub loss: f32,
     pub prediction_norm: f32,
@@ -320,6 +368,142 @@ pub fn signed_radial_calibration_loss_and_grad(
     )
 }
 
+pub fn signed_angular_radial_objective_loss_and_grad(
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+    config: SignedAngularRadialObjectiveConfig,
+) -> (SignedAngularRadialObjectiveReport, Tensor) {
+    config.assert_valid();
+    assert!(
+        prediction.ndim() == 2,
+        "signed angular-radial prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert!(
+        candidate_targets.len() >= 2,
+        "signed angular-radial objective requires at least two candidates"
+    );
+    assert!(
+        true_candidate_indices.len() == prediction.shape[0],
+        "signed angular-radial true-index count {} must match batch {}",
+        true_candidate_indices.len(),
+        prediction.shape[0]
+    );
+
+    for target in candidate_targets {
+        assert!(
+            target.shape == prediction.shape,
+            "signed angular-radial candidate target shape mismatch: prediction {:?}, candidate {:?}",
+            prediction.shape,
+            target.shape
+        );
+    }
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    assert!(
+        batch_size > 0,
+        "signed angular-radial objective requires a non-empty batch"
+    );
+    assert!(
+        projection_dim > 0,
+        "signed angular-radial objective requires non-empty projection dim"
+    );
+
+    let mut grad = Tensor::zeros(prediction.shape.clone());
+    let mut angular_loss_sum = 0.0f32;
+    let mut radial_loss_sum = 0.0f32;
+    let mut cosine_sum = 0.0f32;
+    let mut prediction_norm_sum = 0.0f32;
+    let mut target_norm_sum = 0.0f32;
+    let mut norm_ratio_sum = 0.0f32;
+
+    for sample in 0..batch_size {
+        let true_index = true_candidate_indices[sample];
+        assert!(
+            true_index < candidate_targets.len(),
+            "signed angular-radial true index {} out of bounds for {} candidates",
+            true_index,
+            candidate_targets.len()
+        );
+
+        let centroid = candidate_target_centroid(candidate_targets, sample, projection_dim);
+        let prediction_centered =
+            centered_sample_features(prediction, sample, projection_dim, &centroid);
+        let target_centered = centered_sample_features(
+            &candidate_targets[true_index],
+            sample,
+            projection_dim,
+            &centroid,
+        );
+        let prediction_norm = vector_norm(&prediction_centered);
+        let target_norm = vector_norm(&target_centered);
+        let norm_error = prediction_norm - target_norm;
+        let radial_loss = norm_error * norm_error;
+        let cosine = if prediction_norm > RADIAL_EPSILON && target_norm > RADIAL_EPSILON {
+            (vector_dot(&prediction_centered, &target_centered) / (prediction_norm * target_norm))
+                .clamp(-1.0, 1.0)
+        } else {
+            0.0
+        };
+        let angular_loss = 1.0 - cosine;
+
+        assert!(
+            angular_loss.is_finite()
+                && radial_loss.is_finite()
+                && cosine.is_finite()
+                && prediction_norm.is_finite()
+                && target_norm.is_finite(),
+            "signed angular-radial produced non-finite metrics"
+        );
+
+        angular_loss_sum += angular_loss;
+        radial_loss_sum += radial_loss;
+        cosine_sum += cosine;
+        prediction_norm_sum += prediction_norm;
+        target_norm_sum += target_norm;
+        norm_ratio_sum += prediction_norm / target_norm.max(RADIAL_EPSILON);
+
+        if prediction_norm > RADIAL_EPSILON {
+            let radial_grad_scale =
+                config.radial_weight * 2.0 * norm_error / (batch_size as f32 * prediction_norm);
+            for feature_idx in 0..projection_dim {
+                let value = grad.get(&[sample, feature_idx])
+                    + radial_grad_scale * prediction_centered[feature_idx];
+                grad.set(&[sample, feature_idx], value);
+            }
+        }
+
+        if prediction_norm > RADIAL_EPSILON && target_norm > RADIAL_EPSILON {
+            for feature_idx in 0..projection_dim {
+                let angular_grad = -target_centered[feature_idx] / (prediction_norm * target_norm)
+                    + cosine * prediction_centered[feature_idx]
+                        / (prediction_norm * prediction_norm);
+                let value = grad.get(&[sample, feature_idx])
+                    + config.angular_weight * angular_grad / batch_size as f32;
+                grad.set(&[sample, feature_idx], value);
+            }
+        }
+    }
+
+    let angular_loss = angular_loss_sum / batch_size as f32;
+    let radial_loss = radial_loss_sum / batch_size as f32;
+    (
+        SignedAngularRadialObjectiveReport {
+            loss: config.angular_weight * angular_loss + config.radial_weight * radial_loss,
+            angular_loss,
+            radial_loss,
+            cosine: cosine_sum / batch_size as f32,
+            prediction_norm: prediction_norm_sum / batch_size as f32,
+            target_norm: target_norm_sum / batch_size as f32,
+            norm_ratio: norm_ratio_sum / batch_size as f32,
+            samples: batch_size,
+        },
+        grad,
+    )
+}
+
 pub fn signed_margin_objective_loss_and_grad(
     prediction: &Tensor,
     candidate_targets: &[Tensor],
@@ -520,6 +704,19 @@ fn vector_norm(features: &[f32]) -> f32 {
         .map(|value| value * value)
         .sum::<f32>()
         .sqrt()
+}
+
+fn vector_dot(left: &[f32], right: &[f32]) -> f32 {
+    assert_eq!(
+        left.len(),
+        right.len(),
+        "signed angular-radial dot expects matching lengths"
+    );
+
+    left.iter()
+        .zip(right.iter())
+        .map(|(left_value, right_value)| left_value * right_value)
+        .sum()
 }
 
 fn sample_mean_squared_distance(lhs: &Tensor, rhs: &Tensor, sample: usize) -> f32 {

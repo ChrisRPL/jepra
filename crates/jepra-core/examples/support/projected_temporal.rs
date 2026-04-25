@@ -5,10 +5,12 @@ use super::temporal_vision::{
 };
 use jepra_core::{
     EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa,
+    SignedAngularRadialObjectiveConfig, SignedAngularRadialObjectiveReport,
     SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
     SignedMarginObjectiveConfig, SignedMarginObjectiveReport, SignedRadialCalibrationReport,
-    Tensor, gaussian_moment_regularizer, mse_loss, signed_bank_softmax_objective_loss_and_grad,
-    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
+    Tensor, gaussian_moment_regularizer, mse_loss, signed_angular_radial_objective_loss_and_grad,
+    signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
+    signed_radial_calibration_loss_and_grad,
 };
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -1529,6 +1531,37 @@ where
     )
 }
 
+pub fn projected_signed_angular_radial_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    config: SignedAngularRadialObjectiveConfig,
+) -> (SignedAngularRadialObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed angular-radial objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "signed angular-radial objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+
+    signed_angular_radial_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_candidate_indices,
+        config,
+    )
+}
+
 pub fn projected_signed_margin_objective_report_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
     validation_base_seed: u64,
@@ -1617,6 +1650,36 @@ where
     totals.into_report()
 }
 
+pub fn projected_signed_angular_radial_objective_report_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    config: SignedAngularRadialObjectiveConfig,
+) -> SignedAngularRadialObjectiveReport
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedAngularRadialObjectiveReportTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let (report, _) =
+            projected_signed_angular_radial_objective_loss_and_grad(model, &x_t, &x_t1, config);
+        totals.observe(report);
+    }
+
+    totals.into_report()
+}
+
 #[derive(Debug, Default)]
 struct SignedMarginObjectiveReportTotals {
     bank_loss: f32,
@@ -1687,6 +1750,18 @@ struct SignedRadialCalibrationReportTotals {
     samples: usize,
 }
 
+#[derive(Debug, Default)]
+struct SignedAngularRadialObjectiveReportTotals {
+    loss: f32,
+    angular_loss: f32,
+    radial_loss: f32,
+    cosine: f32,
+    prediction_norm: f32,
+    target_norm: f32,
+    norm_ratio: f32,
+    samples: usize,
+}
+
 impl SignedBankSoftmaxObjectiveReportTotals {
     fn observe(&mut self, report: SignedBankSoftmaxObjectiveReport) {
         self.loss += report.loss * report.samples as f32;
@@ -1724,6 +1799,37 @@ impl SignedRadialCalibrationReportTotals {
 
         SignedRadialCalibrationReport {
             loss: self.loss / self.samples as f32,
+            prediction_norm: self.prediction_norm / self.samples as f32,
+            target_norm: self.target_norm / self.samples as f32,
+            norm_ratio: self.norm_ratio / self.samples as f32,
+            samples: self.samples,
+        }
+    }
+}
+
+impl SignedAngularRadialObjectiveReportTotals {
+    fn observe(&mut self, report: SignedAngularRadialObjectiveReport) {
+        self.loss += report.loss * report.samples as f32;
+        self.angular_loss += report.angular_loss * report.samples as f32;
+        self.radial_loss += report.radial_loss * report.samples as f32;
+        self.cosine += report.cosine * report.samples as f32;
+        self.prediction_norm += report.prediction_norm * report.samples as f32;
+        self.target_norm += report.target_norm * report.samples as f32;
+        self.norm_ratio += report.norm_ratio * report.samples as f32;
+        self.samples += report.samples;
+    }
+
+    fn into_report(self) -> SignedAngularRadialObjectiveReport {
+        assert!(
+            self.samples > 0,
+            "signed angular-radial objective has no samples"
+        );
+
+        SignedAngularRadialObjectiveReport {
+            loss: self.loss / self.samples as f32,
+            angular_loss: self.angular_loss / self.samples as f32,
+            radial_loss: self.radial_loss / self.samples as f32,
+            cosine: self.cosine / self.samples as f32,
             prediction_norm: self.prediction_norm / self.samples as f32,
             target_norm: self.target_norm / self.samples as f32,
             norm_ratio: self.norm_ratio / self.samples as f32,

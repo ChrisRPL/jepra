@@ -6,15 +6,16 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{
-    Linear, LinearGrads, Predictor, ProjectedVisionJepa, SignedBankSoftmaxObjectiveConfig,
-    SignedMarginObjectiveConfig, Tensor, combine_projection_grads, gaussian_moment_regularizer,
-    gaussian_moment_regularizer_grad, projection_stats, projector_drift_regularizer,
-    projector_drift_regularizer_grads,
+    Linear, LinearGrads, Predictor, ProjectedVisionJepa, SignedAngularRadialObjectiveConfig,
+    SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
+    combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
+    projection_stats, projector_drift_regularizer, projector_drift_regularizer_grads,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
-    projected_batch_losses, projected_signed_margin_objective_loss_and_grad,
+    projected_batch_losses, projected_signed_angular_radial_objective_report_from_base_seed,
+    projected_signed_margin_objective_loss_and_grad,
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_prediction_bank_unit_geometry_from_base_seed,
@@ -243,6 +244,8 @@ fn projected_run_with_encoder(
         signed_bank_softmax_weight: 0.0,
         signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
         signed_radial_weight: 0.0,
+        signed_angular_radial_weight: 0.0,
+        signed_angular_radial_config: SignedAngularRadialObjectiveConfig::default(),
         target_projection_momentum: 0.5,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.5,
@@ -922,6 +925,42 @@ fn projected_signed_radial_calibration_report_is_finite_and_bounded() {
 }
 
 #[test]
+fn projected_signed_angular_radial_report_is_finite_and_bounded() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let report = projected_signed_angular_radial_objective_report_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+        SignedAngularRadialObjectiveConfig::default(),
+    );
+
+    for value in [
+        report.loss,
+        report.angular_loss,
+        report.radial_loss,
+        report.cosine,
+        report.prediction_norm,
+        report.target_norm,
+        report.norm_ratio,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!(report.loss >= 0.0);
+    assert!(report.angular_loss >= 0.0);
+    assert!(report.radial_loss >= 0.0);
+    assert!((-1.0..=1.0).contains(&report.cosine));
+    assert!(report.prediction_norm >= 0.0);
+    assert!(report.target_norm >= 0.0);
+    assert!(report.norm_ratio >= 0.0);
+    assert_eq!(report.samples, BATCH_SIZE * 2);
+}
+
+#[test]
 #[should_panic(expected = "velocity-bank ranking only supports velocity-trail")]
 fn projected_velocity_bank_ranking_rejects_non_velocity_trail_task() {
     let encoder = make_frozen_encoder();
@@ -1241,6 +1280,8 @@ fn projected_target_projector_warmup_schedule_matches_frozen_and_trainable_proto
         signed_bank_softmax_weight: 0.0,
         signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
         signed_radial_weight: 0.0,
+        signed_angular_radial_weight: 0.0,
+        signed_angular_radial_config: SignedAngularRadialObjectiveConfig::default(),
         target_projection_momentum: 0.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 0.0,
@@ -1891,6 +1932,8 @@ fn projected_momentum_sweep_trajectory_is_stable_and_expected_monotonic() {
             signed_bank_softmax_weight: 0.0,
             signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
             signed_radial_weight: 0.0,
+            signed_angular_radial_weight: 0.0,
+            signed_angular_radial_config: SignedAngularRadialObjectiveConfig::default(),
             target_projection_momentum: momentum,
             target_projection_momentum_start: momentum,
             target_projection_momentum_end: momentum,

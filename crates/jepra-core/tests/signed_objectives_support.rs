@@ -1,5 +1,6 @@
 use jepra_core::{
-    SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
+    SignedAngularRadialObjectiveConfig, SignedBankSoftmaxObjectiveConfig,
+    SignedMarginObjectiveConfig, Tensor, signed_angular_radial_objective_loss_and_grad,
     signed_bank_softmax_objective_loss_and_grad, signed_margin_objective_loss_and_grad,
     signed_radial_calibration_loss_and_grad,
 };
@@ -14,6 +15,19 @@ fn signed_objective_fixture_candidates() -> Vec<Tensor> {
         Tensor::new(vec![0.6, 0.0], vec![1, 2]),
         Tensor::new(vec![0.7, 0.0], vec![1, 2]),
         Tensor::new(vec![1.0, 0.0], vec![1, 2]),
+    ]
+}
+
+fn angular_radial_fixture_prediction(first_value: f32) -> Tensor {
+    Tensor::new(vec![first_value, 0.25], vec![1, 2])
+}
+
+fn angular_radial_fixture_candidates() -> Vec<Tensor> {
+    vec![
+        Tensor::new(vec![0.0, 0.0], vec![1, 2]),
+        Tensor::new(vec![0.6, 0.2], vec![1, 2]),
+        Tensor::new(vec![0.7, -0.1], vec![1, 2]),
+        Tensor::new(vec![1.0, 0.8], vec![1, 2]),
     ]
 }
 
@@ -174,5 +188,74 @@ fn signed_radial_calibration_grad_matches_finite_difference() {
         "finite difference {:.6} != grad {:.6}",
         finite_difference,
         grad.data[0]
+    );
+}
+
+#[test]
+fn signed_angular_radial_objective_grad_matches_finite_difference() {
+    let config = SignedAngularRadialObjectiveConfig {
+        angular_weight: 0.7,
+        radial_weight: 0.3,
+    };
+    let candidate_targets = angular_radial_fixture_candidates();
+    let true_indices = [3usize];
+    let prediction = angular_radial_fixture_prediction(0.4);
+    let (report, grad) = signed_angular_radial_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_indices,
+        config,
+    );
+
+    assert!(report.loss.is_finite() && report.loss > 0.0);
+    assert!(report.angular_loss.is_finite() && report.angular_loss >= 0.0);
+    assert!(report.radial_loss.is_finite() && report.radial_loss >= 0.0);
+    assert!((-1.0..=1.0).contains(&report.cosine));
+    assert!(report.prediction_norm.is_finite() && report.prediction_norm >= 0.0);
+    assert!(report.target_norm.is_finite() && report.target_norm >= 0.0);
+    assert!(report.norm_ratio.is_finite() && report.norm_ratio >= 0.0);
+    assert_eq!(report.samples, 1);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
+
+    let epsilon = 1e-3;
+    let plus = angular_radial_fixture_prediction(0.4 + epsilon);
+    let minus = angular_radial_fixture_prediction(0.4 - epsilon);
+    let plus_loss = signed_angular_radial_objective_loss_and_grad(
+        &plus,
+        &candidate_targets,
+        &true_indices,
+        config,
+    )
+    .0
+    .loss;
+    let minus_loss = signed_angular_radial_objective_loss_and_grad(
+        &minus,
+        &candidate_targets,
+        &true_indices,
+        config,
+    )
+    .0
+    .loss;
+    let finite_difference = (plus_loss - minus_loss) / (2.0 * epsilon);
+
+    assert!(
+        (finite_difference - grad.data[0]).abs() < 1e-3,
+        "finite difference {:.6} != grad {:.6}",
+        finite_difference,
+        grad.data[0]
+    );
+}
+
+#[test]
+#[should_panic(expected = "requires at least one positive component weight")]
+fn signed_angular_radial_objective_rejects_zero_component_weights() {
+    let _ = signed_angular_radial_objective_loss_and_grad(
+        &angular_radial_fixture_prediction(0.4),
+        &angular_radial_fixture_candidates(),
+        &[3usize],
+        SignedAngularRadialObjectiveConfig {
+            angular_weight: 0.0,
+            radial_weight: 0.0,
+        },
     );
 }

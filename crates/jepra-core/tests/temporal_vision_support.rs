@@ -6,8 +6,8 @@ mod temporal_validation;
 mod temporal_vision;
 
 use jepra_core::{
-    Linear, Predictor, SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
-    VisionJepa,
+    Linear, Predictor, SignedAngularRadialObjectiveConfig, SignedBankSoftmaxObjectiveConfig,
+    SignedMarginObjectiveConfig, Tensor, VisionJepa,
 };
 use temporal_validation::{
     UNPROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, UNPROJECTED_VALIDATION_BASE_SEED,
@@ -246,6 +246,8 @@ fn unprojected_run_with_encoder(
         signed_bank_softmax_weight: 0.0,
         signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
         signed_radial_weight: 0.0,
+        signed_angular_radial_weight: 0.0,
+        signed_angular_radial_config: SignedAngularRadialObjectiveConfig::default(),
         target_projection_momentum: 1.0,
         target_projection_momentum_start: 1.0,
         target_projection_momentum_end: 1.0,

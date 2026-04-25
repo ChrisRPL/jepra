@@ -2,7 +2,8 @@
 
 use jepra_core::{
     Conv2d, ConvEncoder, EmbeddingEncoder, RepresentationHealthStats,
-    SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
+    SignedAngularRadialObjectiveConfig, SignedBankSoftmaxObjectiveConfig,
+    SignedMarginObjectiveConfig, Tensor,
 };
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -96,6 +97,8 @@ pub struct TemporalRunConfig {
     pub signed_bank_softmax_weight: f32,
     pub signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig,
     pub signed_radial_weight: f32,
+    pub signed_angular_radial_weight: f32,
+    pub signed_angular_radial_config: SignedAngularRadialObjectiveConfig,
     pub target_projection_momentum: f32,
     pub target_projection_momentum_start: f32,
     pub target_projection_momentum_end: f32,
@@ -150,6 +153,8 @@ impl TemporalRunConfig {
         let signed_bank_softmax_weight = signed_bank_softmax_weight_from_args(&args);
         let signed_bank_softmax_config = signed_bank_softmax_config_from_args(&args);
         let signed_radial_weight = signed_radial_weight_from_args(&args);
+        let signed_angular_radial_weight = signed_angular_radial_weight_from_args(&args);
+        let signed_angular_radial_config = signed_angular_radial_config_from_args(&args);
         assert!(
             signed_margin_weight == 0.0
                 || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
@@ -164,6 +169,11 @@ impl TemporalRunConfig {
             signed_radial_weight == 0.0
                 || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
             "signed radial calibration objective is only supported for signed-velocity-trail task"
+        );
+        assert!(
+            signed_angular_radial_weight == 0.0
+                || temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+            "signed angular-radial objective is only supported for signed-velocity-trail task"
         );
         assert_target_projection_momentum(target_projection_momentum_end);
         assert_target_projection_momentum(target_projection_momentum_start);
@@ -194,6 +204,8 @@ impl TemporalRunConfig {
             signed_bank_softmax_weight,
             signed_bank_softmax_config,
             signed_radial_weight,
+            signed_angular_radial_weight,
+            signed_angular_radial_config,
             target_projection_momentum: target_projection_momentum_end,
             target_projection_momentum_start,
             target_projection_momentum_end,
@@ -431,6 +443,51 @@ fn signed_radial_weight_from_args(args: &[String]) -> f32 {
         .unwrap_or(0.0)
 }
 
+fn signed_angular_radial_weight_from_args(args: &[String]) -> f32 {
+    parse_arg_value(args, "--signed-angular-radial-weight")
+        .map(|value| parse_finite_nonnegative_f32(value, "--signed-angular-radial-weight"))
+        .or_else(|| {
+            std::env::var("JEPRA_SIGNED_ANGULAR_RADIAL_WEIGHT")
+                .ok()
+                .map(|value| {
+                    parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_ANGULAR_RADIAL_WEIGHT")
+                })
+        })
+        .unwrap_or(0.0)
+}
+
+fn signed_angular_radial_config_from_args(args: &[String]) -> SignedAngularRadialObjectiveConfig {
+    let config = SignedAngularRadialObjectiveConfig {
+        angular_weight: parse_arg_value(args, "--signed-angular-weight")
+            .map(|value| parse_finite_nonnegative_f32(value, "--signed-angular-weight"))
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_ANGULAR_WEIGHT")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(&value, "JEPRA_SIGNED_ANGULAR_WEIGHT")
+                    })
+            })
+            .unwrap_or(SignedAngularRadialObjectiveConfig::default().angular_weight),
+        radial_weight: parse_arg_value(args, "--signed-angular-radial-radius-weight")
+            .map(|value| {
+                parse_finite_nonnegative_f32(value, "--signed-angular-radial-radius-weight")
+            })
+            .or_else(|| {
+                std::env::var("JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT")
+                    .ok()
+                    .map(|value| {
+                        parse_finite_nonnegative_f32(
+                            &value,
+                            "JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT",
+                        )
+                    })
+            })
+            .unwrap_or(SignedAngularRadialObjectiveConfig::default().radial_weight),
+    };
+    config.assert_valid();
+    config
+}
+
 pub fn training_steps(default_steps: usize) -> usize {
     std::env::var("JEPRA_TRAIN_STEPS")
         .ok()
@@ -613,13 +670,14 @@ pub fn assert_temporal_experiment_improved(
 #[cfg(test)]
 mod temporal_vision_config_tests {
     use super::{
-        CompactEncoderMode, PredictorMode, SignedBankSoftmaxObjectiveConfig,
-        SignedMarginObjectiveConfig, TemporalRunConfig, TemporalTaskMode,
-        compact_encoder_mode_from_args, predictor_mode_from_args, projector_drift_weight_from_args,
-        residual_delta_scale_from_args, signed_bank_softmax_config_from_args,
-        signed_bank_softmax_weight_from_args, signed_margin_config_from_args,
-        signed_margin_weight_from_args, signed_radial_weight_from_args,
-        temporal_task_mode_from_args,
+        CompactEncoderMode, PredictorMode, SignedAngularRadialObjectiveConfig,
+        SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, TemporalRunConfig,
+        TemporalTaskMode, compact_encoder_mode_from_args, predictor_mode_from_args,
+        projector_drift_weight_from_args, residual_delta_scale_from_args,
+        signed_angular_radial_config_from_args, signed_angular_radial_weight_from_args,
+        signed_bank_softmax_config_from_args, signed_bank_softmax_weight_from_args,
+        signed_margin_config_from_args, signed_margin_weight_from_args,
+        signed_radial_weight_from_args, temporal_task_mode_from_args,
     };
 
     fn args_with(values: &[&str]) -> Vec<String> {
@@ -917,6 +975,56 @@ mod temporal_vision_config_tests {
     }
 
     #[test]
+    fn signed_angular_radial_weight_defaults_to_disabled() {
+        assert!((signed_angular_radial_weight_from_args(&args_with(&[])) - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn signed_angular_radial_weight_parses_explicit_weight() {
+        assert!(
+            (signed_angular_radial_weight_from_args(&args_with(&[
+                "--signed-angular-radial-weight",
+                "0.25",
+            ])) - 0.25)
+                .abs()
+                < 1e-6
+        );
+    }
+
+    #[test]
+    fn signed_angular_radial_config_parses_component_weights() {
+        let config = signed_angular_radial_config_from_args(&args_with(&[
+            "--signed-angular-weight",
+            "0.4",
+            "--signed-angular-radial-radius-weight",
+            "0.6",
+        ]));
+
+        assert!((config.angular_weight - 0.4).abs() < 1e-6);
+        assert!((config.radial_weight - 0.6).abs() < 1e-6);
+    }
+
+    #[test]
+    #[should_panic(expected = "--signed-angular-radial-weight must be finite and non-negative")]
+    fn signed_angular_radial_weight_panics_on_negative_value() {
+        signed_angular_radial_weight_from_args(&args_with(&[
+            "--signed-angular-radial-weight",
+            "-0.1",
+        ]));
+    }
+
+    #[test]
+    #[should_panic(expected = "requires at least one positive component weight")]
+    fn signed_angular_radial_config_rejects_zero_components() {
+        signed_angular_radial_config_from_args(&args_with(&[
+            "--signed-angular-weight",
+            "0.0",
+            "--signed-angular-radial-radius-weight",
+            "0.0",
+        ]));
+    }
+
+    #[test]
     fn target_projection_momentum_warms_linearly_to_end() {
         let config = TemporalRunConfig {
             train_base_seed: 0,
@@ -933,6 +1041,8 @@ mod temporal_vision_config_tests {
             signed_bank_softmax_weight: 0.0,
             signed_bank_softmax_config: SignedBankSoftmaxObjectiveConfig::default(),
             signed_radial_weight: 0.0,
+            signed_angular_radial_weight: 0.0,
+            signed_angular_radial_config: SignedAngularRadialObjectiveConfig::default(),
             target_projection_momentum: 0.5,
             target_projection_momentum_start: 1.0,
             target_projection_momentum_end: 0.5,

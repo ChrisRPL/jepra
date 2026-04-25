@@ -5,8 +5,9 @@ mod temporal_vision;
 
 use jepra_core::{
     BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
-    ResidualBottleneckPredictor, SignedBankSoftmaxObjectiveReport, SignedMarginObjectiveReport,
-    SignedRadialCalibrationReport, Tensor, projection_stats, representation_stats,
+    ResidualBottleneckPredictor, SignedAngularRadialObjectiveReport,
+    SignedBankSoftmaxObjectiveReport, SignedMarginObjectiveReport, SignedRadialCalibrationReport,
+    Tensor, projection_stats, representation_stats,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -14,7 +15,9 @@ use projected_temporal::{
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
     ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedStateSeparability,
     ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, projected_signed_bank_softmax_objective_loss_and_grad,
+    ProjectedVelocityBankRanking, projected_signed_angular_radial_objective_loss_and_grad,
+    projected_signed_angular_radial_objective_report_from_base_seed,
+    projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
@@ -154,6 +157,12 @@ fn main() {
         "temporal run config | signed radial weight {}",
         run_config.signed_radial_weight
     );
+    println!(
+        "temporal run config | signed angular-radial weight {} | angular_weight {} | radius_weight {}",
+        run_config.signed_angular_radial_weight,
+        run_config.signed_angular_radial_config.angular_weight,
+        run_config.signed_angular_radial_config.radial_weight
+    );
 
     match run_config.predictor_mode {
         PredictorMode::Baseline => run_with_predictor(run_config, make_predictor()),
@@ -267,6 +276,8 @@ where
         maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
     let initial_signed_radial_calibration_report =
         maybe_projected_signed_radial_calibration_report(&model, run_config);
+    let initial_signed_angular_radial_objective_report =
+        maybe_projected_signed_angular_radial_objective_report(&model, run_config);
     let initial_signed_state_separability =
         maybe_projected_signed_state_separability(&model, run_config);
 
@@ -307,6 +318,10 @@ where
         initial_signed_bank_softmax_objective_report,
     );
     print_signed_radial_calibration_report("initial", initial_signed_radial_calibration_report);
+    print_signed_angular_radial_objective_report(
+        "initial",
+        initial_signed_angular_radial_objective_report,
+    );
     print_signed_state_separability("initial", initial_signed_state_separability);
 
     let experiment_summary = temporal_vision::run_temporal_experiment_with_summary(
@@ -328,6 +343,10 @@ where
             let signed_radial_step = maybe_projected_signed_radial_calibration_loss_and_grad(
                 model, run_config, &x_t, &x_t1,
             );
+            let signed_angular_radial_step =
+                maybe_projected_signed_angular_radial_objective_loss_and_grad(
+                    model, run_config, &x_t, &x_t1,
+                );
             let extra_prediction_loss = signed_margin_step
                 .as_ref()
                 .map(|(report, _)| run_config.signed_margin_weight * report.weighted_loss)
@@ -339,6 +358,10 @@ where
                 + signed_radial_step
                     .as_ref()
                     .map(|(report, _)| run_config.signed_radial_weight * report.loss)
+                    .unwrap_or(0.0)
+                + signed_angular_radial_step
+                    .as_ref()
+                    .map(|(report, _)| run_config.signed_angular_radial_weight * report.loss)
                     .unwrap_or(0.0);
             let mut extra_prediction_grad = None;
             if let Some((_, grad)) = signed_margin_step.as_ref() {
@@ -360,6 +383,13 @@ where
                     &mut extra_prediction_grad,
                     grad,
                     run_config.signed_radial_weight,
+                );
+            }
+            if let Some((_, grad)) = signed_angular_radial_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    run_config.signed_angular_radial_weight,
                 );
             }
             let (prediction_loss, regularizer_loss, projector_drift_loss, total_loss) =
@@ -435,6 +465,12 @@ where
                         Some(report),
                     );
                 }
+                if let Some((report, _)) = signed_angular_radial_step {
+                    print_signed_angular_radial_objective_report(
+                        &format!("step {:03} train", step),
+                        Some(report),
+                    );
+                }
             }
 
             total_loss
@@ -484,6 +520,8 @@ where
         maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
     let final_signed_radial_calibration_report =
         maybe_projected_signed_radial_calibration_report(&model, run_config);
+    let final_signed_angular_radial_objective_report =
+        maybe_projected_signed_angular_radial_objective_report(&model, run_config);
     let final_signed_state_separability =
         maybe_projected_signed_state_separability(&model, run_config);
     let (train_reduction_threshold, validation_reduction_threshold) =
@@ -545,6 +583,10 @@ where
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
     print_signed_radial_calibration_report("final", final_signed_radial_calibration_report);
+    print_signed_angular_radial_objective_report(
+        "final",
+        final_signed_angular_radial_objective_report,
+    );
     print_signed_state_separability("final", final_signed_state_separability);
 }
 
@@ -937,6 +979,58 @@ where
     ))
 }
 
+fn maybe_projected_signed_angular_radial_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<(SignedAngularRadialObjectiveReport, Tensor)>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_angular_radial_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed angular-radial objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(projected_signed_angular_radial_objective_loss_and_grad(
+        model,
+        x_t,
+        x_t1,
+        run_config.signed_angular_radial_config,
+    ))
+}
+
+fn maybe_projected_signed_angular_radial_objective_report<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<SignedAngularRadialObjectiveReport>
+where
+    P: PredictorModule,
+{
+    if run_config.signed_angular_radial_weight == 0.0 {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed angular-radial objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(
+        projected_signed_angular_radial_objective_report_from_base_seed(
+            model,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            run_config.signed_angular_radial_config,
+        ),
+    )
+}
+
 fn maybe_projected_signed_state_separability<P>(
     model: &ProjectedVisionJepa<P>,
     run_config: temporal_vision::TemporalRunConfig,
@@ -1044,6 +1138,26 @@ fn print_signed_radial_calibration_report(
             "{} | signed radial calibration loss {:.6} | prediction_norm {:.6} | target_norm {:.6} | norm_ratio {:.6} | samples {}",
             tag,
             report.loss,
+            report.prediction_norm,
+            report.target_norm,
+            report.norm_ratio,
+            report.samples,
+        );
+    }
+}
+
+fn print_signed_angular_radial_objective_report(
+    tag: &str,
+    report: Option<SignedAngularRadialObjectiveReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed angular-radial objective loss {:.6} | angular_loss {:.6} | radial_loss {:.6} | cosine {:.6} | prediction_norm {:.6} | target_norm {:.6} | norm_ratio {:.6} | samples {}",
+            tag,
+            report.loss,
+            report.angular_loss,
+            report.radial_loss,
+            report.cosine,
             report.prediction_norm,
             report.target_norm,
             report.norm_ratio,
