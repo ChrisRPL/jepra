@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_PATH="${JEPRA_MANIFEST_PATH:-$ROOT_DIR/crates/jepra-core/Cargo.toml}"
-SCHEMA="jepra_predictor_compare_v12"
+SCHEMA="jepra_predictor_compare_v13"
 TRAIN_STEPS="${JEPRA_TRAIN_STEPS:-300}"
 LOG_EVERY="${JEPRA_LOG_EVERY:-25}"
 TEMPORAL_TASK="${JEPRA_TEMPORAL_TASK:-random-speed}"
@@ -55,7 +55,7 @@ Environment:
   JEPRA_PROJECTED_TARGET_MOMENTUM_START         Projected warmup start (default: target momentum)
   JEPRA_PROJECTED_TARGET_MOMENTUM_END           Projected warmup end (default: target momentum)
   JEPRA_PROJECTED_TARGET_MOMENTUM_WARMUP_STEPS  Projected warmup steps (default: 0)
-  JEPRA_COMPACT_ENCODER_MODE                    Optional compact encoder mode: base|stronger|signed-direction
+  JEPRA_COMPACT_ENCODER_MODE                    Optional compact encoder mode: base|stronger|signed-direction|signed-direction-magnitude
   JEPRA_RESIDUAL_DELTA_SCALE                    Residual-bottleneck delta scale (default: 1.0)
   JEPRA_PROJECTOR_DRIFT_WEIGHT                  Projected online-projector drift regularizer weight (default: 0.0)
   JEPRA_SIGNED_MARGIN_WEIGHT                    Signed-margin objective weight (default: 0.0)
@@ -90,7 +90,7 @@ fi
 
 if [[ -n "$REPORT_PATH" ]]; then
   mkdir -p "$(dirname "$REPORT_PATH")"
-  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,signed_margin_weight,signed_margin_bank_gap,signed_margin_sign_gap,signed_margin_speed_gap,signed_margin_bank_weight,signed_margin_sign_weight,signed_margin_speed_weight,signed_bank_softmax_weight,signed_bank_softmax_temperature,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,signed_bank_neg_mrr_end,signed_bank_pos_mrr_end,signed_bank_slow_mrr_end,signed_bank_fast_mrr_end,signed_bank_sign_top1_end,signed_bank_speed_top1_end,signed_bank_samples,signed_bank_true_neg_best_neg,signed_bank_true_neg_best_pos,signed_bank_true_pos_best_neg,signed_bank_true_pos_best_pos,signed_bank_true_slow_best_slow,signed_bank_true_slow_best_fast,signed_bank_true_fast_best_slow,signed_bank_true_fast_best_fast,target_bank_oracle_mrr_end,target_bank_oracle_top1_end,target_bank_true_distance_end,target_bank_true_distance_max_end,target_bank_nearest_wrong_end,target_bank_nearest_wrong_min_end,target_bank_margin_end,target_bank_margin_min_end,target_bank_neg_nearest_wrong_end,target_bank_pos_nearest_wrong_end,target_bank_slow_nearest_wrong_end,target_bank_fast_nearest_wrong_end,target_bank_sign_margin_end,target_bank_speed_margin_end,target_bank_samples,prediction_bank_true_distance_end,prediction_bank_nearest_wrong_distance_end,prediction_bank_margin_end,prediction_bank_min_margin_end,prediction_bank_positive_margin_rate_end,prediction_bank_sign_margin_end,prediction_bank_speed_margin_end,prediction_bank_samples,signed_objective_all_loss_end,signed_objective_dx_neg2_loss_end,signed_objective_dx_neg1_loss_end,signed_objective_dx_pos1_loss_end,signed_objective_dx_pos2_loss_end,signed_objective_neg_loss_end,signed_objective_pos_loss_end,signed_objective_slow_loss_end,signed_objective_fast_loss_end,signed_objective_sign_gap_end,signed_objective_speed_gap_end,signed_objective_samples,signed_objective_dx_neg2_samples,signed_objective_dx_neg1_samples,signed_objective_dx_pos1_samples,signed_objective_dx_pos2_samples,signed_margin_bank_loss_end,signed_margin_sign_loss_end,signed_margin_speed_loss_end,signed_margin_weighted_loss_end,signed_margin_active_bank_rate_end,signed_margin_active_sign_rate_end,signed_margin_active_speed_rate_end,signed_margin_samples,signed_bank_softmax_loss_end,signed_bank_softmax_top1_end,signed_bank_softmax_true_probability_end,signed_bank_softmax_samples,state_latent_mrr_end,state_latent_top1_end,state_latent_sign_top1_end,state_latent_mean_rank_end,state_projection_mrr_end,state_projection_top1_end,state_projection_sign_top1_end,state_projection_mean_rank_end,state_support_samples,state_query_samples,state_candidates,status\n' > "$REPORT_PATH"
+  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,signed_margin_weight,signed_margin_bank_gap,signed_margin_sign_gap,signed_margin_speed_gap,signed_margin_bank_weight,signed_margin_sign_weight,signed_margin_speed_weight,signed_bank_softmax_weight,signed_bank_softmax_temperature,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,signed_bank_neg_mrr_end,signed_bank_pos_mrr_end,signed_bank_slow_mrr_end,signed_bank_fast_mrr_end,signed_bank_sign_top1_end,signed_bank_speed_top1_end,signed_bank_samples,signed_bank_true_neg_best_neg,signed_bank_true_neg_best_pos,signed_bank_true_pos_best_neg,signed_bank_true_pos_best_pos,signed_bank_true_slow_best_slow,signed_bank_true_slow_best_fast,signed_bank_true_fast_best_slow,signed_bank_true_fast_best_fast,target_bank_oracle_mrr_end,target_bank_oracle_top1_end,target_bank_true_distance_end,target_bank_true_distance_max_end,target_bank_nearest_wrong_end,target_bank_nearest_wrong_min_end,target_bank_margin_end,target_bank_margin_min_end,target_bank_neg_nearest_wrong_end,target_bank_pos_nearest_wrong_end,target_bank_slow_nearest_wrong_end,target_bank_fast_nearest_wrong_end,target_bank_sign_margin_end,target_bank_speed_margin_end,target_bank_samples,prediction_bank_true_distance_end,prediction_bank_nearest_wrong_distance_end,prediction_bank_margin_end,prediction_bank_min_margin_end,prediction_bank_positive_margin_rate_end,prediction_bank_sign_margin_end,prediction_bank_speed_margin_end,prediction_bank_samples,prediction_unit_mrr_end,prediction_unit_top1_end,prediction_unit_true_distance_end,prediction_unit_nearest_wrong_distance_end,prediction_unit_margin_end,prediction_unit_positive_margin_rate_end,prediction_unit_sign_margin_end,prediction_unit_speed_margin_end,prediction_unit_prediction_center_norm_end,prediction_unit_true_target_center_norm_end,prediction_unit_samples,prediction_unit_candidates,signed_objective_all_loss_end,signed_objective_dx_neg2_loss_end,signed_objective_dx_neg1_loss_end,signed_objective_dx_pos1_loss_end,signed_objective_dx_pos2_loss_end,signed_objective_neg_loss_end,signed_objective_pos_loss_end,signed_objective_slow_loss_end,signed_objective_fast_loss_end,signed_objective_sign_gap_end,signed_objective_speed_gap_end,signed_objective_samples,signed_objective_dx_neg2_samples,signed_objective_dx_neg1_samples,signed_objective_dx_pos1_samples,signed_objective_dx_pos2_samples,signed_margin_bank_loss_end,signed_margin_sign_loss_end,signed_margin_speed_loss_end,signed_margin_weighted_loss_end,signed_margin_active_bank_rate_end,signed_margin_active_sign_rate_end,signed_margin_active_speed_rate_end,signed_margin_samples,signed_bank_softmax_loss_end,signed_bank_softmax_top1_end,signed_bank_softmax_true_probability_end,signed_bank_softmax_samples,state_latent_mrr_end,state_latent_top1_end,state_latent_sign_top1_end,state_latent_mean_rank_end,state_projection_mrr_end,state_projection_top1_end,state_projection_sign_top1_end,state_projection_mean_rank_end,state_support_samples,state_query_samples,state_candidates,status\n' > "$REPORT_PATH"
 fi
 
 encoder_mode_label() {
@@ -99,6 +99,7 @@ encoder_mode_label() {
     "base") printf '%s' "compact-base" ;;
     "stronger") printf '%s' "compact-stronger" ;;
     "signed-direction") printf '%s' "compact-signed-direction" ;;
+    "signed-direction-magnitude") printf '%s' "compact-signed-direction-magnitude" ;;
     *) printf '%s' "unknown-${COMPACT_ENCODER_MODE}" ;;
   esac
 }
@@ -225,6 +226,21 @@ parse_prediction_bank_margin_line() {
         values[$i] = $(i + 1)
       }
       print values["true_distance"], values["nearest_wrong_distance"], values["margin"], values["min_margin"], values["positive_margin_rate"], values["sign_margin"], values["speed_margin"], values["samples"]
+    }
+  ' <<< "$line"
+}
+
+parse_prediction_bank_unit_geometry_line() {
+  local line="$1"
+  if [[ ! "$line" =~ ^(initial|final)[[:space:]]+\|[[:space:]]+signed[[:space:]]+prediction[[:space:]]+bank[[:space:]]+unit[[:space:]]+geometry[[:space:]]+mrr[[:space:]] ]]; then
+    return 1
+  fi
+  awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        values[$i] = $(i + 1)
+      }
+      print values["mrr"], values["top1"], values["true_distance"], values["nearest_wrong_distance"], values["margin"], values["positive_margin_rate"], values["sign_margin"], values["speed_margin"], values["prediction_center_norm"], values["true_target_center_norm"], values["samples"], values["candidates"]
     }
   ' <<< "$line"
 }
@@ -390,6 +406,18 @@ emit_row() {
   local prediction_bank_sign_margin_end_value="${prediction_bank_sign_margin_end:-na}"
   local prediction_bank_speed_margin_end_value="${prediction_bank_speed_margin_end:-na}"
   local prediction_bank_samples_value="${prediction_bank_samples:-na}"
+  local prediction_unit_mrr_end_value="${prediction_unit_mrr_end:-na}"
+  local prediction_unit_top1_end_value="${prediction_unit_top1_end:-na}"
+  local prediction_unit_true_distance_end_value="${prediction_unit_true_distance_end:-na}"
+  local prediction_unit_nearest_wrong_distance_end_value="${prediction_unit_nearest_wrong_distance_end:-na}"
+  local prediction_unit_margin_end_value="${prediction_unit_margin_end:-na}"
+  local prediction_unit_positive_margin_rate_end_value="${prediction_unit_positive_margin_rate_end:-na}"
+  local prediction_unit_sign_margin_end_value="${prediction_unit_sign_margin_end:-na}"
+  local prediction_unit_speed_margin_end_value="${prediction_unit_speed_margin_end:-na}"
+  local prediction_unit_prediction_center_norm_end_value="${prediction_unit_prediction_center_norm_end:-na}"
+  local prediction_unit_true_target_center_norm_end_value="${prediction_unit_true_target_center_norm_end:-na}"
+  local prediction_unit_samples_value="${prediction_unit_samples:-na}"
+  local prediction_unit_candidates_value="${prediction_unit_candidates:-na}"
   local signed_objective_all_loss_end_value="${signed_objective_all_loss_end:-na}"
   local signed_objective_dx_neg2_loss_end_value="${signed_objective_dx_neg2_loss_end:-na}"
   local signed_objective_dx_neg1_loss_end_value="${signed_objective_dx_neg1_loss_end:-na}"
@@ -430,7 +458,7 @@ emit_row() {
   local state_query_samples_value="${state_query_samples:-na}"
   local state_candidates_value="${state_candidates:-na}"
 
-  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s signed_margin_weight=%s signed_margin_bank_gap=%s signed_margin_sign_gap=%s signed_margin_speed_gap=%s signed_margin_bank_weight=%s signed_margin_sign_weight=%s signed_margin_speed_weight=%s signed_bank_softmax_weight=%s signed_bank_softmax_temperature=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s signed_bank_neg_mrr_end=%s signed_bank_pos_mrr_end=%s signed_bank_slow_mrr_end=%s signed_bank_fast_mrr_end=%s signed_bank_sign_top1_end=%s signed_bank_speed_top1_end=%s signed_bank_samples=%s signed_bank_true_neg_best_neg=%s signed_bank_true_neg_best_pos=%s signed_bank_true_pos_best_neg=%s signed_bank_true_pos_best_pos=%s signed_bank_true_slow_best_slow=%s signed_bank_true_slow_best_fast=%s signed_bank_true_fast_best_slow=%s signed_bank_true_fast_best_fast=%s target_bank_oracle_mrr_end=%s target_bank_oracle_top1_end=%s target_bank_true_distance_end=%s target_bank_true_distance_max_end=%s target_bank_nearest_wrong_end=%s target_bank_nearest_wrong_min_end=%s target_bank_margin_end=%s target_bank_margin_min_end=%s target_bank_neg_nearest_wrong_end=%s target_bank_pos_nearest_wrong_end=%s target_bank_slow_nearest_wrong_end=%s target_bank_fast_nearest_wrong_end=%s target_bank_sign_margin_end=%s target_bank_speed_margin_end=%s target_bank_samples=%s prediction_bank_true_distance_end=%s prediction_bank_nearest_wrong_distance_end=%s prediction_bank_margin_end=%s prediction_bank_min_margin_end=%s prediction_bank_positive_margin_rate_end=%s prediction_bank_sign_margin_end=%s prediction_bank_speed_margin_end=%s prediction_bank_samples=%s signed_objective_all_loss_end=%s signed_objective_dx_neg2_loss_end=%s signed_objective_dx_neg1_loss_end=%s signed_objective_dx_pos1_loss_end=%s signed_objective_dx_pos2_loss_end=%s signed_objective_neg_loss_end=%s signed_objective_pos_loss_end=%s signed_objective_slow_loss_end=%s signed_objective_fast_loss_end=%s signed_objective_sign_gap_end=%s signed_objective_speed_gap_end=%s signed_objective_samples=%s signed_objective_dx_neg2_samples=%s signed_objective_dx_neg1_samples=%s signed_objective_dx_pos1_samples=%s signed_objective_dx_pos2_samples=%s signed_margin_bank_loss_end=%s signed_margin_sign_loss_end=%s signed_margin_speed_loss_end=%s signed_margin_weighted_loss_end=%s signed_margin_active_bank_rate_end=%s signed_margin_active_sign_rate_end=%s signed_margin_active_speed_rate_end=%s signed_margin_samples=%s signed_bank_softmax_loss_end=%s signed_bank_softmax_top1_end=%s signed_bank_softmax_true_probability_end=%s signed_bank_softmax_samples=%s state_latent_mrr_end=%s state_latent_top1_end=%s state_latent_sign_top1_end=%s state_latent_mean_rank_end=%s state_projection_mrr_end=%s state_projection_top1_end=%s state_projection_sign_top1_end=%s state_projection_mean_rank_end=%s state_support_samples=%s state_query_samples=%s state_candidates=%s status=%s\n' \
+  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s signed_margin_weight=%s signed_margin_bank_gap=%s signed_margin_sign_gap=%s signed_margin_speed_gap=%s signed_margin_bank_weight=%s signed_margin_sign_weight=%s signed_margin_speed_weight=%s signed_bank_softmax_weight=%s signed_bank_softmax_temperature=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s signed_bank_neg_mrr_end=%s signed_bank_pos_mrr_end=%s signed_bank_slow_mrr_end=%s signed_bank_fast_mrr_end=%s signed_bank_sign_top1_end=%s signed_bank_speed_top1_end=%s signed_bank_samples=%s signed_bank_true_neg_best_neg=%s signed_bank_true_neg_best_pos=%s signed_bank_true_pos_best_neg=%s signed_bank_true_pos_best_pos=%s signed_bank_true_slow_best_slow=%s signed_bank_true_slow_best_fast=%s signed_bank_true_fast_best_slow=%s signed_bank_true_fast_best_fast=%s target_bank_oracle_mrr_end=%s target_bank_oracle_top1_end=%s target_bank_true_distance_end=%s target_bank_true_distance_max_end=%s target_bank_nearest_wrong_end=%s target_bank_nearest_wrong_min_end=%s target_bank_margin_end=%s target_bank_margin_min_end=%s target_bank_neg_nearest_wrong_end=%s target_bank_pos_nearest_wrong_end=%s target_bank_slow_nearest_wrong_end=%s target_bank_fast_nearest_wrong_end=%s target_bank_sign_margin_end=%s target_bank_speed_margin_end=%s target_bank_samples=%s prediction_bank_true_distance_end=%s prediction_bank_nearest_wrong_distance_end=%s prediction_bank_margin_end=%s prediction_bank_min_margin_end=%s prediction_bank_positive_margin_rate_end=%s prediction_bank_sign_margin_end=%s prediction_bank_speed_margin_end=%s prediction_bank_samples=%s prediction_unit_mrr_end=%s prediction_unit_top1_end=%s prediction_unit_true_distance_end=%s prediction_unit_nearest_wrong_distance_end=%s prediction_unit_margin_end=%s prediction_unit_positive_margin_rate_end=%s prediction_unit_sign_margin_end=%s prediction_unit_speed_margin_end=%s prediction_unit_prediction_center_norm_end=%s prediction_unit_true_target_center_norm_end=%s prediction_unit_samples=%s prediction_unit_candidates=%s signed_objective_all_loss_end=%s signed_objective_dx_neg2_loss_end=%s signed_objective_dx_neg1_loss_end=%s signed_objective_dx_pos1_loss_end=%s signed_objective_dx_pos2_loss_end=%s signed_objective_neg_loss_end=%s signed_objective_pos_loss_end=%s signed_objective_slow_loss_end=%s signed_objective_fast_loss_end=%s signed_objective_sign_gap_end=%s signed_objective_speed_gap_end=%s signed_objective_samples=%s signed_objective_dx_neg2_samples=%s signed_objective_dx_neg1_samples=%s signed_objective_dx_pos1_samples=%s signed_objective_dx_pos2_samples=%s signed_margin_bank_loss_end=%s signed_margin_sign_loss_end=%s signed_margin_speed_loss_end=%s signed_margin_weighted_loss_end=%s signed_margin_active_bank_rate_end=%s signed_margin_active_sign_rate_end=%s signed_margin_active_speed_rate_end=%s signed_margin_samples=%s signed_bank_softmax_loss_end=%s signed_bank_softmax_top1_end=%s signed_bank_softmax_true_probability_end=%s signed_bank_softmax_samples=%s state_latent_mrr_end=%s state_latent_top1_end=%s state_latent_sign_top1_end=%s state_latent_mean_rank_end=%s state_projection_mrr_end=%s state_projection_top1_end=%s state_projection_sign_top1_end=%s state_projection_mean_rank_end=%s state_support_samples=%s state_query_samples=%s state_candidates=%s status=%s\n' \
     "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" \
     "$SIGNED_MARGIN_WEIGHT" "$SIGNED_MARGIN_BANK_GAP" "$SIGNED_MARGIN_SIGN_GAP" "$SIGNED_MARGIN_SPEED_GAP" \
     "$SIGNED_MARGIN_BANK_WEIGHT" "$SIGNED_MARGIN_SIGN_WEIGHT" "$SIGNED_MARGIN_SPEED_WEIGHT" \
@@ -454,6 +482,10 @@ emit_row() {
     "$prediction_bank_true_distance_end_value" "$prediction_bank_nearest_wrong_distance_end_value" "$prediction_bank_margin_end_value" \
     "$prediction_bank_min_margin_end_value" "$prediction_bank_positive_margin_rate_end_value" "$prediction_bank_sign_margin_end_value" \
     "$prediction_bank_speed_margin_end_value" "$prediction_bank_samples_value" \
+    "$prediction_unit_mrr_end_value" "$prediction_unit_top1_end_value" "$prediction_unit_true_distance_end_value" \
+    "$prediction_unit_nearest_wrong_distance_end_value" "$prediction_unit_margin_end_value" "$prediction_unit_positive_margin_rate_end_value" \
+    "$prediction_unit_sign_margin_end_value" "$prediction_unit_speed_margin_end_value" "$prediction_unit_prediction_center_norm_end_value" \
+    "$prediction_unit_true_target_center_norm_end_value" "$prediction_unit_samples_value" "$prediction_unit_candidates_value" \
     "$signed_objective_all_loss_end_value" "$signed_objective_dx_neg2_loss_end_value" "$signed_objective_dx_neg1_loss_end_value" \
     "$signed_objective_dx_pos1_loss_end_value" "$signed_objective_dx_pos2_loss_end_value" "$signed_objective_neg_loss_end_value" \
     "$signed_objective_pos_loss_end_value" "$signed_objective_slow_loss_end_value" "$signed_objective_fast_loss_end_value" \
@@ -495,6 +527,10 @@ emit_row() {
       "$prediction_bank_true_distance_end_value" "$prediction_bank_nearest_wrong_distance_end_value" "$prediction_bank_margin_end_value" \
       "$prediction_bank_min_margin_end_value" "$prediction_bank_positive_margin_rate_end_value" "$prediction_bank_sign_margin_end_value" \
       "$prediction_bank_speed_margin_end_value" "$prediction_bank_samples_value" \
+      "$prediction_unit_mrr_end_value" "$prediction_unit_top1_end_value" "$prediction_unit_true_distance_end_value" \
+      "$prediction_unit_nearest_wrong_distance_end_value" "$prediction_unit_margin_end_value" "$prediction_unit_positive_margin_rate_end_value" \
+      "$prediction_unit_sign_margin_end_value" "$prediction_unit_speed_margin_end_value" "$prediction_unit_prediction_center_norm_end_value" \
+      "$prediction_unit_true_target_center_norm_end_value" "$prediction_unit_samples_value" "$prediction_unit_candidates_value" \
       "$signed_objective_all_loss_end_value" "$signed_objective_dx_neg2_loss_end_value" "$signed_objective_dx_neg1_loss_end_value" \
       "$signed_objective_dx_pos1_loss_end_value" "$signed_objective_dx_pos2_loss_end_value" "$signed_objective_neg_loss_end_value" \
       "$signed_objective_pos_loss_end_value" "$signed_objective_slow_loss_end_value" "$signed_objective_fast_loss_end_value" \
@@ -573,6 +609,18 @@ run_one() {
   local prediction_bank_sign_margin_end="na"
   local prediction_bank_speed_margin_end="na"
   local prediction_bank_samples="na"
+  local prediction_unit_mrr_end="na"
+  local prediction_unit_top1_end="na"
+  local prediction_unit_true_distance_end="na"
+  local prediction_unit_nearest_wrong_distance_end="na"
+  local prediction_unit_margin_end="na"
+  local prediction_unit_positive_margin_rate_end="na"
+  local prediction_unit_sign_margin_end="na"
+  local prediction_unit_speed_margin_end="na"
+  local prediction_unit_prediction_center_norm_end="na"
+  local prediction_unit_true_target_center_norm_end="na"
+  local prediction_unit_samples="na"
+  local prediction_unit_candidates="na"
   local signed_objective_all_loss_end="na"
   local signed_objective_dx_neg2_loss_end="na"
   local signed_objective_dx_neg1_loss_end="na"
@@ -692,6 +740,7 @@ run_one() {
   local final_signed_velocity_bank_line
   local final_target_bank_separability_line
   local final_prediction_bank_margin_line
+  local final_prediction_bank_unit_geometry_line
   local final_signed_objective_error_breakdown_line
   local final_signed_margin_objective_line
   local final_signed_bank_softmax_objective_line
@@ -790,6 +839,16 @@ run_one() {
         return 0
       fi
       read -r prediction_bank_true_distance_end prediction_bank_nearest_wrong_distance_end prediction_bank_margin_end prediction_bank_min_margin_end prediction_bank_positive_margin_rate_end prediction_bank_sign_margin_end prediction_bank_speed_margin_end prediction_bank_samples <<< "$parsed"
+
+      final_prediction_bank_unit_geometry_line="$(grep -m1 '^final | signed prediction bank unit geometry mrr ' "$log_file" || true)"
+
+      if ! parsed="$(parse_prediction_bank_unit_geometry_line "$final_prediction_bank_unit_geometry_line")"; then
+        failures=$((failures + 1))
+        emit_row "$path" "$predictor" "$seed" "$encoder_lr" "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" "na" "na" "$proj_var_mean" "$target_drift_end" "parse_failed"
+        rm -f "$log_file"
+        return 0
+      fi
+      read -r prediction_unit_mrr_end prediction_unit_top1_end prediction_unit_true_distance_end prediction_unit_nearest_wrong_distance_end prediction_unit_margin_end prediction_unit_positive_margin_rate_end prediction_unit_sign_margin_end prediction_unit_speed_margin_end prediction_unit_prediction_center_norm_end prediction_unit_true_target_center_norm_end prediction_unit_samples prediction_unit_candidates <<< "$parsed"
 
       final_signed_objective_error_breakdown_line="$(grep -m1 '^final | signed objective error breakdown all_loss ' "$log_file" || true)"
 
