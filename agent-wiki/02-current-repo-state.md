@@ -22,6 +22,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Signed state separability v11 is implemented as a report-only projected signed-task probe. It builds support/query nearest-centroid classifiers over current latent state and projected state.
 - V11 evidence shows state separability is near random for both baseline and residual: latent/projection MRR `0.518229` and sign-top1 `0.468750`, with a four-candidate random MRR reference of `0.520833`. This shifts the next build target from more loss shaping to representation/conditioning.
 - Opt-in compact encoder mode `signed-direction` now adds scaled local horizontal trail-orientation filters while preserving the existing 3D latent interface. Three-seed projected signed baseline evidence is health-ok (`pred_min_std=0.158783`, `target_min_std=0.750253`) and keeps state MRR `0.619792`, but prediction-bank margin remains negative, so it is not promoted.
+- Default-off signed-bank softmax objective is implemented for projected `signed-velocity-trail` probes. It keeps the candidate-bank ranking loss explicit and reportable, but narrow evidence does not close the signed-direction margin gate (`ppr=0.281250` at weight `0.5`; high-weight single-seed still `ppr=0.281250`), so it is not promoted.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -31,7 +32,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
   - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
   - do not expand the signed-margin grid; v11 shows the current signed state representation is not direction-separable enough for another loss-only pass,
-  - next high-value build step is to improve signed-direction prediction-bank margins and signed-bank ranking while preserving its health/spread before bounce, depthwise convolution, or spatial predictor work,
+  - next high-value build step is to improve signed-direction speed/magnitude conditioning and target geometry while preserving health/spread before bounce, depthwise convolution, spatial predictor work, or more objective tuning,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,
   - keep the fixed-seed projected sweep as the regression baseline before default or projected-policy changes.
