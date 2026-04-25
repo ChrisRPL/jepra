@@ -31,6 +31,7 @@ pub enum CompactEncoderMode {
     Base,
     Stronger,
     SignedDirection,
+    SignedDirectionMagnitude,
 }
 
 impl CompactEncoderMode {
@@ -40,6 +41,7 @@ impl CompactEncoderMode {
             Self::Base => "compact(base)",
             Self::Stronger => "compact(stronger)",
             Self::SignedDirection => "compact(signed-direction)",
+            Self::SignedDirectionMagnitude => "compact(signed-direction-magnitude)",
         }
     }
 }
@@ -229,8 +231,9 @@ fn parse_compact_encoder_mode_flag(args: &[String]) -> Option<CompactEncoderMode
         "base" => CompactEncoderMode::Base,
         "stronger" => CompactEncoderMode::Stronger,
         "signed-direction" => CompactEncoderMode::SignedDirection,
+        "signed-direction-magnitude" => CompactEncoderMode::SignedDirectionMagnitude,
         _ => panic!(
-            "unsupported value for --compact-encoder-mode: {} (expected base|stronger|signed-direction)",
+            "unsupported value for --compact-encoder-mode: {} (expected base|stronger|signed-direction|signed-direction-magnitude)",
             raw_mode
         ),
     })
@@ -662,6 +665,17 @@ mod temporal_vision_config_tests {
                 "signed-direction"
             ])),
             CompactEncoderMode::SignedDirection
+        );
+    }
+
+    #[test]
+    fn compact_encoder_signed_direction_magnitude_mode_is_explicit() {
+        assert_eq!(
+            compact_encoder_mode_from_args(&args_with(&[
+                "--compact-encoder-mode",
+                "signed-direction-magnitude"
+            ])),
+            CompactEncoderMode::SignedDirectionMagnitude
         );
     }
 
@@ -1643,6 +1657,8 @@ const SIGNED_DIRECTION_ENCODER_CHANNELS: usize = 3;
 const SIGNED_DIRECTION_KERNEL_HEIGHT: usize = 2;
 const SIGNED_DIRECTION_KERNEL_WIDTH: usize = 5;
 const SIGNED_DIRECTION_RESPONSE_SCALE: f32 = 6.0;
+const SIGNED_DIRECTION_MAGNITUDE_ENCODER_CHANNELS: usize = 6;
+const SIGNED_DIRECTION_MAGNITUDE_RESPONSE_SCALE: f32 = 4.0;
 
 fn compact_encoder_channel_weights(row: usize, col: usize) -> [f32; COMPACT_ENCODER_CHANNELS] {
     let center = (IMAGE_SIZE as f32 - 1.0) / 2.0;
@@ -1839,6 +1855,71 @@ pub fn make_compact_frozen_encoder_signed_direction() -> EmbeddingEncoder {
                 0.0, 0.0, 1.0,
             ],
             vec![3, SIGNED_DIRECTION_ENCODER_CHANNELS, 1, 1],
+        ),
+        Tensor::zeros(vec![3]),
+        1,
+        0,
+    );
+
+    EmbeddingEncoder::new(ConvEncoder::new(conv1, conv2))
+}
+
+pub fn make_compact_frozen_encoder_signed_direction_magnitude() -> EmbeddingEncoder {
+    let mut conv1_weight = Tensor::zeros(vec![
+        SIGNED_DIRECTION_MAGNITUDE_ENCODER_CHANNELS,
+        1,
+        SIGNED_DIRECTION_KERNEL_HEIGHT,
+        SIGNED_DIRECTION_KERNEL_WIDTH,
+    ]);
+    let odd_x = [-1.0, -0.5, 0.0, 0.5, 1.0];
+    let spread_x = [0.75, 0.25, -1.0, 0.25, 0.75];
+    let compact_x = [-0.25, 0.50, 1.0, 0.50, -0.25];
+    let right_fast_x = [-0.75, -0.25, 0.0, 0.50, 1.0];
+    let left_fast_x = [1.0, 0.50, 0.0, -0.25, -0.75];
+
+    for kh in 0..SIGNED_DIRECTION_KERNEL_HEIGHT {
+        for kw in 0..SIGNED_DIRECTION_KERNEL_WIDTH {
+            conv1_weight.set(
+                &[0, 0, kh, kw],
+                SIGNED_DIRECTION_MAGNITUDE_RESPONSE_SCALE * odd_x[kw],
+            );
+            conv1_weight.set(
+                &[1, 0, kh, kw],
+                -SIGNED_DIRECTION_MAGNITUDE_RESPONSE_SCALE * odd_x[kw],
+            );
+            conv1_weight.set(
+                &[2, 0, kh, kw],
+                SIGNED_DIRECTION_MAGNITUDE_RESPONSE_SCALE * spread_x[kw],
+            );
+            conv1_weight.set(
+                &[3, 0, kh, kw],
+                SIGNED_DIRECTION_MAGNITUDE_RESPONSE_SCALE * compact_x[kw],
+            );
+            conv1_weight.set(
+                &[4, 0, kh, kw],
+                SIGNED_DIRECTION_MAGNITUDE_RESPONSE_SCALE * right_fast_x[kw],
+            );
+            conv1_weight.set(
+                &[5, 0, kh, kw],
+                SIGNED_DIRECTION_MAGNITUDE_RESPONSE_SCALE * left_fast_x[kw],
+            );
+        }
+    }
+
+    let conv1 = Conv2d::new(
+        conv1_weight,
+        Tensor::zeros(vec![SIGNED_DIRECTION_MAGNITUDE_ENCODER_CHANNELS]),
+        1,
+        0,
+    );
+    let conv2 = Conv2d::new(
+        Tensor::new(
+            vec![
+                1.00, 0.00, 0.10, 0.00, 0.20, 0.00, //
+                0.00, 1.00, 0.10, 0.00, 0.00, 0.20, //
+                0.05, 0.05, 1.00, -0.35, 0.35, 0.35, //
+            ],
+            vec![3, SIGNED_DIRECTION_MAGNITUDE_ENCODER_CHANNELS, 1, 1],
         ),
         Tensor::zeros(vec![3]),
         1,

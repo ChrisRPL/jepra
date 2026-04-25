@@ -61,7 +61,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--temporal-task <random-speed|velocity-trail|signed-velocity-trail>` selects the synthetic temporal task (`random-speed` remains the default; trail tasks are opt-in diagnostics)
 - `--encoder-lr` (or `--encoder-learning-rate`) enables encoder updates in temporal JEPA runs; `0.0` keeps a frozen encoder baseline
 - `--compact-encoder` enables compact frozen encoder mode
-- `--compact-encoder-mode <base|stronger|signed-direction>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`; `signed-direction` is an opt-in local trail-orientation probe)
+- `--compact-encoder-mode <base|stronger|signed-direction|signed-direction-magnitude>` selects compact mode explicitly (`--compact-encoder` defaults to `stronger`; signed-direction modes are opt-in local trail-orientation probes)
 - `--predictor-mode <baseline|bottleneck|residual-bottleneck>` selects the predictor topology (`baseline` is the default; the others are experimental and non-default)
 - `--residual-delta-scale <float>` scales only the residual-bottleneck delta branch (`1.0` preserves the unscaled identity-plus-delta predictor)
 - `--projector-drift-weight <float>` adds an opt-in L2 online-projector-to-target-projector drift regularizer in projected runs (`0.0` disables it)
