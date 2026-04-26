@@ -28,6 +28,7 @@ Snapshot from local files only. Internal working note for the repo state today.
 - Report-only signed geometry counterfactual v16 is implemented. On `signed-direction-magnitude`, true-radius snapping raises PPR to `0.447917`, while true-angle and support global rescale stay at `0.218750`; the next bottleneck is trainable state-conditioned radius/speed geometry, not missing angle or simple global gain.
 - Opt-in `StateRadiusPredictor` is implemented as the first trainable radius/speed geometry path. It learns a positive per-sample gain over the predicted projected-state displacement, but the first bounded signed-direction-magnitude probe rejects it as a fix: validation improves slightly (`0.377447` vs `0.387471`) while raw PPR drops to `0.140625` and unit PPR collapses to `0.114583`.
 - Report-only signed candidate-centroid integration is implemented. It preserves the bank-centered unit direction and swaps in candidate-bank radii; nearest/softmax radius improves PPR to `0.348958` versus raw `0.281250`, but misses the proof gate and keeps poor radius margin, so the next build needs a trainable candidate-centered radius residual/logit head.
+- Direct signed candidate selector head is implemented as a default-off trainable path over normalized candidate features. It uses supervised CE plus an entropy-floor anti-collapse hinge and evaluates the actual trained head on validation. Seed `11000`, `300` steps clears the current single-seed gate (`learned_selector_top1=0.390625`, entropy `1.237072`) while preserving validation/drift and unit geometry.
 
 ## Next Action
 - Current phase focus has shifted from projected hardening to compact model capacity:
@@ -37,7 +38,7 @@ Snapshot from local files only. Internal working note for the repo state today.
   - control residual/projector drift on stronger compact projected runs before any new primitive work,
   - keep residual, depthwise, and spatial primitive work blocked by signed-task evidence,
   - do not expand the signed-margin grid; v11 shows the current signed state representation is not direction-separable enough for another loss-only pass,
-  - next high-value build step is a trainable candidate-centered radius residual/logit head using the centered-radius scalar primitive, because report-only candidate radius selection helps but does not close enough of the oracle-radius gap,
+  - next high-value build step is a three-seed validation of the direct entropy-floor candidate selector head before promotion,
   - evaluate that build with existing v16 parser fields: same-run baseline versus candidate, raw PPR closing at least half of the oracle-radius gap, unit PPR/MRR within `0.03` of baseline, centered norm-ratio error reduced by at least `25%`, and health/drift intact,
   - keep projector drift regularization as a narrow opt-in drift-control probe,
   - reject loss-only wins when prediction/target health collapses,

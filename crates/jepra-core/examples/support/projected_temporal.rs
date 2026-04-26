@@ -209,6 +209,35 @@ pub struct ProjectedSignedCandidateSelectorProbe {
     pub candidates: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateSelectorHeadObjectiveReport {
+    pub loss: f32,
+    pub cross_entropy_loss: f32,
+    pub entropy_regularization_loss: f32,
+    pub kl_to_prior_loss: f32,
+    pub entropy: f32,
+    pub true_probability: f32,
+    pub max_probability: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateSelectorHeadIntegration {
+    pub learned_selector: ProjectedSignedPredictionCounterfactualMetrics,
+    pub objective_report: ProjectedSignedCandidateSelectorHeadObjectiveReport,
+    pub softmax_temperature: f32,
+    pub selector_steps: usize,
+    pub learning_rate: f32,
+    pub entropy_regularization_weight: f32,
+    pub entropy_floor: f32,
+    pub kl_to_prior_weight: f32,
+    pub support_samples: usize,
+    pub query_samples: usize,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedObjectiveErrorBreakdown {
@@ -305,6 +334,11 @@ struct SignedCandidateUnitMixHeadIntegrationSampleOutcome {
     learned_mix: SignedPredictionCounterfactualSampleOutcome,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateSelectorHeadIntegrationSampleOutcome {
+    learned_selector: SignedPredictionCounterfactualSampleOutcome,
+}
+
 #[derive(Debug, Default)]
 struct SignedCandidateSelectorProbeMetricTotals {
     loss: f32,
@@ -312,6 +346,18 @@ struct SignedCandidateSelectorProbeMetricTotals {
     top1: usize,
     true_probability: f32,
     entropy: f32,
+    samples: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedCandidateSelectorHeadObjectiveReportTotals {
+    loss: f32,
+    cross_entropy_loss: f32,
+    entropy_regularization_loss: f32,
+    kl_to_prior_loss: f32,
+    entropy: f32,
+    true_probability: f32,
+    max_probability: f32,
     samples: usize,
 }
 
@@ -1113,6 +1159,39 @@ impl SignedCandidateSelectorProbeMetricTotals {
             top1: self.top1 as f32 / self.samples as f32,
             true_probability: self.true_probability / self.samples as f32,
             entropy: self.entropy / self.samples as f32,
+            samples: self.samples,
+            candidates,
+        }
+    }
+}
+
+impl SignedCandidateSelectorHeadObjectiveReportTotals {
+    fn observe(&mut self, report: ProjectedSignedCandidateSelectorHeadObjectiveReport) {
+        self.loss += report.loss * report.samples as f32;
+        self.cross_entropy_loss += report.cross_entropy_loss * report.samples as f32;
+        self.entropy_regularization_loss +=
+            report.entropy_regularization_loss * report.samples as f32;
+        self.kl_to_prior_loss += report.kl_to_prior_loss * report.samples as f32;
+        self.entropy += report.entropy * report.samples as f32;
+        self.true_probability += report.true_probability * report.samples as f32;
+        self.max_probability += report.max_probability * report.samples as f32;
+        self.samples += report.samples;
+    }
+
+    fn into_report(self, candidates: usize) -> ProjectedSignedCandidateSelectorHeadObjectiveReport {
+        assert!(
+            self.samples > 0,
+            "candidate selector head objective has no samples"
+        );
+
+        ProjectedSignedCandidateSelectorHeadObjectiveReport {
+            loss: self.loss / self.samples as f32,
+            cross_entropy_loss: self.cross_entropy_loss / self.samples as f32,
+            entropy_regularization_loss: self.entropy_regularization_loss / self.samples as f32,
+            kl_to_prior_loss: self.kl_to_prior_loss / self.samples as f32,
+            entropy: self.entropy / self.samples as f32,
+            true_probability: self.true_probability / self.samples as f32,
+            max_probability: self.max_probability / self.samples as f32,
             samples: self.samples,
             candidates,
         }
@@ -1977,6 +2056,31 @@ where
     )
 }
 
+pub fn projected_signed_candidate_selector_head_features<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    softmax_temperature: f32,
+) -> Tensor
+where
+    P: PredictorModule,
+{
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate selector head features expect rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+    assert_eq!(
+        candidates, 4,
+        "candidate selector head expects signed-velocity-trail K=4"
+    );
+
+    let features =
+        projected_signed_candidate_unit_mix_head_features(model, x_t, softmax_temperature);
+    normalize_signed_candidate_selector_batch_features(&features)
+}
+
 pub fn projected_signed_candidate_radius_logit_mixing_loss_and_grad<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -2058,6 +2162,72 @@ where
         &true_candidate_indices,
         residual_logits,
         softmax_temperature,
+    )
+}
+
+pub fn projected_signed_candidate_selector_head_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    selector_logits: &Tensor,
+    softmax_temperature: f32,
+    entropy_floor: f32,
+    entropy_regularization_weight: f32,
+    kl_to_prior_weight: f32,
+) -> (ProjectedSignedCandidateSelectorHeadObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate selector head objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate selector head objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate selector head objective temperature must be finite and positive"
+    );
+    assert!(
+        entropy_floor.is_finite() && entropy_floor >= 0.0,
+        "candidate selector head entropy floor must be finite and non-negative"
+    );
+    assert!(
+        entropy_regularization_weight.is_finite() && entropy_regularization_weight >= 0.0,
+        "candidate selector head entropy regularization weight must be finite and non-negative"
+    );
+    assert!(
+        kl_to_prior_weight.is_finite() && kl_to_prior_weight >= 0.0,
+        "candidate selector head KL-to-prior weight must be finite and non-negative"
+    );
+
+    let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+    assert_eq!(
+        candidates, 4,
+        "candidate selector head expects signed-velocity-trail K=4"
+    );
+    assert_eq!(
+        selector_logits.shape,
+        vec![x_t.shape[0], candidates],
+        "candidate selector head logits shape mismatch"
+    );
+
+    let prior_features =
+        projected_signed_candidate_unit_mix_head_features(model, x_t, softmax_temperature);
+    let prior_logits =
+        signed_candidate_selector_prior_logits_from_features(&prior_features, candidates);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+
+    signed_candidate_selector_head_objective_loss_and_grad_from_logits(
+        selector_logits,
+        &prior_logits,
+        &true_candidate_indices,
+        entropy_floor,
+        entropy_regularization_weight,
+        kl_to_prior_weight,
     )
 }
 
@@ -2316,6 +2486,127 @@ where
         softmax_temperature,
         samples,
         candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+    }
+}
+
+pub fn projected_signed_candidate_selector_head_integration_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    selector_head: &Linear,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    softmax_temperature: f32,
+    selector_steps: usize,
+    learning_rate: f32,
+    entropy_floor: f32,
+    entropy_regularization_weight: f32,
+    kl_to_prior_weight: f32,
+) -> ProjectedSignedCandidateSelectorHeadIntegration
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "candidate selector head integration requires at least one validation batch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate selector head integration temperature must be finite and positive"
+    );
+    assert!(
+        learning_rate.is_finite() && learning_rate >= 0.0,
+        "candidate selector head integration learning rate must be finite and non-negative"
+    );
+    assert!(
+        entropy_floor.is_finite() && entropy_floor >= 0.0,
+        "candidate selector head integration entropy floor must be finite and non-negative"
+    );
+    assert!(
+        entropy_regularization_weight.is_finite() && entropy_regularization_weight >= 0.0,
+        "candidate selector head integration entropy regularization weight must be finite and non-negative"
+    );
+    assert!(
+        kl_to_prior_weight.is_finite() && kl_to_prior_weight >= 0.0,
+        "candidate selector head integration KL-to-prior weight must be finite and non-negative"
+    );
+
+    let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+    assert_eq!(
+        candidates, 4,
+        "candidate selector head expects signed-velocity-trail K=4"
+    );
+
+    let (sample_x_t, _) = make_temporal_batch_for_task(
+        BATCH_SIZE,
+        validation_base_seed,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let sample_features =
+        projected_signed_candidate_selector_head_features(model, &sample_x_t, softmax_temperature);
+    assert_eq!(
+        selector_head.weight.shape,
+        vec![sample_features.shape[1], candidates],
+        "candidate selector head weight shape mismatch"
+    );
+    assert_eq!(
+        selector_head.bias.shape,
+        vec![candidates],
+        "candidate selector head bias shape mismatch"
+    );
+
+    let mut learned_selector_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut objective_totals = SignedCandidateSelectorHeadObjectiveReportTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_selector_head_features(model, &x_t, softmax_temperature);
+        let selector_logits = selector_head.forward(&features);
+        let (report, _) = projected_signed_candidate_selector_head_loss_and_grad(
+            model,
+            &x_t,
+            &x_t1,
+            &selector_logits,
+            softmax_temperature,
+            entropy_floor,
+            entropy_regularization_weight,
+            kl_to_prior_weight,
+        );
+        let outcomes = projected_signed_candidate_selector_head_integration_sample_outcomes(
+            model,
+            &x_t,
+            &x_t1,
+            &selector_logits,
+        );
+
+        objective_totals.observe(report);
+        for outcome in outcomes {
+            learned_selector_totals.observe(outcome.learned_selector);
+        }
+    }
+
+    let objective_report = objective_totals.into_report(candidates);
+    assert_eq!(
+        objective_report.samples, learned_selector_totals.samples,
+        "candidate selector head integration sample mismatch"
+    );
+
+    ProjectedSignedCandidateSelectorHeadIntegration {
+        learned_selector: learned_selector_totals.into_metrics(),
+        objective_report,
+        softmax_temperature,
+        selector_steps,
+        learning_rate,
+        entropy_regularization_weight,
+        entropy_floor,
+        kl_to_prior_weight,
+        support_samples: 0,
+        query_samples: objective_report.samples,
+        samples: objective_report.samples,
+        candidates,
     }
 }
 
@@ -3728,6 +4019,70 @@ where
     outcomes
 }
 
+fn projected_signed_candidate_selector_head_integration_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    selector_logits: &Tensor,
+) -> Vec<SignedCandidateSelectorHeadIntegrationSampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate selector head integration expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate selector head integration expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let candidate_dx_bank = &SIGNED_VELOCITY_BANK_CANDIDATE_DX;
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    assert_eq!(
+        selector_logits.shape,
+        vec![batch_size, candidate_targets.len()],
+        "candidate selector head logits shape mismatch"
+    );
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let target_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let target_norm = vector_l2_norm(&target_centered).max(VELOCITY_BANK_TIE_EPSILON);
+        let components = signed_candidate_selector_unit_mix_components(
+            selector_logits,
+            &prediction,
+            &candidate_targets,
+            sample,
+            &centroid,
+        );
+
+        outcomes.push(SignedCandidateSelectorHeadIntegrationSampleOutcome {
+            learned_selector: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &components.centered_prediction,
+                components.predicted_radius / target_norm,
+            ),
+        });
+    }
+
+    outcomes
+}
+
 fn signed_candidate_radius_head_features_from_prediction(
     projection: &Tensor,
     prediction: &Tensor,
@@ -3920,7 +4275,7 @@ where
             TemporalTaskMode::SignedVelocityTrail,
         );
         let features =
-            projected_signed_candidate_unit_mix_head_features(model, &x_t, softmax_temperature);
+            projected_signed_candidate_selector_head_features(model, &x_t, softmax_temperature);
         assert_eq!(
             features.shape,
             vec![BATCH_SIZE, feature_dim],
@@ -3988,6 +4343,55 @@ fn normalize_signed_candidate_selector_features(
         for feature_idx in 0..features.shape[1] {
             let value = (features.get(&[sample, feature_idx]) - feature_mean[feature_idx])
                 * feature_inv_std[feature_idx];
+            normalized.set(&[sample, feature_idx], value);
+        }
+    }
+
+    normalized
+}
+
+fn normalize_signed_candidate_selector_batch_features(features: &Tensor) -> Tensor {
+    assert!(
+        features.shape.len() == 2,
+        "candidate selector head normalized features must be rank-2, got {:?}",
+        features.shape
+    );
+
+    let batch_size = features.shape[0];
+    let feature_dim = features.shape[1];
+    assert!(
+        batch_size > 0 && feature_dim > 0,
+        "candidate selector head normalized features require non-empty tensors"
+    );
+
+    let mut feature_mean = vec![0.0f32; feature_dim];
+    let mut feature_square_mean = vec![0.0f32; feature_dim];
+    for sample in 0..batch_size {
+        for feature_idx in 0..feature_dim {
+            let value = features.get(&[sample, feature_idx]);
+            feature_mean[feature_idx] += value;
+            feature_square_mean[feature_idx] += value * value;
+        }
+    }
+
+    for feature_idx in 0..feature_dim {
+        feature_mean[feature_idx] /= batch_size as f32;
+        feature_square_mean[feature_idx] /= batch_size as f32;
+    }
+
+    let mut normalized = Tensor::zeros(features.shape.clone());
+    for sample in 0..batch_size {
+        for feature_idx in 0..feature_dim {
+            let variance =
+                (feature_square_mean[feature_idx] - feature_mean[feature_idx].powi(2)).max(0.0);
+            let std = variance.sqrt();
+            let inv_std = if std > VELOCITY_BANK_TIE_EPSILON {
+                1.0 / std
+            } else {
+                0.0
+            };
+            let value =
+                (features.get(&[sample, feature_idx]) - feature_mean[feature_idx]) * inv_std;
             normalized.set(&[sample, feature_idx], value);
         }
     }
@@ -4205,6 +4609,229 @@ fn signed_candidate_selector_softmax_ce_loss_and_grad(
     totals.observe_logits(logits, true_candidate_indices);
 
     (totals.into_metrics(candidates), grad_logits)
+}
+
+fn signed_candidate_selector_unit_mix_components(
+    selector_logits: &Tensor,
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    sample: usize,
+    centroid: &[f32],
+) -> SignedCandidateUnitMixComponents {
+    assert!(
+        !candidate_targets.is_empty(),
+        "candidate selector unit-mix components require non-empty candidate targets"
+    );
+    assert_eq!(
+        selector_logits.shape,
+        vec![prediction.shape[0], candidate_targets.len()],
+        "candidate selector unit-mix logits shape mismatch"
+    );
+
+    let projection_dim = prediction.shape[1];
+    let candidates = candidate_targets.len();
+    let mut candidate_radii = Vec::with_capacity(candidates);
+    let mut candidate_units = Vec::with_capacity(candidates);
+
+    for candidate_target in candidate_targets {
+        let candidate_centered = centered_sample_vector(candidate_target, sample, centroid);
+        let candidate_radius = vector_l2_norm(&candidate_centered);
+        let candidate_unit = unit_vector(&candidate_centered);
+
+        candidate_radii.push(candidate_radius);
+        candidate_units.push(candidate_unit);
+    }
+
+    let sample_logits = (0..candidates)
+        .map(|candidate_idx| selector_logits.get(&[sample, candidate_idx]))
+        .collect::<Vec<_>>();
+    let weights = stable_softmax(&sample_logits, "candidate selector head unit-mix");
+    let mixed_radius = weights
+        .iter()
+        .zip(candidate_radii.iter())
+        .map(|(weight, radius)| weight * radius)
+        .sum::<f32>();
+    let mut mixed_unit_sum = vec![0.0f32; projection_dim];
+
+    for (weight, candidate_unit) in weights.iter().zip(candidate_units.iter()) {
+        for feature_idx in 0..projection_dim {
+            mixed_unit_sum[feature_idx] += weight * candidate_unit[feature_idx];
+        }
+    }
+
+    let mixed_unit_norm = vector_l2_norm(&mixed_unit_sum);
+    let mixed_unit = if mixed_unit_norm <= VELOCITY_BANK_TIE_EPSILON {
+        vec![0.0f32; projection_dim]
+    } else {
+        mixed_unit_sum
+            .iter()
+            .map(|value| value / mixed_unit_norm)
+            .collect::<Vec<_>>()
+    };
+    let centered_prediction = scale_vector(&mixed_unit, mixed_radius);
+    let predicted_radius = vector_l2_norm(&centered_prediction);
+
+    assert!(
+        predicted_radius.is_finite() && predicted_radius >= 0.0,
+        "candidate selector unit-mix produced non-finite radius"
+    );
+
+    SignedCandidateUnitMixComponents {
+        centered_prediction,
+        mixed_unit,
+        mixed_unit_norm,
+        mixed_radius,
+        predicted_radius,
+        weights,
+        candidate_radii,
+        candidate_units,
+    }
+}
+
+fn signed_candidate_selector_head_objective_loss_and_grad_from_logits(
+    selector_logits: &Tensor,
+    prior_logits: &Tensor,
+    true_candidate_indices: &[usize],
+    entropy_floor: f32,
+    entropy_regularization_weight: f32,
+    kl_to_prior_weight: f32,
+) -> (ProjectedSignedCandidateSelectorHeadObjectiveReport, Tensor) {
+    assert!(
+        selector_logits.shape.len() == 2,
+        "candidate selector head logits must be rank-2, got {:?}",
+        selector_logits.shape
+    );
+    assert_eq!(
+        selector_logits.shape, prior_logits.shape,
+        "candidate selector head prior/logit shape mismatch"
+    );
+    assert!(
+        entropy_floor.is_finite() && entropy_floor >= 0.0,
+        "candidate selector head entropy floor must be finite and non-negative"
+    );
+    assert!(
+        entropy_regularization_weight.is_finite() && entropy_regularization_weight >= 0.0,
+        "candidate selector head entropy regularization weight must be finite and non-negative"
+    );
+    assert!(
+        kl_to_prior_weight.is_finite() && kl_to_prior_weight >= 0.0,
+        "candidate selector head KL-to-prior weight must be finite and non-negative"
+    );
+
+    let batch_size = selector_logits.shape[0];
+    let candidates = selector_logits.shape[1];
+    assert_eq!(
+        true_candidate_indices.len(),
+        batch_size,
+        "candidate selector head label batch mismatch"
+    );
+    assert!(batch_size > 0, "candidate selector head has no samples");
+    assert_eq!(
+        candidates, 4,
+        "candidate selector head expects signed-velocity-trail K=4"
+    );
+
+    let mut grad_logits = Tensor::zeros(vec![batch_size, candidates]);
+    let mut cross_entropy_sum = 0.0f32;
+    let mut entropy_regularization_sum = 0.0f32;
+    let mut entropy_sum = 0.0f32;
+    let mut kl_sum = 0.0f32;
+    let mut true_probability_sum = 0.0f32;
+    let mut max_probability_sum = 0.0f32;
+
+    for (sample, true_index) in true_candidate_indices.iter().copied().enumerate() {
+        assert!(
+            true_index < candidates,
+            "candidate selector head true index {} exceeds candidate count {}",
+            true_index,
+            candidates
+        );
+
+        let sample_logits = (0..candidates)
+            .map(|candidate_idx| selector_logits.get(&[sample, candidate_idx]))
+            .collect::<Vec<_>>();
+        let sample_prior_logits = (0..candidates)
+            .map(|candidate_idx| prior_logits.get(&[sample, candidate_idx]))
+            .collect::<Vec<_>>();
+        let probabilities = stable_softmax(&sample_logits, "candidate selector head");
+        let prior_probabilities =
+            stable_softmax(&sample_prior_logits, "candidate selector head prior");
+        let true_probability = probabilities[true_index];
+        let cross_entropy = -true_probability.max(VELOCITY_BANK_TIE_EPSILON).ln();
+        let mut entropy = 0.0f32;
+        let mut kl_to_prior = 0.0f32;
+        let mut max_probability = f32::NEG_INFINITY;
+
+        for candidate_idx in 0..candidates {
+            let probability = probabilities[candidate_idx].max(VELOCITY_BANK_TIE_EPSILON);
+            let prior_probability =
+                prior_probabilities[candidate_idx].max(VELOCITY_BANK_TIE_EPSILON);
+            let log_probability = probability.ln();
+            let log_prior_probability = prior_probability.ln();
+
+            entropy -= probabilities[candidate_idx] * log_probability;
+            kl_to_prior += probabilities[candidate_idx] * (log_probability - log_prior_probability);
+            max_probability = max_probability.max(probabilities[candidate_idx]);
+        }
+
+        let entropy_gap = (entropy_floor - entropy).max(0.0);
+        cross_entropy_sum += cross_entropy;
+        entropy_regularization_sum += entropy_gap * entropy_gap;
+        entropy_sum += entropy;
+        kl_sum += kl_to_prior;
+        true_probability_sum += true_probability;
+        max_probability_sum += max_probability;
+
+        for candidate_idx in 0..candidates {
+            let target = if candidate_idx == true_index {
+                1.0
+            } else {
+                0.0
+            };
+            let probability = probabilities[candidate_idx].max(VELOCITY_BANK_TIE_EPSILON);
+            let prior_probability =
+                prior_probabilities[candidate_idx].max(VELOCITY_BANK_TIE_EPSILON);
+            let entropy_hinge_grad = if entropy_gap > 0.0 {
+                2.0 * entropy_regularization_weight
+                    * entropy_gap
+                    * probabilities[candidate_idx]
+                    * (probability.ln() + entropy)
+            } else {
+                0.0
+            };
+            let kl_grad = probabilities[candidate_idx]
+                * (probability.ln() - prior_probability.ln() - kl_to_prior);
+            let value = (probabilities[candidate_idx] - target
+                + entropy_hinge_grad
+                + kl_to_prior_weight * kl_grad)
+                / batch_size as f32;
+
+            assert!(
+                value.is_finite(),
+                "candidate selector head produced non-finite logit gradient"
+            );
+            grad_logits.set(&[sample, candidate_idx], value);
+        }
+    }
+
+    let entropy_regularization_loss = entropy_regularization_weight * entropy_regularization_sum;
+    let kl_to_prior_loss = kl_to_prior_weight * kl_sum;
+    let total_loss = cross_entropy_sum + entropy_regularization_loss + kl_to_prior_loss;
+
+    (
+        ProjectedSignedCandidateSelectorHeadObjectiveReport {
+            loss: total_loss / batch_size as f32,
+            cross_entropy_loss: cross_entropy_sum / batch_size as f32,
+            entropy_regularization_loss: entropy_regularization_loss / batch_size as f32,
+            kl_to_prior_loss: kl_to_prior_loss / batch_size as f32,
+            entropy: entropy_sum / batch_size as f32,
+            true_probability: true_probability_sum / batch_size as f32,
+            max_probability: max_probability_sum / batch_size as f32,
+            samples: batch_size,
+            candidates,
+        },
+        grad_logits,
+    )
 }
 
 fn centered_radius_grad_to_residual_logits_grad(

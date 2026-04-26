@@ -22,6 +22,9 @@ use projected_temporal::{
     projected_signed_candidate_radius_logit_head_features,
     projected_signed_candidate_radius_logit_head_integration_from_base_seed,
     projected_signed_candidate_radius_logit_mixing_loss_and_grad,
+    projected_signed_candidate_selector_head_features,
+    projected_signed_candidate_selector_head_integration_from_base_seed,
+    projected_signed_candidate_selector_head_loss_and_grad,
     projected_signed_candidate_selector_probe_from_base_seed,
     projected_signed_candidate_unit_mix_head_features,
     projected_signed_candidate_unit_mix_head_integration_from_base_seed,
@@ -39,7 +42,8 @@ use projected_temporal::{
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed, ProjectedSignedCandidateCentroidIntegration,
-    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedCandidateSelectorProbe,
+    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedCandidateSelectorHeadIntegration,
+    ProjectedSignedCandidateSelectorHeadObjectiveReport, ProjectedSignedCandidateSelectorProbe,
     ProjectedSignedCandidateUnitMixHeadIntegration, ProjectedSignedCandidateUnitMixObjectiveReport,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
     ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionGeometryCounterfactual,
@@ -74,6 +78,12 @@ const DEFAULT_SIGNED_CANDIDATE_RADIUS_HEAD_WEIGHT: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_LR: f32 = 0.01;
 const DEFAULT_SIGNED_CANDIDATE_UNIT_MIX_HEAD_WEIGHT: f32 = 1.0;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE: f32 = 0.05;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_LR: f32 = 0.05;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT: f32 = 1.0;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR: f32 = 1.0;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT: f32 = 0.1;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT: f32 = 0.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS: usize = 200;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR: f32 = 0.05;
@@ -85,6 +95,9 @@ const SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_OUTPUT_DIM: usize =
 const SIGNED_CANDIDATE_UNIT_MIX_HEAD_FEATURE_DIM: usize =
     SIGNED_CANDIDATE_RADIUS_LOGIT_HEAD_FEATURE_DIM;
 const SIGNED_CANDIDATE_UNIT_MIX_HEAD_OUTPUT_DIM: usize = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+const SIGNED_CANDIDATE_SELECTOR_HEAD_FEATURE_DIM: usize =
+    SIGNED_CANDIDATE_UNIT_MIX_HEAD_FEATURE_DIM;
+const SIGNED_CANDIDATE_SELECTOR_HEAD_OUTPUT_DIM: usize = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
 
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateCentroidIntegrationRunConfig {
@@ -107,6 +120,17 @@ struct SignedCandidateUnitMixHeadRunConfig {
     softmax_temperature: f32,
     learning_rate: f32,
     loss_weight: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateSelectorHeadRunConfig {
+    enabled: bool,
+    softmax_temperature: f32,
+    learning_rate: f32,
+    loss_weight: f32,
+    entropy_floor: f32,
+    entropy_weight: f32,
+    kl_weight: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -206,6 +230,16 @@ fn make_signed_candidate_unit_mix_head() -> Linear {
             SIGNED_CANDIDATE_UNIT_MIX_HEAD_OUTPUT_DIM,
         ]),
         Tensor::zeros(vec![SIGNED_CANDIDATE_UNIT_MIX_HEAD_OUTPUT_DIM]),
+    )
+}
+
+fn make_signed_candidate_selector_head() -> Linear {
+    Linear::new(
+        Tensor::zeros(vec![
+            SIGNED_CANDIDATE_SELECTOR_HEAD_FEATURE_DIM,
+            SIGNED_CANDIDATE_SELECTOR_HEAD_OUTPUT_DIM,
+        ]),
+        Tensor::zeros(vec![SIGNED_CANDIDATE_SELECTOR_HEAD_OUTPUT_DIM]),
     )
 }
 
@@ -338,6 +372,81 @@ impl SignedCandidateUnitMixHeadRunConfig {
     }
 }
 
+impl SignedCandidateSelectorHeadRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let enabled = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-selector-head")
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD").unwrap_or(false);
+        let softmax_temperature =
+            parse_f32_arg(&args, "--signed-candidate-selector-head-temperature")
+                .or_else(|| {
+                    parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE")
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE);
+        let learning_rate = parse_f32_arg(&args, "--signed-candidate-selector-head-lr")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_LR);
+        let loss_weight = parse_f32_arg(&args, "--signed-candidate-selector-head-weight")
+            .or_else(|| parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT"))
+            .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT);
+        let entropy_floor =
+            parse_nonnegative_f32_arg(&args, "--signed-candidate-selector-head-entropy-floor")
+                .or_else(|| {
+                    parse_nonnegative_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR")
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR);
+        let entropy_weight =
+            parse_nonnegative_f32_arg(&args, "--signed-candidate-selector-head-entropy-weight")
+                .or_else(|| {
+                    parse_nonnegative_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT")
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT);
+        let kl_weight =
+            parse_nonnegative_f32_arg(&args, "--signed-candidate-selector-head-kl-weight")
+                .or_else(|| {
+                    parse_nonnegative_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT")
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT);
+
+        assert!(
+            softmax_temperature.is_finite() && softmax_temperature > 0.0,
+            "signed candidate selector head temperature must be finite and positive"
+        );
+        assert!(
+            learning_rate.is_finite() && learning_rate > 0.0,
+            "signed candidate selector head lr must be finite and positive"
+        );
+        assert!(
+            loss_weight.is_finite() && loss_weight > 0.0,
+            "signed candidate selector head weight must be finite and positive"
+        );
+        assert!(
+            entropy_floor.is_finite() && entropy_floor >= 0.0,
+            "signed candidate selector head entropy floor must be finite and non-negative"
+        );
+        assert!(
+            entropy_weight.is_finite() && entropy_weight >= 0.0,
+            "signed candidate selector head entropy weight must be finite and non-negative"
+        );
+        assert!(
+            kl_weight.is_finite() && kl_weight >= 0.0,
+            "signed candidate selector head kl weight must be finite and non-negative"
+        );
+
+        Self {
+            enabled,
+            softmax_temperature,
+            learning_rate,
+            loss_weight,
+            entropy_floor,
+            entropy_weight,
+            kl_weight,
+        }
+    }
+}
+
 impl SignedCandidateSelectorProbeRunConfig {
     fn from_args_and_env() -> Self {
         let args = std::env::args().collect::<Vec<_>>();
@@ -422,6 +531,8 @@ fn main() {
         SignedCandidateRadiusHeadRunConfig::from_args_and_env();
     let signed_candidate_unit_mix_head_config =
         SignedCandidateUnitMixHeadRunConfig::from_args_and_env();
+    let signed_candidate_selector_head_config =
+        SignedCandidateSelectorHeadRunConfig::from_args_and_env();
     let signed_candidate_selector_probe_config =
         SignedCandidateSelectorProbeRunConfig::from_args_and_env();
 
@@ -500,6 +611,16 @@ fn main() {
         signed_candidate_unit_mix_head_config.loss_weight
     );
     println!(
+        "temporal run config | signed candidate selector head enabled {} | softmax_temperature {} | lr {} | weight {} | entropy_floor {} | entropy_weight {} | kl_weight {}",
+        signed_candidate_selector_head_config.enabled,
+        signed_candidate_selector_head_config.softmax_temperature,
+        signed_candidate_selector_head_config.learning_rate,
+        signed_candidate_selector_head_config.loss_weight,
+        signed_candidate_selector_head_config.entropy_floor,
+        signed_candidate_selector_head_config.entropy_weight,
+        signed_candidate_selector_head_config.kl_weight
+    );
+    println!(
         "temporal run config | signed candidate selector probe enabled {} | softmax_temperature {} | steps {} | lr {}",
         signed_candidate_selector_probe_config.enabled,
         signed_candidate_selector_probe_config.softmax_temperature,
@@ -513,6 +634,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_head_config,
             signed_candidate_selector_probe_config,
             make_predictor(),
         ),
@@ -521,6 +643,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_head_config,
             signed_candidate_selector_probe_config,
             make_bottleneck_predictor(),
         ),
@@ -529,6 +652,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_head_config,
             signed_candidate_selector_probe_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
@@ -537,6 +661,7 @@ fn main() {
             signed_candidate_centroid_integration_config,
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
+            signed_candidate_selector_head_config,
             signed_candidate_selector_probe_config,
             make_state_radius_predictor(),
         ),
@@ -548,6 +673,7 @@ fn run_with_predictor<P>(
     signed_candidate_centroid_integration_config: SignedCandidateCentroidIntegrationRunConfig,
     signed_candidate_radius_head_config: SignedCandidateRadiusHeadRunConfig,
     signed_candidate_unit_mix_head_config: SignedCandidateUnitMixHeadRunConfig,
+    signed_candidate_selector_head_config: SignedCandidateSelectorHeadRunConfig,
     signed_candidate_selector_probe_config: SignedCandidateSelectorProbeRunConfig,
     predictor: P,
 ) where
@@ -624,6 +750,9 @@ fn run_with_predictor<P>(
     let mut signed_candidate_unit_mix_head = signed_candidate_unit_mix_head_config
         .enabled
         .then(make_signed_candidate_unit_mix_head);
+    let mut signed_candidate_selector_head = signed_candidate_selector_head_config
+        .enabled
+        .then(make_signed_candidate_selector_head);
 
     let _initial_mixed_val_z_t = model.encode(&mixed_val_probe_t);
     let initial_projection_t = model.project_latent(&train_probe_t);
@@ -672,6 +801,13 @@ fn run_with_predictor<P>(
             signed_candidate_unit_mix_head.as_ref(),
             run_config,
             signed_candidate_unit_mix_head_config,
+        );
+    let initial_signed_candidate_selector_head_integration =
+        maybe_projected_signed_candidate_selector_head_integration(
+            &model,
+            signed_candidate_selector_head.as_ref(),
+            run_config,
+            signed_candidate_selector_head_config,
         );
     let initial_signed_candidate_selector_probe = maybe_projected_signed_candidate_selector_probe(
         &model,
@@ -736,6 +872,10 @@ fn run_with_predictor<P>(
         "initial",
         initial_signed_candidate_unit_mix_head_integration,
     );
+    print_signed_candidate_selector_head_integration(
+        "initial",
+        initial_signed_candidate_selector_head_integration,
+    );
     print_signed_candidate_selector_probe("initial", initial_signed_candidate_selector_probe);
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
@@ -787,6 +927,15 @@ fn run_with_predictor<P>(
                     signed_candidate_unit_mix_head.as_mut(),
                     run_config,
                     signed_candidate_unit_mix_head_config,
+                    &x_t,
+                    &x_t1,
+                );
+            let signed_candidate_selector_head_step =
+                maybe_train_projected_signed_candidate_selector_head(
+                    model,
+                    signed_candidate_selector_head.as_mut(),
+                    run_config,
+                    signed_candidate_selector_head_config,
                     &x_t,
                     &x_t1,
                 );
@@ -922,6 +1071,10 @@ fn run_with_predictor<P>(
                     &format!("step {:03} train", step),
                     signed_candidate_unit_mix_head_step,
                 );
+                print_signed_candidate_selector_head_objective_report(
+                    &format!("step {:03} train", step),
+                    signed_candidate_selector_head_step,
+                );
             }
 
             total_loss
@@ -984,6 +1137,13 @@ fn run_with_predictor<P>(
             signed_candidate_unit_mix_head.as_ref(),
             run_config,
             signed_candidate_unit_mix_head_config,
+        );
+    let final_signed_candidate_selector_head_integration =
+        maybe_projected_signed_candidate_selector_head_integration(
+            &model,
+            signed_candidate_selector_head.as_ref(),
+            run_config,
+            signed_candidate_selector_head_config,
         );
     let final_signed_candidate_selector_probe = maybe_projected_signed_candidate_selector_probe(
         &model,
@@ -1072,6 +1232,10 @@ fn run_with_predictor<P>(
     print_signed_candidate_unit_mix_head_integration(
         "final",
         final_signed_candidate_unit_mix_head_integration,
+    );
+    print_signed_candidate_selector_head_integration(
+        "final",
+        final_signed_candidate_selector_head_integration,
     );
     print_signed_candidate_selector_probe("final", final_signed_candidate_selector_probe);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
@@ -1210,6 +1374,51 @@ where
     Some(report)
 }
 
+fn maybe_train_projected_signed_candidate_selector_head<P>(
+    model: &ProjectedVisionJepa<P>,
+    selector_head: Option<&mut Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateSelectorHeadRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<ProjectedSignedCandidateSelectorHeadObjectiveReport>
+where
+    P: PredictorModule,
+{
+    let selector_head = selector_head?;
+    assert!(
+        head_config.enabled,
+        "candidate selector head missing config"
+    );
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate selector head is only supported for signed-velocity-trail projected runs"
+    );
+
+    let features = projected_signed_candidate_selector_head_features(
+        model,
+        x_t,
+        head_config.softmax_temperature,
+    );
+    let selector_logits = selector_head.forward(&features);
+    let (report, grad_logits) = projected_signed_candidate_selector_head_loss_and_grad(
+        model,
+        x_t,
+        x_t1,
+        &selector_logits,
+        head_config.softmax_temperature,
+        head_config.entropy_floor,
+        head_config.entropy_weight,
+        head_config.kl_weight,
+    );
+    let scaled_grad = scale_tensor(&grad_logits, head_config.loss_weight);
+    let grads = selector_head.backward(&features, &scaled_grad);
+    selector_head.sgd_step(&grads, head_config.learning_rate);
+
+    Some(report)
+}
+
 fn parse_arg_value<'a>(args: &'a [String], flag: &'a str) -> Option<&'a str> {
     args.windows(2).find_map(|window| {
         if window[0] == flag {
@@ -1226,6 +1435,12 @@ fn parse_f32_arg(args: &[String], flag: &str) -> Option<f32> {
         .filter(|value| value.is_finite() && *value > 0.0)
 }
 
+fn parse_nonnegative_f32_arg(args: &[String], flag: &str) -> Option<f32> {
+    parse_arg_value(args, flag)
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
+}
+
 fn parse_usize_arg(args: &[String], flag: &str) -> Option<usize> {
     parse_arg_value(args, flag)
         .and_then(|value| value.parse::<usize>().ok())
@@ -1237,6 +1452,13 @@ fn parse_positive_f32_env(name: &str) -> Option<f32> {
         .ok()
         .and_then(|value| value.parse::<f32>().ok())
         .filter(|value| value.is_finite() && *value > 0.0)
+}
+
+fn parse_nonnegative_f32_env(name: &str) -> Option<f32> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<f32>().ok())
+        .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 fn parse_positive_usize_env(name: &str) -> Option<usize> {
@@ -1675,6 +1897,41 @@ where
     )
 }
 
+fn maybe_projected_signed_candidate_selector_head_integration<P>(
+    model: &ProjectedVisionJepa<P>,
+    selector_head: Option<&Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateSelectorHeadRunConfig,
+) -> Option<ProjectedSignedCandidateSelectorHeadIntegration>
+where
+    P: PredictorModule,
+{
+    if !head_config.enabled {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate selector head is only supported for signed-velocity-trail projected runs"
+    );
+    let selector_head = selector_head.expect("enabled candidate selector head missing head");
+
+    Some(
+        projected_signed_candidate_selector_head_integration_from_base_seed(
+            model,
+            selector_head,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            head_config.softmax_temperature,
+            run_config.total_steps,
+            head_config.learning_rate,
+            head_config.entropy_floor,
+            head_config.entropy_weight,
+            head_config.kl_weight,
+        ),
+    )
+}
+
 fn print_signed_candidate_unit_mix_head_integration(
     tag: &str,
     integration: Option<ProjectedSignedCandidateUnitMixHeadIntegration>,
@@ -1699,6 +1956,41 @@ fn print_signed_candidate_unit_mix_head_integration(
             integration.objective_report.true_weight,
             integration.softmax_temperature,
             integration.samples,
+            integration.candidates,
+        );
+    }
+}
+
+fn print_signed_candidate_selector_head_integration(
+    tag: &str,
+    integration: Option<ProjectedSignedCandidateSelectorHeadIntegration>,
+) {
+    if let Some(integration) = integration {
+        println!(
+            "{} | signed candidate selector head integration learned_selector_mrr {:.6} | learned_selector_top1 {:.6} | learned_selector_margin {:.6} | learned_selector_positive_margin_rate {:.6} | learned_selector_sign_margin {:.6} | learned_selector_speed_margin {:.6} | learned_selector_norm_ratio {:.6} | objective_loss {:.6} | objective_ce {:.6} | objective_entropy_reg {:.6} | objective_kl_to_prior {:.6} | objective_entropy {:.6} | objective_true_probability {:.6} | objective_max_probability {:.6} | softmax_temperature {:.6} | selector_steps {} | lr {:.6} | entropy_floor {:.6} | entropy_weight {:.6} | kl_weight {:.6} | support_samples {} | query_samples {} | candidates {}",
+            tag,
+            integration.learned_selector.mrr,
+            integration.learned_selector.top1,
+            integration.learned_selector.margin,
+            integration.learned_selector.positive_margin_rate,
+            integration.learned_selector.sign_margin,
+            integration.learned_selector.speed_margin,
+            integration.learned_selector.norm_ratio,
+            integration.objective_report.loss,
+            integration.objective_report.cross_entropy_loss,
+            integration.objective_report.entropy_regularization_loss,
+            integration.objective_report.kl_to_prior_loss,
+            integration.objective_report.entropy,
+            integration.objective_report.true_probability,
+            integration.objective_report.max_probability,
+            integration.softmax_temperature,
+            integration.selector_steps,
+            integration.learning_rate,
+            integration.entropy_floor,
+            integration.entropy_regularization_weight,
+            integration.kl_to_prior_weight,
+            integration.support_samples,
+            integration.query_samples,
             integration.candidates,
         );
     }
@@ -1780,6 +2072,27 @@ fn print_signed_candidate_unit_mix_objective_report(
             report.max_weight,
             report.true_weight,
             report.samples,
+        );
+    }
+}
+
+fn print_signed_candidate_selector_head_objective_report(
+    tag: &str,
+    report: Option<ProjectedSignedCandidateSelectorHeadObjectiveReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed candidate selector head objective loss {:.6} | ce {:.6} | entropy_reg {:.6} | kl_to_prior {:.6} | entropy {:.6} | true_probability {:.6} | max_probability {:.6} | samples {} | candidates {}",
+            tag,
+            report.loss,
+            report.cross_entropy_loss,
+            report.entropy_regularization_loss,
+            report.kl_to_prior_loss,
+            report.entropy,
+            report.true_probability,
+            report.max_probability,
+            report.samples,
+            report.candidates,
         );
     }
 }
