@@ -12,7 +12,7 @@ The current crate is `jepra-core`. The active proof path is temporal visual pred
 | Core Rust JEPA primitives | Active | Tensor ops, linear layers, predictors, encoders, JEPA wrappers, losses, and telemetry live in `crates/jepra-core`. |
 | Temporal proof tasks | Active | `random-speed`, `velocity-trail`, and `signed-velocity-trail` examples provide deterministic training/validation loops. |
 | Compact model research | Active | Conservative defaults stay baseline; bottleneck, residual, state-radius, and signed candidate heads are opt-in probes. |
-| Current bottleneck | In progress | Signed candidate selection now has a direct entropy-floor selector head that passed seed `11000`; three-seed validation is pending. |
+| Current bottleneck | In progress | Signed candidate selection now has a direct entropy-floor selector head that passed fixed three-seed validation; reporting/tooling is the next step. |
 | Public API/product polish | Early | The framework is not yet a stable end-user training SDK. Current work is still proof-path hardening. |
 
 ## System Map
@@ -37,7 +37,8 @@ flowchart TD
   D --> E[radius-only heads rejected]
   E --> F[unit-mix collapse diagnosed]
   F --> G[entropy-floor selector head passes seed 11000]
-  G --> H{three-seed validation pending}
+  G --> H[three-seed validation passed]
+  H --> I{selector reporting/tooling next}
 ```
 
 ## Current Scope
@@ -282,8 +283,8 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - `--signed-candidate-radius-logit-head` adds the candidate-logit residual radius mixer. It zero-initializes residual logits so the initial prediction matches report-only softmax radius, then trains only residual logits with the centered-radius scalar primitive. Seed `11000`, `300` steps, temperature `0.05`, keeps validation/drift healthy but fails the kill-switch: `learned_radius_top1=0.343750`, matching report-only softmax on that seed and below the `~0.364583` proof gate, while norm ratio worsens to `1.540515`.
 - `--signed-candidate-unit-mix-head` adds a zero-initialized candidate-centroid unit/radius mixer. Seed `11000`, `300` steps, temperature `0.05`, keeps base validation/drift and unit geometry healthy (`val=0.387588`, `drift=0.009244`, `unit_ppr=0.453125`, `unit_mrr=0.635417`), but the head collapses to near-deterministic wrong selection (`learned_mix_top1=0.250000`, `objective_entropy=0.000008`, `objective_true_weight=0.249999`). Keep it as a diagnostic hook, not a promoted fix.
 - `--signed-candidate-selector-probe` adds a report-only normalized linear selector probe over `[projection, prior_logits, candidate_radii]`. Seed `11000`, `300` steps, temperature `0.05`, probe steps `20`, keeps base validation/drift unchanged and shows held-out selector signal (`query_trained_top1=0.437500`, `query_trained_mrr=0.640625`, entropy `1.205694`) above prior-only (`prior_top1=0.375000`).
-- `--signed-candidate-selector-head` adds a direct zero-initialized trainable selector over normalized candidate features with supervised CE, an entropy-floor hinge, and KL-to-prior defaulted off. Seed `11000`, `300` steps, temperature `0.05`, entropy floor `1.0`, weight `0.1`, keeps validation/drift and unit geometry healthy (`val=0.387588`, `drift=0.009244`, `unit_ppr=0.453125`) and clears the single-seed proof gate (`learned_selector_top1=0.390625`, entropy `1.237072`, true probability `0.331317`).
-- Decision: scalar/logit radius heads and the candidate unit-mix head remain diagnostic hooks. The direct entropy-floor selector is the first trainable candidate-centered path to clear the seed-`11000` gate; next evidence step is a three-seed validation before promotion or broader architecture work.
+- `--signed-candidate-selector-head` adds a direct zero-initialized trainable selector over normalized candidate features with supervised CE, an entropy-floor hinge, and KL-to-prior defaulted off. Fixed three-seed evidence (`11000..11002`, `300` steps, temperature `0.05`, entropy floor `1.0`, weight `0.1`) keeps validation/drift and unit geometry healthy (`mean val=0.387471`, `mean drift=0.009131`, `unit_ppr=0.453125`) and clears the proof gate (`mean learned_selector_top1=0.390625`, entropy `1.233952`, true probability `0.333734`).
+- Decision: scalar/logit radius heads and the candidate unit-mix head remain diagnostic hooks. The direct entropy-floor selector is the first trainable candidate-centered path to clear fixed three-seed validation; next implementation step is making selector metrics first-class in comparison/report tooling before promotion or broader architecture work.
 
 Candidate-centroid-aware geometry acceptance gate:
 
