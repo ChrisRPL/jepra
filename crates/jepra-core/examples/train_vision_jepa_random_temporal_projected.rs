@@ -4,13 +4,23 @@ mod projected_temporal;
 mod temporal_vision;
 
 use jepra_core::{
-    projection_stats, representation_stats, BottleneckPredictor, Linear, Predictor,
-    PredictorModule, ProjectedVisionJepa, ResidualBottleneckPredictor,
-    SignedAngularRadialObjectiveReport, SignedBankSoftmaxObjectiveReport,
-    SignedCenteredRadiusScalarObjectiveReport, SignedMarginObjectiveReport,
-    SignedRadialCalibrationReport, StateRadiusPredictor, Tensor,
+    BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
+    ResidualBottleneckPredictor, SignedAngularRadialObjectiveReport,
+    SignedBankSoftmaxObjectiveReport, SignedCenteredRadiusScalarObjectiveReport,
+    SignedMarginObjectiveReport, SignedRadialCalibrationReport, StateRadiusPredictor, Tensor,
+    projection_stats, representation_stats,
 };
 use projected_temporal::{
+    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
+    PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    ProjectedSignedCandidateCentroidIntegration, ProjectedSignedCandidateRadiusHeadIntegration,
+    ProjectedSignedCandidateSelectorHeadIntegration,
+    ProjectedSignedCandidateSelectorHeadObjectiveReport, ProjectedSignedCandidateSelectorProbe,
+    ProjectedSignedCandidateUnitMixHeadIntegration, ProjectedSignedCandidateUnitMixObjectiveReport,
+    ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
+    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionGeometryCounterfactual,
+    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
+    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
     projected_signed_angular_radial_objective_loss_and_grad,
     projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_bank_softmax_objective_loss_and_grad,
@@ -41,26 +51,17 @@ use projected_temporal::{
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
-    projected_velocity_bank_ranking_from_base_seed, ProjectedSignedCandidateCentroidIntegration,
-    ProjectedSignedCandidateRadiusHeadIntegration, ProjectedSignedCandidateSelectorHeadIntegration,
-    ProjectedSignedCandidateSelectorHeadObjectiveReport, ProjectedSignedCandidateSelectorProbe,
-    ProjectedSignedCandidateUnitMixHeadIntegration, ProjectedSignedCandidateUnitMixObjectiveReport,
-    ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
-    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionGeometryCounterfactual,
-    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
-    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
-    PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
-    PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
+    projected_velocity_bank_ranking_from_base_seed,
 };
 use temporal_vision::{
+    CompactEncoderMode, PredictorMode, SIGNED_VELOCITY_BANK_CANDIDATE_DX, TemporalTaskMode,
     assert_required_motion_modes_for_task, assert_temporal_contract,
     assert_temporal_experiment_improved, make_compact_frozen_encoder,
     make_compact_frozen_encoder_signed_direction,
     make_compact_frozen_encoder_signed_direction_magnitude, make_compact_frozen_encoder_stronger,
     make_frozen_encoder, make_train_batch_for_config, make_validation_batch_for_config,
     make_validation_batch_with_required_motion_modes_for_config, print_batch_summary_for_task,
-    print_motion_mode_summary_for_task, print_representation_stats, CompactEncoderMode,
-    PredictorMode, TemporalTaskMode, SIGNED_VELOCITY_BANK_CANDIDATE_DX,
+    print_motion_mode_summary_for_task, print_representation_stats,
 };
 
 const PROJECTION_DIM: usize = 4;
@@ -279,13 +280,12 @@ impl SignedCandidateRadiusHeadRunConfig {
         let enabled = scalar_flag
             || logit_flag
             || parse_bool_env("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD").unwrap_or(false);
-        let parsed_mode = parse_candidate_radius_head_mode(&args).unwrap_or_else(|| {
-            if logit_flag {
-                SignedCandidateRadiusHeadMode::LogitResidual
-            } else {
-                SignedCandidateRadiusHeadMode::ScalarResidual
-            }
-        });
+        let default_mode = if logit_flag {
+            SignedCandidateRadiusHeadMode::LogitResidual
+        } else {
+            SignedCandidateRadiusHeadMode::ScalarResidual
+        };
+        let parsed_mode = parse_candidate_radius_head_mode(&args).unwrap_or(default_mode);
         assert!(
             !(logit_flag && parsed_mode == SignedCandidateRadiusHeadMode::ScalarResidual),
             "--signed-candidate-radius-logit-head cannot be combined with scalar-residual mode"
@@ -491,7 +491,7 @@ impl SignedCandidateSelectorProbeRunConfig {
 
 fn parse_candidate_radius_head_mode(args: &[String]) -> Option<SignedCandidateRadiusHeadMode> {
     parse_arg_value(args, "--signed-candidate-radius-head-mode")
-        .map(|raw_mode| parse_candidate_radius_head_mode_value(raw_mode))
+        .map(parse_candidate_radius_head_mode_value)
         .or_else(|| {
             std::env::var("JEPRA_SIGNED_CANDIDATE_RADIUS_HEAD_MODE")
                 .ok()

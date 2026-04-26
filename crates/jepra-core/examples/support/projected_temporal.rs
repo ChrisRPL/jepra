@@ -1,17 +1,17 @@
 use super::temporal_vision::{
+    BATCH_SIZE, SIGNED_VELOCITY_BANK_CANDIDATE_DX, TemporalTaskMode, VELOCITY_BANK_CANDIDATE_DX,
     make_signed_velocity_trail_candidate_target_batch, make_temporal_batch_for_task,
-    make_velocity_trail_candidate_target_batch, signed_motion_dx_for_sample, TemporalTaskMode,
-    BATCH_SIZE, SIGNED_VELOCITY_BANK_CANDIDATE_DX, VELOCITY_BANK_CANDIDATE_DX,
+    make_velocity_trail_candidate_target_batch, signed_motion_dx_for_sample,
 };
 use jepra_core::{
-    gaussian_moment_regularizer, mse_loss, signed_angular_radial_objective_loss_and_grad,
-    signed_bank_softmax_objective_loss_and_grad, signed_centered_radius_scalar_loss_and_grad,
-    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
     EmbeddingEncoder, Linear, PredictorModule, ProjectedVisionJepa,
     SignedAngularRadialObjectiveConfig, SignedAngularRadialObjectiveReport,
     SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
     SignedCenteredRadiusScalarObjectiveReport, SignedMarginObjectiveConfig,
     SignedMarginObjectiveReport, SignedRadialCalibrationReport, Tensor,
+    gaussian_moment_regularizer, mse_loss, signed_angular_radial_objective_loss_and_grad,
+    signed_bank_softmax_objective_loss_and_grad, signed_centered_radius_scalar_loss_and_grad,
+    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
 };
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -2165,6 +2165,7 @@ where
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn projected_signed_candidate_selector_head_loss_and_grad<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -2489,6 +2490,7 @@ where
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn projected_signed_candidate_selector_head_integration_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
     selector_head: &Linear,
@@ -5313,6 +5315,7 @@ where
     outcomes
 }
 
+#[allow(clippy::too_many_arguments)]
 fn signed_prediction_counterfactual_outcome(
     candidate_dx_bank: &[isize],
     candidate_targets: &[Tensor],

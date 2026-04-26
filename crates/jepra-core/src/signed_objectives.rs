@@ -202,8 +202,7 @@ pub fn signed_bank_softmax_objective_loss_and_grad(
     let mut top1_count = 0usize;
     let mut true_probability_sum = 0.0f32;
 
-    for sample in 0..batch_size {
-        let true_index = true_candidate_indices[sample];
+    for (sample, &true_index) in true_candidate_indices.iter().enumerate() {
         assert!(
             true_index < candidate_targets.len(),
             "signed bank softmax true index {} out of bounds for {} candidates",
@@ -322,8 +321,7 @@ pub fn signed_radial_calibration_loss_and_grad(
     let mut target_norm_sum = 0.0f32;
     let mut norm_ratio_sum = 0.0f32;
 
-    for sample in 0..batch_size {
-        let true_index = true_candidate_indices[sample];
+    for (sample, &true_index) in true_candidate_indices.iter().enumerate() {
         assert!(
             true_index < candidate_targets.len(),
             "signed radial calibration true index {} out of bounds for {} candidates",
@@ -357,9 +355,8 @@ pub fn signed_radial_calibration_loss_and_grad(
 
         if prediction_norm > RADIAL_EPSILON {
             let grad_scale = 2.0 * norm_error / (batch_size as f32 * prediction_norm);
-            for feature_idx in 0..projection_dim {
-                let value = grad.get(&[sample, feature_idx])
-                    + grad_scale * prediction_centered[feature_idx];
+            for (feature_idx, centered_value) in prediction_centered.iter().enumerate() {
+                let value = grad.get(&[sample, feature_idx]) + grad_scale * *centered_value;
                 grad.set(&[sample, feature_idx], value);
             }
         }
@@ -388,8 +385,7 @@ pub fn signed_candidate_centered_radius_targets(
     );
     let mut targets = Vec::with_capacity(batch_size);
 
-    for sample in 0..batch_size {
-        let true_index = true_candidate_indices[sample];
+    for (sample, &true_index) in true_candidate_indices.iter().enumerate() {
         assert!(
             true_index < candidate_targets.len(),
             "signed candidate centered radius true index {} out of bounds for {} candidates",
@@ -525,8 +521,7 @@ pub fn signed_angular_radial_objective_loss_and_grad(
     let mut target_norm_sum = 0.0f32;
     let mut norm_ratio_sum = 0.0f32;
 
-    for sample in 0..batch_size {
-        let true_index = true_candidate_indices[sample];
+    for (sample, &true_index) in true_candidate_indices.iter().enumerate() {
         assert!(
             true_index < candidate_targets.len(),
             "signed angular-radial true index {} out of bounds for {} candidates",
@@ -574,18 +569,16 @@ pub fn signed_angular_radial_objective_loss_and_grad(
         if prediction_norm > RADIAL_EPSILON {
             let radial_grad_scale =
                 config.radial_weight * 2.0 * norm_error / (batch_size as f32 * prediction_norm);
-            for feature_idx in 0..projection_dim {
-                let value = grad.get(&[sample, feature_idx])
-                    + radial_grad_scale * prediction_centered[feature_idx];
+            for (feature_idx, centered_value) in prediction_centered.iter().enumerate() {
+                let value = grad.get(&[sample, feature_idx]) + radial_grad_scale * *centered_value;
                 grad.set(&[sample, feature_idx], value);
             }
         }
 
         if prediction_norm > RADIAL_EPSILON && target_norm > RADIAL_EPSILON {
-            for feature_idx in 0..projection_dim {
+            for (feature_idx, prediction_value) in prediction_centered.iter().enumerate() {
                 let angular_grad = -target_centered[feature_idx] / (prediction_norm * target_norm)
-                    + cosine * prediction_centered[feature_idx]
-                        / (prediction_norm * prediction_norm);
+                    + cosine * *prediction_value / (prediction_norm * prediction_norm);
                 let value = grad.get(&[sample, feature_idx])
                     + config.angular_weight * angular_grad / batch_size as f32;
                 grad.set(&[sample, feature_idx], value);
@@ -667,8 +660,7 @@ pub fn signed_margin_objective_loss_and_grad(
     let mut active_sign_pairs = 0usize;
     let mut active_speed_pairs = 0usize;
 
-    for sample in 0..batch_size {
-        let true_index = true_candidate_indices[sample];
+    for (sample, &true_index) in true_candidate_indices.iter().enumerate() {
         assert!(
             true_index < candidate_targets.len(),
             "signed margin true index {} out of bounds for {} candidates",
@@ -953,10 +945,10 @@ fn best_candidate_index(
     let mut best_index = None;
     let mut best_distance = f32::INFINITY;
 
-    for candidate_index in 0..candidate_dx.len() {
-        if include_candidate(candidate_index) && distances[candidate_index] < best_distance {
+    for (candidate_index, &distance) in distances.iter().enumerate().take(candidate_dx.len()) {
+        if include_candidate(candidate_index) && distance < best_distance {
             best_index = Some(candidate_index);
-            best_distance = distances[candidate_index];
+            best_distance = distance;
         }
     }
 

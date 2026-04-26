@@ -1237,11 +1237,10 @@ fn make_signed_velocity_trail_temporal_batch(batch_size: usize, seed: u64) -> (T
     let min_col_t = FAST_MOTION_DX;
     let max_col_t = IMAGE_SIZE - SQUARE_SIZE - FAST_MOTION_DX;
 
-    for sample in 0..batch_size {
+    for (sample, &motion_dx) in signed_motion_dx.iter().enumerate() {
         let row = rng.gen_range(0..=max_row);
         let col_t = rng.gen_range(min_col_t..=max_col_t);
         let intensity_t = rng.gen_range(0.65f32..0.95f32);
-        let motion_dx = signed_motion_dx[sample];
         let trail_col_t = (col_t as isize - motion_dx) as usize;
         let col_t1 = (col_t as isize + motion_dx) as usize;
         let trail_intensity_t = intensity_t * VELOCITY_TRAIL_INTENSITY_RATIO;

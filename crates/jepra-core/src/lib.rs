@@ -20,19 +20,19 @@ pub use predictor::{
     StateRadiusPredictorGrads,
 };
 pub use regularizers::{
-    add_projector_drift_regularizer_grad, combine_projection_grads, gaussian_moment_regularizer,
-    gaussian_moment_regularizer_grad, projection_stats, projector_drift_regularizer,
-    projector_drift_regularizer_grads, representation_health_stats, representation_stats,
-    RepresentationHealthStats,
+    RepresentationHealthStats, add_projector_drift_regularizer_grad, combine_projection_grads,
+    gaussian_moment_regularizer, gaussian_moment_regularizer_grad, projection_stats,
+    projector_drift_regularizer, projector_drift_regularizer_grads, representation_health_stats,
+    representation_stats,
 };
 pub use signed_objectives::{
-    signed_angular_radial_objective_loss_and_grad, signed_bank_softmax_objective_loss_and_grad,
-    signed_candidate_centered_radius_targets, signed_centered_radius_scalar_loss_and_grad,
-    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
     SignedAngularRadialObjectiveConfig, SignedAngularRadialObjectiveReport,
     SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
     SignedCenteredRadiusScalarObjectiveReport, SignedMarginObjectiveConfig,
     SignedMarginObjectiveReport, SignedRadialCalibrationReport,
+    signed_angular_radial_objective_loss_and_grad, signed_bank_softmax_objective_loss_and_grad,
+    signed_candidate_centered_radius_targets, signed_centered_radius_scalar_loss_and_grad,
+    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
 };
 pub use tensor::Tensor;
 pub use vision_jepa::{ProjectedVisionJepa, VisionJepa};
@@ -628,7 +628,9 @@ mod tests {
         assert_eq!(grads.grad_fc1.grad_weight.shape, vec![3, 4]);
         assert_eq!(
             grads.grad_fc1.grad_weight.data,
-            vec![1.0, -4.0, 3.0, 0.0, -2.0, 8.0, -6.0, 0.0, 3.0, -12.0, 9.0, 0.0,]
+            vec![
+                1.0, -4.0, 3.0, 0.0, -2.0, 8.0, -6.0, 0.0, 3.0, -12.0, 9.0, 0.0,
+            ]
         );
         assert_eq!(grads.grad_fc1.grad_bias.data, vec![1.0, 4.0, 3.0, 0.0]);
 
