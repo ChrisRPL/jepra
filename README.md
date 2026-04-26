@@ -12,7 +12,7 @@ The current crate is `jepra-core`. The active proof path is temporal visual pred
 | Core Rust JEPA primitives | Active | Tensor ops, linear layers, predictors, encoders, JEPA wrappers, losses, and telemetry live in `crates/jepra-core`. |
 | Temporal proof tasks | Active | `random-speed`, `velocity-trail`, and `signed-velocity-trail` examples provide deterministic training/validation loops. |
 | Compact model research | Active | Conservative defaults stay baseline; bottleneck, residual, state-radius, and signed candidate heads are opt-in probes. |
-| Current bottleneck | In progress | Signed candidate selection now has a direct entropy-floor selector head that passed fixed three-seed validation; reporting/tooling is the next step. |
+| Current bottleneck | In progress | Signed candidate selection now has first-class selector-head comparison metrics; the next experiment is report-only selector readout diagnostics. |
 | Public API/product polish | Early | The framework is not yet a stable end-user training SDK. Current work is still proof-path hardening. |
 
 ## System Map
@@ -38,7 +38,8 @@ flowchart TD
   E --> F[unit-mix collapse diagnosed]
   F --> G[entropy-floor selector head passes seed 11000]
   G --> H[three-seed validation passed]
-  H --> I{selector reporting/tooling next}
+  H --> I[selector reporting/tooling passed]
+  I --> J{selector readout diagnostics next}
 ```
 
 ## Current Scope
@@ -168,7 +169,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints one structured row per path/seed/predictor:
 
 ```text
-schema=jepra_predictor_compare_v16 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck|state-radius> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v17 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck|state-radius> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> selector_head_top1_end=<n|na> selector_head_entropy_end=<n|na> selector_head_true_probability_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -284,11 +285,12 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - `--signed-candidate-unit-mix-head` adds a zero-initialized candidate-centroid unit/radius mixer. Seed `11000`, `300` steps, temperature `0.05`, keeps base validation/drift and unit geometry healthy (`val=0.387588`, `drift=0.009244`, `unit_ppr=0.453125`, `unit_mrr=0.635417`), but the head collapses to near-deterministic wrong selection (`learned_mix_top1=0.250000`, `objective_entropy=0.000008`, `objective_true_weight=0.249999`). Keep it as a diagnostic hook, not a promoted fix.
 - `--signed-candidate-selector-probe` adds a report-only normalized linear selector probe over `[projection, prior_logits, candidate_radii]`. Seed `11000`, `300` steps, temperature `0.05`, probe steps `20`, keeps base validation/drift unchanged and shows held-out selector signal (`query_trained_top1=0.437500`, `query_trained_mrr=0.640625`, entropy `1.205694`) above prior-only (`prior_top1=0.375000`).
 - `--signed-candidate-selector-head` adds a direct zero-initialized trainable selector over normalized candidate features with supervised CE, an entropy-floor hinge, and KL-to-prior defaulted off. Fixed three-seed evidence (`11000..11002`, `300` steps, temperature `0.05`, entropy floor `1.0`, weight `0.1`) keeps validation/drift and unit geometry healthy (`mean val=0.387471`, `mean drift=0.009131`, `unit_ppr=0.453125`) and clears the proof gate (`mean learned_selector_top1=0.390625`, entropy `1.233952`, true probability `0.333734`).
-- Decision: scalar/logit radius heads and the candidate unit-mix head remain diagnostic hooks. The direct entropy-floor selector is the first trainable candidate-centered path to clear fixed three-seed validation; next implementation step is making selector metrics first-class in comparison/report tooling before promotion or broader architecture work.
+- `run-predictor-mode-comparison.sh` schema `jepra_predictor_compare_v17` makes selector-head metrics first-class in comparison CSV/stdout rows. Fixed replay of seeds `11000..11002` reproduces the prior manual evidence: `mean selector_head_top1_end=0.390625`, `selector_head_entropy_end=1.233952`, `selector_head_true_probability_end=0.333734`, `selector_head_norm_ratio_end=1.109890`, with all rows `status=ok`.
+- Decision: scalar/logit radius heads and the candidate unit-mix head remain diagnostic hooks. The direct entropy-floor selector is the first trainable candidate-centered path to clear fixed three-seed validation and first-class reporting; next implementation step is report-only selector readout diagnostics before any selector-to-output mixing or broader architecture work.
 
 Candidate-centroid-aware geometry acceptance gate:
 
-- Use the existing `jepra_predictor_compare_v16` fields; no schema change is needed for the first candidate-centroid-aware patch unless the model emits a new report line that cannot be derived from current prediction-bank/unit/counterfactual fields.
+- Use the existing `jepra_predictor_compare_v17` fields for current selector evidence. Only bump the schema again if a future patch emits new selector readout diagnostics that cannot be derived from current prediction-bank/unit/counterfactual/selector fields.
 - Run fixed comparison against same-run baseline: `JEPRA_TEMPORAL_TASK=signed-velocity-trail`, `JEPRA_COMPACT_ENCODER_MODE=signed-direction-magnitude`, `JEPRA_PREDICTOR_MODES='baseline <candidate-mode>'`, seeds `11000 11001 11002`, `JEPRA_TRAIN_STEPS=300`, report CSV enabled.
 - Hard health gate: every candidate row has `status=ok`; mean `val_pred_end <= 1.05 * baseline_val_pred_end`; mean `target_drift_end <= max(0.02, 2.5 * baseline_target_drift_end)`.
 - Hard raw-ranking gate: mean `prediction_bank_positive_margin_rate_end >= baseline_raw_ppr + 0.5 * (baseline_oracle_radius_ppr - baseline_raw_ppr)`; with current evidence this is approximately `>= 0.364583`. This proves at least half of the radius-counterfactual gap is closed.

@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_PATH="${JEPRA_MANIFEST_PATH:-$ROOT_DIR/crates/jepra-core/Cargo.toml}"
-SCHEMA="jepra_predictor_compare_v16"
+SCHEMA="jepra_predictor_compare_v17"
 TRAIN_STEPS="${JEPRA_TRAIN_STEPS:-300}"
 LOG_EVERY="${JEPRA_LOG_EVERY:-25}"
 TEMPORAL_TASK="${JEPRA_TEMPORAL_TASK:-random-speed}"
@@ -32,6 +32,13 @@ SIGNED_RADIAL_WEIGHT="${JEPRA_SIGNED_RADIAL_WEIGHT:-0.0}"
 SIGNED_ANGULAR_RADIAL_WEIGHT="${JEPRA_SIGNED_ANGULAR_RADIAL_WEIGHT:-0.0}"
 SIGNED_ANGULAR_WEIGHT="${JEPRA_SIGNED_ANGULAR_WEIGHT:-1.0}"
 SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT="${JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT:-1.0}"
+SIGNED_CANDIDATE_SELECTOR_HEAD="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD:-0}"
+SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE:-0.05}"
+SIGNED_CANDIDATE_SELECTOR_HEAD_LR="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR:-0.05}"
+SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT:-1.0}"
+SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR:-1.0}"
+SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT:-0.1}"
+SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT:-0.0}"
 MIN_STD_THRESHOLD="${JEPRA_MIN_STD_THRESHOLD:-0.05}"
 REPORT_PATH="${JEPRA_PREDICTOR_COMPARISON_REPORT:-}"
 SCENARIO="${1:-all}"
@@ -75,6 +82,13 @@ Environment:
   JEPRA_SIGNED_ANGULAR_RADIAL_WEIGHT            Signed angular-radial objective weight (default: 0.0)
   JEPRA_SIGNED_ANGULAR_WEIGHT                   Signed angular component weight (default: 1.0)
   JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT     Signed angular-radial radius component weight (default: 1.0)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD          Enable signed candidate selector head reporting/training (default: 0)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE Signed candidate selector head temperature (default: 0.05)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR       Signed candidate selector head learning rate (default: 0.05)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT   Signed candidate selector head loss weight (default: 1.0)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR Signed candidate selector head entropy floor (default: 1.0)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT Signed candidate selector head entropy weight (default: 0.1)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT Signed candidate selector head KL-to-prior weight (default: 0.0)
   JEPRA_MIN_STD_THRESHOLD                       Minimum final prediction/target min-std for ok rows (default: 0.05)
   JEPRA_PREDICTOR_COMPARISON_REPORT             Optional CSV path for parsed rows
 EOF
@@ -98,7 +112,7 @@ fi
 
 if [[ -n "$REPORT_PATH" ]]; then
   mkdir -p "$(dirname "$REPORT_PATH")"
-  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,signed_margin_weight,signed_margin_bank_gap,signed_margin_sign_gap,signed_margin_speed_gap,signed_margin_bank_weight,signed_margin_sign_weight,signed_margin_speed_weight,signed_bank_softmax_weight,signed_bank_softmax_temperature,signed_radial_weight,signed_angular_radial_weight,signed_angular_weight,signed_angular_radial_radius_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,signed_bank_neg_mrr_end,signed_bank_pos_mrr_end,signed_bank_slow_mrr_end,signed_bank_fast_mrr_end,signed_bank_sign_top1_end,signed_bank_speed_top1_end,signed_bank_samples,signed_bank_true_neg_best_neg,signed_bank_true_neg_best_pos,signed_bank_true_pos_best_neg,signed_bank_true_pos_best_pos,signed_bank_true_slow_best_slow,signed_bank_true_slow_best_fast,signed_bank_true_fast_best_slow,signed_bank_true_fast_best_fast,target_bank_oracle_mrr_end,target_bank_oracle_top1_end,target_bank_true_distance_end,target_bank_true_distance_max_end,target_bank_nearest_wrong_end,target_bank_nearest_wrong_min_end,target_bank_margin_end,target_bank_margin_min_end,target_bank_neg_nearest_wrong_end,target_bank_pos_nearest_wrong_end,target_bank_slow_nearest_wrong_end,target_bank_fast_nearest_wrong_end,target_bank_sign_margin_end,target_bank_speed_margin_end,target_bank_samples,prediction_bank_true_distance_end,prediction_bank_nearest_wrong_distance_end,prediction_bank_margin_end,prediction_bank_min_margin_end,prediction_bank_positive_margin_rate_end,prediction_bank_sign_margin_end,prediction_bank_speed_margin_end,prediction_bank_samples,prediction_unit_mrr_end,prediction_unit_top1_end,prediction_unit_true_distance_end,prediction_unit_nearest_wrong_distance_end,prediction_unit_margin_end,prediction_unit_positive_margin_rate_end,prediction_unit_sign_margin_end,prediction_unit_speed_margin_end,prediction_unit_prediction_center_norm_end,prediction_unit_true_target_center_norm_end,prediction_unit_samples,prediction_unit_candidates,prediction_counterfactual_oracle_radius_mrr_end,prediction_counterfactual_oracle_radius_top1_end,prediction_counterfactual_oracle_radius_margin_end,prediction_counterfactual_oracle_radius_positive_margin_rate_end,prediction_counterfactual_oracle_radius_sign_margin_end,prediction_counterfactual_oracle_radius_speed_margin_end,prediction_counterfactual_oracle_radius_norm_ratio_end,prediction_counterfactual_oracle_angle_mrr_end,prediction_counterfactual_oracle_angle_top1_end,prediction_counterfactual_oracle_angle_margin_end,prediction_counterfactual_oracle_angle_positive_margin_rate_end,prediction_counterfactual_oracle_angle_sign_margin_end,prediction_counterfactual_oracle_angle_speed_margin_end,prediction_counterfactual_oracle_angle_norm_ratio_end,prediction_counterfactual_support_global_rescale_mrr_end,prediction_counterfactual_support_global_rescale_top1_end,prediction_counterfactual_support_global_rescale_margin_end,prediction_counterfactual_support_global_rescale_positive_margin_rate_end,prediction_counterfactual_support_global_rescale_sign_margin_end,prediction_counterfactual_support_global_rescale_speed_margin_end,prediction_counterfactual_support_global_rescale_norm_ratio_end,prediction_counterfactual_support_norm_ratio_end,prediction_counterfactual_support_samples,prediction_counterfactual_query_samples,prediction_counterfactual_candidates,signed_objective_all_loss_end,signed_objective_dx_neg2_loss_end,signed_objective_dx_neg1_loss_end,signed_objective_dx_pos1_loss_end,signed_objective_dx_pos2_loss_end,signed_objective_neg_loss_end,signed_objective_pos_loss_end,signed_objective_slow_loss_end,signed_objective_fast_loss_end,signed_objective_sign_gap_end,signed_objective_speed_gap_end,signed_objective_samples,signed_objective_dx_neg2_samples,signed_objective_dx_neg1_samples,signed_objective_dx_pos1_samples,signed_objective_dx_pos2_samples,signed_margin_bank_loss_end,signed_margin_sign_loss_end,signed_margin_speed_loss_end,signed_margin_weighted_loss_end,signed_margin_active_bank_rate_end,signed_margin_active_sign_rate_end,signed_margin_active_speed_rate_end,signed_margin_samples,signed_bank_softmax_loss_end,signed_bank_softmax_top1_end,signed_bank_softmax_true_probability_end,signed_bank_softmax_samples,signed_radial_loss_end,signed_radial_prediction_norm_end,signed_radial_target_norm_end,signed_radial_norm_ratio_end,signed_radial_samples,signed_angular_radial_loss_end,signed_angular_radial_angular_loss_end,signed_angular_radial_radial_loss_end,signed_angular_radial_cosine_end,signed_angular_radial_prediction_norm_end,signed_angular_radial_target_norm_end,signed_angular_radial_norm_ratio_end,signed_angular_radial_samples,state_latent_mrr_end,state_latent_top1_end,state_latent_sign_top1_end,state_latent_mean_rank_end,state_projection_mrr_end,state_projection_top1_end,state_projection_sign_top1_end,state_projection_mean_rank_end,state_support_samples,state_query_samples,state_candidates,status\n' > "$REPORT_PATH"
+  printf 'schema,temporal_task,path,predictor,residual_delta_scale,projector_drift_weight,signed_margin_weight,signed_margin_bank_gap,signed_margin_sign_gap,signed_margin_speed_gap,signed_margin_bank_weight,signed_margin_sign_weight,signed_margin_speed_weight,signed_bank_softmax_weight,signed_bank_softmax_temperature,signed_radial_weight,signed_angular_radial_weight,signed_angular_weight,signed_angular_radial_radius_weight,seed,steps,encoder_mode,encoder_lr,target_momentum_start,target_momentum_end,target_momentum_warmup_steps,train_pred_start,train_pred_end,val_pred_start,val_pred_end,train_obj_start,train_obj_end,val_obj_start,val_obj_end,pred_min_std_final,target_min_std_final,proj_var_mean_final,target_drift_end,velocity_bank_mrr_start,velocity_bank_mrr_end,velocity_bank_top1_start,velocity_bank_top1_end,velocity_bank_mean_rank_start,velocity_bank_mean_rank_end,velocity_bank_samples,velocity_bank_candidates,signed_bank_neg_mrr_end,signed_bank_pos_mrr_end,signed_bank_slow_mrr_end,signed_bank_fast_mrr_end,signed_bank_sign_top1_end,signed_bank_speed_top1_end,signed_bank_samples,signed_bank_true_neg_best_neg,signed_bank_true_neg_best_pos,signed_bank_true_pos_best_neg,signed_bank_true_pos_best_pos,signed_bank_true_slow_best_slow,signed_bank_true_slow_best_fast,signed_bank_true_fast_best_slow,signed_bank_true_fast_best_fast,target_bank_oracle_mrr_end,target_bank_oracle_top1_end,target_bank_true_distance_end,target_bank_true_distance_max_end,target_bank_nearest_wrong_end,target_bank_nearest_wrong_min_end,target_bank_margin_end,target_bank_margin_min_end,target_bank_neg_nearest_wrong_end,target_bank_pos_nearest_wrong_end,target_bank_slow_nearest_wrong_end,target_bank_fast_nearest_wrong_end,target_bank_sign_margin_end,target_bank_speed_margin_end,target_bank_samples,prediction_bank_true_distance_end,prediction_bank_nearest_wrong_distance_end,prediction_bank_margin_end,prediction_bank_min_margin_end,prediction_bank_positive_margin_rate_end,prediction_bank_sign_margin_end,prediction_bank_speed_margin_end,prediction_bank_samples,prediction_unit_mrr_end,prediction_unit_top1_end,prediction_unit_true_distance_end,prediction_unit_nearest_wrong_distance_end,prediction_unit_margin_end,prediction_unit_positive_margin_rate_end,prediction_unit_sign_margin_end,prediction_unit_speed_margin_end,prediction_unit_prediction_center_norm_end,prediction_unit_true_target_center_norm_end,prediction_unit_samples,prediction_unit_candidates,prediction_counterfactual_oracle_radius_mrr_end,prediction_counterfactual_oracle_radius_top1_end,prediction_counterfactual_oracle_radius_margin_end,prediction_counterfactual_oracle_radius_positive_margin_rate_end,prediction_counterfactual_oracle_radius_sign_margin_end,prediction_counterfactual_oracle_radius_speed_margin_end,prediction_counterfactual_oracle_radius_norm_ratio_end,prediction_counterfactual_oracle_angle_mrr_end,prediction_counterfactual_oracle_angle_top1_end,prediction_counterfactual_oracle_angle_margin_end,prediction_counterfactual_oracle_angle_positive_margin_rate_end,prediction_counterfactual_oracle_angle_sign_margin_end,prediction_counterfactual_oracle_angle_speed_margin_end,prediction_counterfactual_oracle_angle_norm_ratio_end,prediction_counterfactual_support_global_rescale_mrr_end,prediction_counterfactual_support_global_rescale_top1_end,prediction_counterfactual_support_global_rescale_margin_end,prediction_counterfactual_support_global_rescale_positive_margin_rate_end,prediction_counterfactual_support_global_rescale_sign_margin_end,prediction_counterfactual_support_global_rescale_speed_margin_end,prediction_counterfactual_support_global_rescale_norm_ratio_end,prediction_counterfactual_support_norm_ratio_end,prediction_counterfactual_support_samples,prediction_counterfactual_query_samples,prediction_counterfactual_candidates,signed_objective_all_loss_end,signed_objective_dx_neg2_loss_end,signed_objective_dx_neg1_loss_end,signed_objective_dx_pos1_loss_end,signed_objective_dx_pos2_loss_end,signed_objective_neg_loss_end,signed_objective_pos_loss_end,signed_objective_slow_loss_end,signed_objective_fast_loss_end,signed_objective_sign_gap_end,signed_objective_speed_gap_end,signed_objective_samples,signed_objective_dx_neg2_samples,signed_objective_dx_neg1_samples,signed_objective_dx_pos1_samples,signed_objective_dx_pos2_samples,signed_margin_bank_loss_end,signed_margin_sign_loss_end,signed_margin_speed_loss_end,signed_margin_weighted_loss_end,signed_margin_active_bank_rate_end,signed_margin_active_sign_rate_end,signed_margin_active_speed_rate_end,signed_margin_samples,signed_bank_softmax_loss_end,signed_bank_softmax_top1_end,signed_bank_softmax_true_probability_end,signed_bank_softmax_samples,signed_radial_loss_end,signed_radial_prediction_norm_end,signed_radial_target_norm_end,signed_radial_norm_ratio_end,signed_radial_samples,signed_angular_radial_loss_end,signed_angular_radial_angular_loss_end,signed_angular_radial_radial_loss_end,signed_angular_radial_cosine_end,signed_angular_radial_prediction_norm_end,signed_angular_radial_target_norm_end,signed_angular_radial_norm_ratio_end,signed_angular_radial_samples,state_latent_mrr_end,state_latent_top1_end,state_latent_sign_top1_end,state_latent_mean_rank_end,state_projection_mrr_end,state_projection_top1_end,state_projection_sign_top1_end,state_projection_mean_rank_end,state_support_samples,state_query_samples,state_candidates,selector_head_enabled,selector_head_temperature,selector_head_lr,selector_head_weight,selector_head_entropy_floor,selector_head_entropy_weight,selector_head_kl_weight,selector_head_mrr_end,selector_head_top1_end,selector_head_margin_end,selector_head_positive_margin_rate_end,selector_head_sign_margin_end,selector_head_speed_margin_end,selector_head_norm_ratio_end,selector_head_objective_loss_end,selector_head_objective_ce_end,selector_head_objective_entropy_reg_end,selector_head_objective_kl_to_prior_end,selector_head_entropy_end,selector_head_true_probability_end,selector_head_max_probability_end,selector_head_temperature_end,selector_head_steps,selector_head_lr_end,selector_head_entropy_floor_end,selector_head_entropy_weight_end,selector_head_kl_weight_end,selector_head_support_samples,selector_head_query_samples,selector_head_candidates,status\n' > "$REPORT_PATH"
 fi
 
 encoder_mode_label() {
@@ -146,6 +160,13 @@ signed_radial_enabled() {
 
 signed_angular_radial_enabled() {
   awk -v value="$SIGNED_ANGULAR_RADIAL_WEIGHT" 'BEGIN { if (value + 0 > 0) print "true"; else print "false" }'
+}
+
+signed_candidate_selector_head_enabled() {
+  case "$SIGNED_CANDIDATE_SELECTOR_HEAD" in
+    1|true|TRUE|yes|YES|on|ON) printf '%s' "true" ;;
+    *) printf '%s' "false" ;;
+  esac
 }
 
 parse_unprojected_probe_line() {
@@ -366,6 +387,21 @@ parse_signed_state_separability_line() {
   ' <<< "$line"
 }
 
+parse_signed_candidate_selector_head_integration_line() {
+  local line="$1"
+  if [[ ! "$line" =~ ^final[[:space:]]+\|[[:space:]]+signed[[:space:]]+candidate[[:space:]]+selector[[:space:]]+head[[:space:]]+integration[[:space:]]+learned_selector_mrr[[:space:]] ]]; then
+    return 1
+  fi
+  awk '
+    {
+      for (i = 1; i <= NF; i++) {
+        values[$i] = $(i + 1)
+      }
+      print values["learned_selector_mrr"], values["learned_selector_top1"], values["learned_selector_margin"], values["learned_selector_positive_margin_rate"], values["learned_selector_sign_margin"], values["learned_selector_speed_margin"], values["learned_selector_norm_ratio"], values["objective_loss"], values["objective_ce"], values["objective_entropy_reg"], values["objective_kl_to_prior"], values["objective_entropy"], values["objective_true_probability"], values["objective_max_probability"], values["softmax_temperature"], values["selector_steps"], values["lr"], values["entropy_floor"], values["entropy_weight"], values["kl_weight"], values["support_samples"], values["query_samples"], values["candidates"]
+    }
+  ' <<< "$line"
+}
+
 row_status() {
   local train_pred_start="$1"
   local train_pred_end="$2"
@@ -556,8 +592,31 @@ emit_row() {
   local state_support_samples_value="${state_support_samples:-na}"
   local state_query_samples_value="${state_query_samples:-na}"
   local state_candidates_value="${state_candidates:-na}"
+  local selector_head_mrr_end_value="${selector_head_mrr_end:-na}"
+  local selector_head_top1_end_value="${selector_head_top1_end:-na}"
+  local selector_head_margin_end_value="${selector_head_margin_end:-na}"
+  local selector_head_positive_margin_rate_end_value="${selector_head_positive_margin_rate_end:-na}"
+  local selector_head_sign_margin_end_value="${selector_head_sign_margin_end:-na}"
+  local selector_head_speed_margin_end_value="${selector_head_speed_margin_end:-na}"
+  local selector_head_norm_ratio_end_value="${selector_head_norm_ratio_end:-na}"
+  local selector_head_objective_loss_end_value="${selector_head_objective_loss_end:-na}"
+  local selector_head_objective_ce_end_value="${selector_head_objective_ce_end:-na}"
+  local selector_head_objective_entropy_reg_end_value="${selector_head_objective_entropy_reg_end:-na}"
+  local selector_head_objective_kl_to_prior_end_value="${selector_head_objective_kl_to_prior_end:-na}"
+  local selector_head_entropy_end_value="${selector_head_entropy_end:-na}"
+  local selector_head_true_probability_end_value="${selector_head_true_probability_end:-na}"
+  local selector_head_max_probability_end_value="${selector_head_max_probability_end:-na}"
+  local selector_head_temperature_end_value="${selector_head_temperature_end:-na}"
+  local selector_head_steps_value="${selector_head_steps:-na}"
+  local selector_head_lr_end_value="${selector_head_lr_end:-na}"
+  local selector_head_entropy_floor_end_value="${selector_head_entropy_floor_end:-na}"
+  local selector_head_entropy_weight_end_value="${selector_head_entropy_weight_end:-na}"
+  local selector_head_kl_weight_end_value="${selector_head_kl_weight_end:-na}"
+  local selector_head_support_samples_value="${selector_head_support_samples:-na}"
+  local selector_head_query_samples_value="${selector_head_query_samples:-na}"
+  local selector_head_candidates_value="${selector_head_candidates:-na}"
 
-  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s signed_margin_weight=%s signed_margin_bank_gap=%s signed_margin_sign_gap=%s signed_margin_speed_gap=%s signed_margin_bank_weight=%s signed_margin_sign_weight=%s signed_margin_speed_weight=%s signed_bank_softmax_weight=%s signed_bank_softmax_temperature=%s signed_radial_weight=%s signed_angular_radial_weight=%s signed_angular_weight=%s signed_angular_radial_radius_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s signed_bank_neg_mrr_end=%s signed_bank_pos_mrr_end=%s signed_bank_slow_mrr_end=%s signed_bank_fast_mrr_end=%s signed_bank_sign_top1_end=%s signed_bank_speed_top1_end=%s signed_bank_samples=%s signed_bank_true_neg_best_neg=%s signed_bank_true_neg_best_pos=%s signed_bank_true_pos_best_neg=%s signed_bank_true_pos_best_pos=%s signed_bank_true_slow_best_slow=%s signed_bank_true_slow_best_fast=%s signed_bank_true_fast_best_slow=%s signed_bank_true_fast_best_fast=%s target_bank_oracle_mrr_end=%s target_bank_oracle_top1_end=%s target_bank_true_distance_end=%s target_bank_true_distance_max_end=%s target_bank_nearest_wrong_end=%s target_bank_nearest_wrong_min_end=%s target_bank_margin_end=%s target_bank_margin_min_end=%s target_bank_neg_nearest_wrong_end=%s target_bank_pos_nearest_wrong_end=%s target_bank_slow_nearest_wrong_end=%s target_bank_fast_nearest_wrong_end=%s target_bank_sign_margin_end=%s target_bank_speed_margin_end=%s target_bank_samples=%s prediction_bank_true_distance_end=%s prediction_bank_nearest_wrong_distance_end=%s prediction_bank_margin_end=%s prediction_bank_min_margin_end=%s prediction_bank_positive_margin_rate_end=%s prediction_bank_sign_margin_end=%s prediction_bank_speed_margin_end=%s prediction_bank_samples=%s prediction_unit_mrr_end=%s prediction_unit_top1_end=%s prediction_unit_true_distance_end=%s prediction_unit_nearest_wrong_distance_end=%s prediction_unit_margin_end=%s prediction_unit_positive_margin_rate_end=%s prediction_unit_sign_margin_end=%s prediction_unit_speed_margin_end=%s prediction_unit_prediction_center_norm_end=%s prediction_unit_true_target_center_norm_end=%s prediction_unit_samples=%s prediction_unit_candidates=%s prediction_counterfactual_oracle_radius_mrr_end=%s prediction_counterfactual_oracle_radius_top1_end=%s prediction_counterfactual_oracle_radius_margin_end=%s prediction_counterfactual_oracle_radius_positive_margin_rate_end=%s prediction_counterfactual_oracle_radius_sign_margin_end=%s prediction_counterfactual_oracle_radius_speed_margin_end=%s prediction_counterfactual_oracle_radius_norm_ratio_end=%s prediction_counterfactual_oracle_angle_mrr_end=%s prediction_counterfactual_oracle_angle_top1_end=%s prediction_counterfactual_oracle_angle_margin_end=%s prediction_counterfactual_oracle_angle_positive_margin_rate_end=%s prediction_counterfactual_oracle_angle_sign_margin_end=%s prediction_counterfactual_oracle_angle_speed_margin_end=%s prediction_counterfactual_oracle_angle_norm_ratio_end=%s prediction_counterfactual_support_global_rescale_mrr_end=%s prediction_counterfactual_support_global_rescale_top1_end=%s prediction_counterfactual_support_global_rescale_margin_end=%s prediction_counterfactual_support_global_rescale_positive_margin_rate_end=%s prediction_counterfactual_support_global_rescale_sign_margin_end=%s prediction_counterfactual_support_global_rescale_speed_margin_end=%s prediction_counterfactual_support_global_rescale_norm_ratio_end=%s prediction_counterfactual_support_norm_ratio_end=%s prediction_counterfactual_support_samples=%s prediction_counterfactual_query_samples=%s prediction_counterfactual_candidates=%s signed_objective_all_loss_end=%s signed_objective_dx_neg2_loss_end=%s signed_objective_dx_neg1_loss_end=%s signed_objective_dx_pos1_loss_end=%s signed_objective_dx_pos2_loss_end=%s signed_objective_neg_loss_end=%s signed_objective_pos_loss_end=%s signed_objective_slow_loss_end=%s signed_objective_fast_loss_end=%s signed_objective_sign_gap_end=%s signed_objective_speed_gap_end=%s signed_objective_samples=%s signed_objective_dx_neg2_samples=%s signed_objective_dx_neg1_samples=%s signed_objective_dx_pos1_samples=%s signed_objective_dx_pos2_samples=%s signed_margin_bank_loss_end=%s signed_margin_sign_loss_end=%s signed_margin_speed_loss_end=%s signed_margin_weighted_loss_end=%s signed_margin_active_bank_rate_end=%s signed_margin_active_sign_rate_end=%s signed_margin_active_speed_rate_end=%s signed_margin_samples=%s signed_bank_softmax_loss_end=%s signed_bank_softmax_top1_end=%s signed_bank_softmax_true_probability_end=%s signed_bank_softmax_samples=%s signed_radial_loss_end=%s signed_radial_prediction_norm_end=%s signed_radial_target_norm_end=%s signed_radial_norm_ratio_end=%s signed_radial_samples=%s signed_angular_radial_loss_end=%s signed_angular_radial_angular_loss_end=%s signed_angular_radial_radial_loss_end=%s signed_angular_radial_cosine_end=%s signed_angular_radial_prediction_norm_end=%s signed_angular_radial_target_norm_end=%s signed_angular_radial_norm_ratio_end=%s signed_angular_radial_samples=%s state_latent_mrr_end=%s state_latent_top1_end=%s state_latent_sign_top1_end=%s state_latent_mean_rank_end=%s state_projection_mrr_end=%s state_projection_top1_end=%s state_projection_sign_top1_end=%s state_projection_mean_rank_end=%s state_support_samples=%s state_query_samples=%s state_candidates=%s status=%s\n' \
+  printf 'schema=%s temporal_task=%s path=%s predictor=%s residual_delta_scale=%s projector_drift_weight=%s signed_margin_weight=%s signed_margin_bank_gap=%s signed_margin_sign_gap=%s signed_margin_speed_gap=%s signed_margin_bank_weight=%s signed_margin_sign_weight=%s signed_margin_speed_weight=%s signed_bank_softmax_weight=%s signed_bank_softmax_temperature=%s signed_radial_weight=%s signed_angular_radial_weight=%s signed_angular_weight=%s signed_angular_radial_radius_weight=%s seed=%s steps=%s encoder_mode=%s encoder_lr=%s target_momentum_start=%s target_momentum_end=%s target_momentum_warmup_steps=%s train_pred_start=%s train_pred_end=%s val_pred_start=%s val_pred_end=%s train_obj_start=%s train_obj_end=%s val_obj_start=%s val_obj_end=%s pred_min_std_final=%s target_min_std_final=%s proj_var_mean_final=%s target_drift_end=%s velocity_bank_mrr_start=%s velocity_bank_mrr_end=%s velocity_bank_top1_start=%s velocity_bank_top1_end=%s velocity_bank_mean_rank_start=%s velocity_bank_mean_rank_end=%s velocity_bank_samples=%s velocity_bank_candidates=%s signed_bank_neg_mrr_end=%s signed_bank_pos_mrr_end=%s signed_bank_slow_mrr_end=%s signed_bank_fast_mrr_end=%s signed_bank_sign_top1_end=%s signed_bank_speed_top1_end=%s signed_bank_samples=%s signed_bank_true_neg_best_neg=%s signed_bank_true_neg_best_pos=%s signed_bank_true_pos_best_neg=%s signed_bank_true_pos_best_pos=%s signed_bank_true_slow_best_slow=%s signed_bank_true_slow_best_fast=%s signed_bank_true_fast_best_slow=%s signed_bank_true_fast_best_fast=%s target_bank_oracle_mrr_end=%s target_bank_oracle_top1_end=%s target_bank_true_distance_end=%s target_bank_true_distance_max_end=%s target_bank_nearest_wrong_end=%s target_bank_nearest_wrong_min_end=%s target_bank_margin_end=%s target_bank_margin_min_end=%s target_bank_neg_nearest_wrong_end=%s target_bank_pos_nearest_wrong_end=%s target_bank_slow_nearest_wrong_end=%s target_bank_fast_nearest_wrong_end=%s target_bank_sign_margin_end=%s target_bank_speed_margin_end=%s target_bank_samples=%s prediction_bank_true_distance_end=%s prediction_bank_nearest_wrong_distance_end=%s prediction_bank_margin_end=%s prediction_bank_min_margin_end=%s prediction_bank_positive_margin_rate_end=%s prediction_bank_sign_margin_end=%s prediction_bank_speed_margin_end=%s prediction_bank_samples=%s prediction_unit_mrr_end=%s prediction_unit_top1_end=%s prediction_unit_true_distance_end=%s prediction_unit_nearest_wrong_distance_end=%s prediction_unit_margin_end=%s prediction_unit_positive_margin_rate_end=%s prediction_unit_sign_margin_end=%s prediction_unit_speed_margin_end=%s prediction_unit_prediction_center_norm_end=%s prediction_unit_true_target_center_norm_end=%s prediction_unit_samples=%s prediction_unit_candidates=%s prediction_counterfactual_oracle_radius_mrr_end=%s prediction_counterfactual_oracle_radius_top1_end=%s prediction_counterfactual_oracle_radius_margin_end=%s prediction_counterfactual_oracle_radius_positive_margin_rate_end=%s prediction_counterfactual_oracle_radius_sign_margin_end=%s prediction_counterfactual_oracle_radius_speed_margin_end=%s prediction_counterfactual_oracle_radius_norm_ratio_end=%s prediction_counterfactual_oracle_angle_mrr_end=%s prediction_counterfactual_oracle_angle_top1_end=%s prediction_counterfactual_oracle_angle_margin_end=%s prediction_counterfactual_oracle_angle_positive_margin_rate_end=%s prediction_counterfactual_oracle_angle_sign_margin_end=%s prediction_counterfactual_oracle_angle_speed_margin_end=%s prediction_counterfactual_oracle_angle_norm_ratio_end=%s prediction_counterfactual_support_global_rescale_mrr_end=%s prediction_counterfactual_support_global_rescale_top1_end=%s prediction_counterfactual_support_global_rescale_margin_end=%s prediction_counterfactual_support_global_rescale_positive_margin_rate_end=%s prediction_counterfactual_support_global_rescale_sign_margin_end=%s prediction_counterfactual_support_global_rescale_speed_margin_end=%s prediction_counterfactual_support_global_rescale_norm_ratio_end=%s prediction_counterfactual_support_norm_ratio_end=%s prediction_counterfactual_support_samples=%s prediction_counterfactual_query_samples=%s prediction_counterfactual_candidates=%s signed_objective_all_loss_end=%s signed_objective_dx_neg2_loss_end=%s signed_objective_dx_neg1_loss_end=%s signed_objective_dx_pos1_loss_end=%s signed_objective_dx_pos2_loss_end=%s signed_objective_neg_loss_end=%s signed_objective_pos_loss_end=%s signed_objective_slow_loss_end=%s signed_objective_fast_loss_end=%s signed_objective_sign_gap_end=%s signed_objective_speed_gap_end=%s signed_objective_samples=%s signed_objective_dx_neg2_samples=%s signed_objective_dx_neg1_samples=%s signed_objective_dx_pos1_samples=%s signed_objective_dx_pos2_samples=%s signed_margin_bank_loss_end=%s signed_margin_sign_loss_end=%s signed_margin_speed_loss_end=%s signed_margin_weighted_loss_end=%s signed_margin_active_bank_rate_end=%s signed_margin_active_sign_rate_end=%s signed_margin_active_speed_rate_end=%s signed_margin_samples=%s signed_bank_softmax_loss_end=%s signed_bank_softmax_top1_end=%s signed_bank_softmax_true_probability_end=%s signed_bank_softmax_samples=%s signed_radial_loss_end=%s signed_radial_prediction_norm_end=%s signed_radial_target_norm_end=%s signed_radial_norm_ratio_end=%s signed_radial_samples=%s signed_angular_radial_loss_end=%s signed_angular_radial_angular_loss_end=%s signed_angular_radial_radial_loss_end=%s signed_angular_radial_cosine_end=%s signed_angular_radial_prediction_norm_end=%s signed_angular_radial_target_norm_end=%s signed_angular_radial_norm_ratio_end=%s signed_angular_radial_samples=%s state_latent_mrr_end=%s state_latent_top1_end=%s state_latent_sign_top1_end=%s state_latent_mean_rank_end=%s state_projection_mrr_end=%s state_projection_top1_end=%s state_projection_sign_top1_end=%s state_projection_mean_rank_end=%s state_support_samples=%s state_query_samples=%s state_candidates=%s selector_head_enabled=%s selector_head_temperature=%s selector_head_lr=%s selector_head_weight=%s selector_head_entropy_floor=%s selector_head_entropy_weight=%s selector_head_kl_weight=%s selector_head_mrr_end=%s selector_head_top1_end=%s selector_head_margin_end=%s selector_head_positive_margin_rate_end=%s selector_head_sign_margin_end=%s selector_head_speed_margin_end=%s selector_head_norm_ratio_end=%s selector_head_objective_loss_end=%s selector_head_objective_ce_end=%s selector_head_objective_entropy_reg_end=%s selector_head_objective_kl_to_prior_end=%s selector_head_entropy_end=%s selector_head_true_probability_end=%s selector_head_max_probability_end=%s selector_head_temperature_end=%s selector_head_steps=%s selector_head_lr_end=%s selector_head_entropy_floor_end=%s selector_head_entropy_weight_end=%s selector_head_kl_weight_end=%s selector_head_support_samples=%s selector_head_query_samples=%s selector_head_candidates=%s status=%s\n' \
     "$SCHEMA" "$TEMPORAL_TASK" "$path" "$predictor" "$RESIDUAL_DELTA_SCALE" "$PROJECTOR_DRIFT_WEIGHT" \
     "$SIGNED_MARGIN_WEIGHT" "$SIGNED_MARGIN_BANK_GAP" "$SIGNED_MARGIN_SIGN_GAP" "$SIGNED_MARGIN_SPEED_GAP" \
     "$SIGNED_MARGIN_BANK_WEIGHT" "$SIGNED_MARGIN_SIGN_WEIGHT" "$SIGNED_MARGIN_SPEED_WEIGHT" \
@@ -617,7 +676,17 @@ emit_row() {
     "$state_latent_mrr_end_value" "$state_latent_top1_end_value" "$state_latent_sign_top1_end_value" \
     "$state_latent_mean_rank_end_value" "$state_projection_mrr_end_value" "$state_projection_top1_end_value" \
     "$state_projection_sign_top1_end_value" "$state_projection_mean_rank_end_value" "$state_support_samples_value" \
-    "$state_query_samples_value" "$state_candidates_value" "$status"
+    "$state_query_samples_value" "$state_candidates_value" "$(signed_candidate_selector_head_enabled)" \
+    "$SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE" "$SIGNED_CANDIDATE_SELECTOR_HEAD_LR" "$SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT" \
+    "$SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR" "$SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT" "$SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT" \
+    "$selector_head_mrr_end_value" "$selector_head_top1_end_value" "$selector_head_margin_end_value" \
+    "$selector_head_positive_margin_rate_end_value" "$selector_head_sign_margin_end_value" "$selector_head_speed_margin_end_value" \
+    "$selector_head_norm_ratio_end_value" "$selector_head_objective_loss_end_value" "$selector_head_objective_ce_end_value" \
+    "$selector_head_objective_entropy_reg_end_value" "$selector_head_objective_kl_to_prior_end_value" "$selector_head_entropy_end_value" \
+    "$selector_head_true_probability_end_value" "$selector_head_max_probability_end_value" "$selector_head_temperature_end_value" \
+    "$selector_head_steps_value" "$selector_head_lr_end_value" "$selector_head_entropy_floor_end_value" \
+    "$selector_head_entropy_weight_end_value" "$selector_head_kl_weight_end_value" "$selector_head_support_samples_value" \
+    "$selector_head_query_samples_value" "$selector_head_candidates_value" "$status"
 
   if [[ -n "$REPORT_PATH" ]]; then
     local row_values=(
@@ -680,7 +749,17 @@ emit_row() {
       "$state_latent_mrr_end_value" "$state_latent_top1_end_value" "$state_latent_sign_top1_end_value" \
       "$state_latent_mean_rank_end_value" "$state_projection_mrr_end_value" "$state_projection_top1_end_value" \
       "$state_projection_sign_top1_end_value" "$state_projection_mean_rank_end_value" "$state_support_samples_value" \
-      "$state_query_samples_value" "$state_candidates_value" "$status"
+      "$state_query_samples_value" "$state_candidates_value" "$(signed_candidate_selector_head_enabled)" \
+      "$SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE" "$SIGNED_CANDIDATE_SELECTOR_HEAD_LR" "$SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT" \
+      "$SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR" "$SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT" "$SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT" \
+      "$selector_head_mrr_end_value" "$selector_head_top1_end_value" "$selector_head_margin_end_value" \
+      "$selector_head_positive_margin_rate_end_value" "$selector_head_sign_margin_end_value" "$selector_head_speed_margin_end_value" \
+      "$selector_head_norm_ratio_end_value" "$selector_head_objective_loss_end_value" "$selector_head_objective_ce_end_value" \
+      "$selector_head_objective_entropy_reg_end_value" "$selector_head_objective_kl_to_prior_end_value" "$selector_head_entropy_end_value" \
+      "$selector_head_true_probability_end_value" "$selector_head_max_probability_end_value" "$selector_head_temperature_end_value" \
+      "$selector_head_steps_value" "$selector_head_lr_end_value" "$selector_head_entropy_floor_end_value" \
+      "$selector_head_entropy_weight_end_value" "$selector_head_kl_weight_end_value" "$selector_head_support_samples_value" \
+      "$selector_head_query_samples_value" "$selector_head_candidates_value" "$status"
     )
     local IFS=,
     printf '%s\n' "${row_values[*]}" >> "$REPORT_PATH"
@@ -833,6 +912,29 @@ run_one() {
   local state_support_samples="na"
   local state_query_samples="na"
   local state_candidates="na"
+  local selector_head_mrr_end="na"
+  local selector_head_top1_end="na"
+  local selector_head_margin_end="na"
+  local selector_head_positive_margin_rate_end="na"
+  local selector_head_sign_margin_end="na"
+  local selector_head_speed_margin_end="na"
+  local selector_head_norm_ratio_end="na"
+  local selector_head_objective_loss_end="na"
+  local selector_head_objective_ce_end="na"
+  local selector_head_objective_entropy_reg_end="na"
+  local selector_head_objective_kl_to_prior_end="na"
+  local selector_head_entropy_end="na"
+  local selector_head_true_probability_end="na"
+  local selector_head_max_probability_end="na"
+  local selector_head_temperature_end="na"
+  local selector_head_steps="na"
+  local selector_head_lr_end="na"
+  local selector_head_entropy_floor_end="na"
+  local selector_head_entropy_weight_end="na"
+  local selector_head_kl_weight_end="na"
+  local selector_head_support_samples="na"
+  local selector_head_query_samples="na"
+  local selector_head_candidates="na"
 
   if [[ "$path" == "unprojected" ]]; then
     example="train_vision_jepa_random_temporal"
@@ -878,6 +980,15 @@ run_one() {
     extra_args+=(--signed-angular-radial-weight "$SIGNED_ANGULAR_RADIAL_WEIGHT")
     extra_args+=(--signed-angular-weight "$SIGNED_ANGULAR_WEIGHT")
     extra_args+=(--signed-angular-radial-radius-weight "$SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT")
+  fi
+  if [[ "$(signed_candidate_selector_head_enabled)" == "true" ]]; then
+    extra_args+=(--signed-candidate-selector-head)
+    extra_args+=(--signed-candidate-selector-head-temperature "$SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE")
+    extra_args+=(--signed-candidate-selector-head-lr "$SIGNED_CANDIDATE_SELECTOR_HEAD_LR")
+    extra_args+=(--signed-candidate-selector-head-weight "$SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT")
+    extra_args+=(--signed-candidate-selector-head-entropy-floor "$SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR")
+    extra_args+=(--signed-candidate-selector-head-entropy-weight "$SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT")
+    extra_args+=(--signed-candidate-selector-head-kl-weight "$SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT")
   fi
 
   log_file="$(mktemp)"
@@ -929,6 +1040,7 @@ run_one() {
   local final_signed_radial_calibration_line
   local final_signed_angular_radial_objective_line
   local final_signed_state_separability_line
+  local final_signed_candidate_selector_head_integration_line
 
   pred_health_line="$(grep -m1 '^final prediction health |' "$log_file" || true)"
   target_health_line="$(grep -m1 '^final target health |' "$log_file" || true)"
@@ -1111,6 +1223,18 @@ run_one() {
         return 0
       fi
       read -r state_latent_mrr_end state_latent_top1_end state_latent_sign_top1_end state_latent_mean_rank_end state_projection_mrr_end state_projection_top1_end state_projection_sign_top1_end state_projection_mean_rank_end state_support_samples state_query_samples state_candidates <<< "$parsed"
+
+      if [[ "$(signed_candidate_selector_head_enabled)" == "true" ]]; then
+        final_signed_candidate_selector_head_integration_line="$(grep -m1 '^final | signed candidate selector head integration learned_selector_mrr ' "$log_file" || true)"
+
+        if ! parsed="$(parse_signed_candidate_selector_head_integration_line "$final_signed_candidate_selector_head_integration_line")"; then
+          failures=$((failures + 1))
+          emit_row "$path" "$predictor" "$seed" "$encoder_lr" "$target_momentum_start" "$target_momentum_end" "$target_momentum_warmup_steps" "$train_pred_start" "$train_pred_end" "$val_pred_start" "$val_pred_end" "$train_obj_start" "$train_obj_end" "$val_obj_start" "$val_obj_end" "na" "na" "$proj_var_mean" "$target_drift_end" "parse_failed"
+          rm -f "$log_file"
+          return 0
+        fi
+        read -r selector_head_mrr_end selector_head_top1_end selector_head_margin_end selector_head_positive_margin_rate_end selector_head_sign_margin_end selector_head_speed_margin_end selector_head_norm_ratio_end selector_head_objective_loss_end selector_head_objective_ce_end selector_head_objective_entropy_reg_end selector_head_objective_kl_to_prior_end selector_head_entropy_end selector_head_true_probability_end selector_head_max_probability_end selector_head_temperature_end selector_head_steps selector_head_lr_end selector_head_entropy_floor_end selector_head_entropy_weight_end selector_head_kl_weight_end selector_head_support_samples selector_head_query_samples selector_head_candidates <<< "$parsed"
+      fi
     fi
   fi
 
