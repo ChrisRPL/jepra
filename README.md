@@ -1,9 +1,46 @@
 # JEPRA
 
-JEPRA is a Rust-first framework for compact JEPA-style latent predictive modeling, with a current focus on temporal prediction (vision-based synthetic tasks) rather than broad framework abstraction.
-The crate is published as `jepra-core`.
+JEPRA is a Rust-first research framework for building compact JEPA-style predictive latent models.
+The immediate product goal is a developer-friendly path from data to small, strong predictive models: get data, choose a compact architecture, fine-tune or train, inspect representation health, and ship an evidence-backed model.
 
-## Current Scope (from `VISION.md`)
+The current crate is `jepra-core`. The active proof path is temporal visual prediction with synthetic moving-square tasks because it gives fast, deterministic evidence for representation quality, geometry, and compact predictor behavior.
+
+## Project Status
+
+| Area | Status | Notes |
+| --- | --- | --- |
+| Core Rust JEPA primitives | Active | Tensor ops, linear layers, predictors, encoders, JEPA wrappers, losses, and telemetry live in `crates/jepra-core`. |
+| Temporal proof tasks | Active | `random-speed`, `velocity-trail`, and `signed-velocity-trail` examples provide deterministic training/validation loops. |
+| Compact model research | Active | Conservative defaults stay baseline; bottleneck, residual, state-radius, and signed candidate heads are opt-in probes. |
+| Current bottleneck | In progress | Signed candidate selection now has a direct entropy-floor selector head that passed seed `11000`; three-seed validation is pending. |
+| Public API/product polish | Early | The framework is not yet a stable end-user training SDK. Current work is still proof-path hardening. |
+
+## System Map
+
+```mermaid
+flowchart LR
+  Tensor[Tensor + ops] --> Modules[Linear / predictors]
+  Modules --> Encoders[Vision encoders]
+  Encoders --> JEPA[VisionJepa / ProjectedVisionJepa]
+  JEPA --> Tasks[Temporal training examples]
+  Tasks --> Diagnostics[Health + geometry diagnostics]
+  Diagnostics --> Decisions[Evidence-gated model changes]
+```
+
+## Research Path
+
+```mermaid
+flowchart TD
+  A[random-speed stable baseline] --> B[velocity-trail speed diagnostic]
+  B --> C[signed-velocity-trail direction + speed bottleneck]
+  C --> D[unit geometry signal found]
+  D --> E[radius-only heads rejected]
+  E --> F[unit-mix collapse diagnosed]
+  F --> G[entropy-floor selector head passes seed 11000]
+  G --> H{three-seed validation pending}
+```
+
+## Current Scope
 
 - `VisionJepa` and `ProjectedVisionJepa` training paths with a frozen baseline, a compact frozen-encoder option, and optional trainable-encoder updates in temporal JEPA examples
 - baseline two-layer predictors plus opt-in `BottleneckPredictor`, `ResidualBottleneckPredictor`, and `StateRadiusPredictor` variants for compact-capacity experiments
@@ -17,12 +54,32 @@ The crate is published as `jepra-core`.
 - unprojected validation helpers and reduction thresholds are centralized in `crates/jepra-core/examples/support/temporal_validation.rs`
 - temporal validation helpers now explicitly panic when validation batches is configured as zero
 
+## Research Rules
+
+- Defaults stay conservative until evidence clears health, drift, and geometry gates.
+- Opt-in probes are allowed to fail; failures are kept when they clarify the bottleneck.
+- Loss-only wins do not count if representation health collapses.
+- README claims should be reproducible from commands in this repo; deeper internal notes remain in ignored `agent-wiki/` files.
+
 ## Core Verification Commands
 
 ```bash
 cargo test --manifest-path crates/jepra-core/Cargo.toml --test temporal_vision_support
 cargo test --manifest-path crates/jepra-core/Cargo.toml --test projected_temporal_support
 cargo clippy --manifest-path crates/jepra-core/Cargo.toml --all-targets --all-features
+```
+
+## Quick Start
+
+```bash
+cargo test --manifest-path crates/jepra-core/Cargo.toml --all-targets
+JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected
+cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- \
+  --temporal-task signed-velocity-trail \
+  --compact-encoder-mode signed-direction-magnitude \
+  --train-steps 20 \
+  --log 20 \
+  --signed-candidate-selector-head
 ```
 
 ## Current Tracked Scope
@@ -76,6 +133,8 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--signed-candidate-unit-mix-temperature`, `--signed-candidate-unit-mix-lr`, and `--signed-candidate-unit-mix-weight` configure that diagnostic head.
 - `--signed-candidate-selector-probe` enables a report-only supervised selector probe over current candidate features; it trains a detached linear classifier on support batches and reports held-out query metrics without changing the base model.
 - `--signed-candidate-selector-probe-temperature`, `--signed-candidate-selector-probe-steps`, and `--signed-candidate-selector-probe-lr` configure that report-only probe.
+- `--signed-candidate-selector-head` enables the direct trainable candidate selector head for the signed task; it trains a side head over normalized candidate features and does not change the base predictor.
+- `--signed-candidate-selector-head-temperature`, `--signed-candidate-selector-head-lr`, `--signed-candidate-selector-head-weight`, `--signed-candidate-selector-head-entropy-floor`, `--signed-candidate-selector-head-entropy-weight`, and `--signed-candidate-selector-head-kl-weight` configure that selector head.
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -91,6 +150,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_SIGNED_ANGULAR_RADIAL_WEIGHT`, `JEPRA_SIGNED_ANGULAR_WEIGHT`, and `JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT` are environment fallbacks for signed angular-radial probes
 - `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_HEAD`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_LR`, and `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_WEIGHT` are environment fallbacks for the candidate unit-mix diagnostic head
 - `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_LR` are environment fallbacks for the report-only selector probe
+- `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT` are environment fallbacks for the direct selector head
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
