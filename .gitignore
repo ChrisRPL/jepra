@@ -206,8 +206,15 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
+# Internal agent planning/research notes. Keep the public README self-contained.
+.codex/
 VISION.md
-agent-wiki/
+agent-wiki/*
+!agent-wiki/
+!agent-wiki/02-current-repo-state.md
+!agent-wiki/04-implementation-guidelines-and-next-steps.md
+agent-wiki/experiments/
+agent-wiki/ml-intern/
 
 # External ML Intern scratch outputs.
 # Preserve useful content under agent-wiki/ml-intern/ before cleanup.
@@ -219,7 +226,3 @@ jepa_benchmark_plan.md
 jepa_datasets.py
 jepra_recipes_research.md
 jepra_rust.md
-docs/metrics.md
-examples/metric_diagnostics.py
-jepra/metrics.py
-tests/test_metrics.py
