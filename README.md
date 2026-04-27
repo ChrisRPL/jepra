@@ -1,9 +1,42 @@
 # JEPRA
 
+<p align="center">
+  <img src="site/assets/logo-wordmark.svg" alt="Latent Systems Lab" width="520">
+</p>
+
+<p align="center">
+  A <a href="https://chrisrpl.github.io/jepra/">Latent Systems Lab</a> research project.
+</p>
+
 JEPRA is a Rust-first research framework for building compact JEPA-style predictive latent models.
-The immediate product goal is a developer-friendly path from data to small, strong predictive models: get data, choose a compact architecture, fine-tune or train, inspect representation health, and ship an evidence-backed model.
+The long-term product goal is a developer-friendly path from data to small predictive models: get data, choose a compact architecture, train or fine-tune, inspect representation health, compare evidence, and export a model when the evidence supports it.
 
 The current crate is `jepra-core`. The active proof path is temporal visual prediction with synthetic moving-square tasks because it gives fast, deterministic evidence for representation quality, geometry, and compact predictor behavior.
+
+JEPRA is not a stable end-user SDK yet. Current work is proof-path hardening: make the compact JEPA mechanism measurable, keep failures visible, and only promote architecture changes when health and geometry evidence support them.
+
+## What Is JEPA?
+
+JEPA stands for Joint Embedding Predictive Architecture. Instead of reconstructing raw pixels, a JEPA-style model learns to predict useful latent representations of hidden or future states. In JEPRA, that means studying compact encoders, predictors, target projections, and diagnostics that make latent prediction behavior inspectable.
+
+## What Can I Do Today?
+
+- Run the core Rust tests to verify tensor, predictor, temporal, and projected-path behavior.
+- Run a synthetic temporal prediction example and inspect representation-health metrics.
+- Use the signed temporal example to reproduce the current bottleneck: turning candidate-centered selector signal into actual prediction improvement without health or geometry collapse.
+
+```bash
+cargo test --manifest-path crates/jepra-core/Cargo.toml --all-targets
+JEPRA_TRAIN_STEPS=12 cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected
+cargo run --manifest-path crates/jepra-core/Cargo.toml --example train_vision_jepa_random_temporal_projected -- \
+  --temporal-task signed-velocity-trail \
+  --compact-encoder-mode signed-direction-magnitude \
+  --train-steps 20 \
+  --log 20 \
+  --signed-candidate-selector-head
+```
+
+Expected signal: the examples print training/validation loss plus representation-health and geometry diagnostics. A lower loss alone is not enough for promotion; prediction health, target drift, candidate margins, and selector behavior must stay coherent.
 
 ## Project Status
 
@@ -12,8 +45,23 @@ The current crate is `jepra-core`. The active proof path is temporal visual pred
 | Core Rust JEPA primitives | Active | Tensor ops, linear layers, predictors, encoders, JEPA wrappers, losses, and telemetry live in `crates/jepra-core`. |
 | Temporal proof tasks | Active | `random-speed`, `velocity-trail`, and `signed-velocity-trail` examples provide deterministic training/validation loops. |
 | Compact model research | Active | Conservative defaults stay baseline; bottleneck, residual, state-radius, and signed candidate heads are opt-in probes. |
-| Current bottleneck | In progress | Signed candidate selection now has first-class selector-head comparison metrics; the next experiment is report-only selector readout diagnostics. |
+| Current bottleneck | In progress | Convert candidate-centered selector signal into prediction improvement without health, drift, or geometry collapse. |
 | Public API/product polish | Early | The framework is not yet a stable end-user training SDK. Current work is still proof-path hardening. |
+
+## Current Research State
+
+- Synthetic temporal prediction is the active proof path because it is deterministic, cheap, and exposes representation-health failures quickly.
+- Signed direction/magnitude cues are measurable, but the base predictor still often lands closer to wrong signed candidates than the true target.
+- Selector-head metrics now clear a narrow diagnostic gate, but the selector path is not promoted until it improves the underlying prediction geometry.
+
+## Algorithm Path
+
+```text
+data pair -> encoder -> latent state -> predictor -> projected target
+         -> health + geometry diagnostics -> evidence-gated architecture changes
+```
+
+The current algorithm work is deliberately narrow. Defaults stay conservative while opt-in heads and objectives probe whether candidate geometry can be turned into real predictor improvement.
 
 ## System Map
 
@@ -39,7 +87,7 @@ flowchart TD
   F --> G[entropy-floor selector head passes seed 11000]
   G --> H[three-seed validation passed]
   H --> I[selector reporting/tooling passed]
-  I --> J{selector readout diagnostics next}
+  I --> J{selector signal must improve prediction geometry}
 ```
 
 ## Current Scope
@@ -72,6 +120,8 @@ cargo clippy --manifest-path crates/jepra-core/Cargo.toml --all-targets --all-fe
 ```
 
 ## Quick Start
+
+The commands below are intentionally CPU-friendly and synthetic-data based. They are meant to verify the current proof path, not train a production model.
 
 ```bash
 cargo test --manifest-path crates/jepra-core/Cargo.toml --all-targets
