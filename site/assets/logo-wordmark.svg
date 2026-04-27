@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 120" role="img" aria-label="Latent Systems Lab">
+  <rect width="780" height="120" fill="#f4f0e8"/>
+  <g transform="translate(18 17)">
+    <path d="M0 58 C24 52, 28 24, 56 28 C74 31, 88 21, 106 14" fill="none" stroke="#171717" stroke-width="3" stroke-linecap="round"/>
+    <path d="M56 28 C74 31, 88 21, 106 14" fill="none" stroke="#171717" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 9"/>
+    <circle cx="0" cy="58" r="6" fill="#171717"/>
+    <circle cx="31" cy="37" r="6" fill="#171717"/>
+    <circle cx="56" cy="28" r="6" fill="#171717"/>
+    <circle cx="106" cy="14" r="7" fill="#f4f0e8" stroke="#171717" stroke-width="3"/>
+    <path d="M136 8 V78" stroke="#171717" stroke-width="2"/>
+  </g>
+  <text x="190" y="72" fill="#171717" font-family="Source Serif 4, Georgia, serif" font-size="56" font-weight="400" letter-spacing="-1">Latent Systems Lab</text>
+</svg>

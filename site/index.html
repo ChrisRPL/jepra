@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Latent Systems Lab</title>
+    <meta name="description" content="Latent Systems Lab builds compact predictive world models and the Rust-first systems behind them.">
+    <meta name="theme-color" content="#f4f0e8">
+    <link rel="canonical" href="https://chrisrpl.github.io/jepra/">
+
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://chrisrpl.github.io/jepra/">
+    <meta property="og:title" content="Latent Systems Lab">
+    <meta property="og:description" content="Compact predictive world models.">
+    <meta property="og:image" content="https://chrisrpl.github.io/jepra/assets/og-image.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Latent Systems Lab">
+    <meta name="twitter:description" content="Compact predictive world models.">
+    <meta name="twitter:image" content="https://chrisrpl.github.io/jepra/assets/og-image.png">
+
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&amp;family=IBM+Plex+Sans:wght@300;400;500&amp;family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,500&amp;display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <header class="site-header" aria-label="Primary">
+      <a class="brand" href="#top" aria-label="Latent Systems Lab home">
+        <img src="assets/logo-mark.svg" alt="" width="86" height="42">
+        <span>Latent Systems Lab</span>
+      </a>
+      <nav class="nav-links" aria-label="Sections">
+        <a href="#mission">Mission</a>
+        <a href="#jepra">JEPRA</a>
+        <a href="#manifesto">Manifesto</a>
+        <a href="#contact">Contact</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Independent AI research lab</p>
+          <h1 id="hero-title">We build compact predictive world models.</h1>
+          <p class="hero-lede">
+            Latent Systems Lab develops Rust-first systems, diagnostics, and research paths for
+            JEPA-style latent prediction.
+          </p>
+          <div class="hero-actions" aria-label="Primary links">
+            <a class="button" href="#jepra">Current focus</a>
+            <a class="text-link" href="https://github.com/ChrisRPL/jepra">GitHub</a>
+          </div>
+        </div>
+
+        <div class="hero-figure" aria-hidden="true">
+          <svg viewBox="0 0 620 520" class="field-diagram">
+            <g class="field-lines">
+              <path d="M70 92 C174 26 298 78 382 26"/>
+              <path d="M54 170 C168 102 316 160 486 90"/>
+              <path d="M44 248 C184 182 320 306 540 186"/>
+              <path d="M80 334 C214 250 342 392 574 276"/>
+              <path d="M142 430 C260 344 404 438 576 374"/>
+              <path d="M268 36 C238 146 292 242 244 360"/>
+              <path d="M400 42 C366 162 424 236 372 390"/>
+              <path d="M516 72 C470 184 520 292 476 450"/>
+            </g>
+            <g class="axis-lines">
+              <path d="M92 390 H560"/>
+              <path d="M126 430 V88"/>
+            </g>
+            <path class="trajectory" d="M126 390 C214 330 232 226 326 232 C386 236 428 168 502 132"/>
+            <path class="trajectory predicted" d="M326 232 C386 236 428 168 502 132"/>
+            <g class="points">
+              <circle cx="126" cy="390" r="8"/>
+              <circle cx="232" cy="286" r="8"/>
+              <circle cx="326" cy="232" r="8"/>
+              <circle class="open" cx="502" cy="132" r="10"/>
+            </g>
+            <text x="102" y="418">z0</text>
+            <text x="214" y="316">z1</text>
+            <text x="336" y="224">z2</text>
+            <text x="512" y="126">z3</text>
+          </svg>
+        </div>
+      </section>
+
+      <section class="mission section-grid" id="mission" aria-labelledby="mission-title">
+        <div>
+          <p class="section-kicker">01 - Mission</p>
+          <h2 id="mission-title">Small models should be easier to inspect, adapt, and trust.</h2>
+        </div>
+        <div class="section-copy">
+          <p>
+            We study predictive latent models that learn useful structure from temporal data.
+            Our work favors compact mechanisms, explicit diagnostics, reproducible experiments,
+            and systems code that developers can reason about.
+          </p>
+          <p>
+            The lab is young by design: fewer claims, tighter loops, and a clear path from
+            research primitive to usable framework.
+          </p>
+        </div>
+      </section>
+
+      <section class="jepra-panel" id="jepra" aria-labelledby="jepra-title">
+        <div class="panel-header">
+          <p class="section-kicker">02 - Current focus</p>
+          <h2 id="jepra-title">JEPRA is our flagship framework project.</h2>
+        </div>
+        <div class="panel-body">
+          <p>
+            JEPRA is an open Rust-first research framework for compact JEPA-style predictive
+            latent models. It is currently in proof-path hardening: temporal prediction,
+            representation-health telemetry, candidate geometry, and evidence-gated model changes.
+          </p>
+          <div class="status-grid" aria-label="JEPRA status">
+            <span>Rust-first core</span>
+            <span>JEPA-style prediction</span>
+            <span>Health diagnostics</span>
+            <span>Proof-path hardening</span>
+          </div>
+          <a class="button button-dark" href="https://github.com/ChrisRPL/jepra">View JEPRA on GitHub</a>
+        </div>
+      </section>
+
+      <section class="work" aria-labelledby="work-title">
+        <p class="section-kicker">03 - What we do</p>
+        <h2 id="work-title">Research that has to survive implementation.</h2>
+        <div class="work-grid">
+          <article>
+            <span>01</span>
+            <h3>Predictive models</h3>
+            <p>Build compact models that predict latent structure instead of only fitting labels or reconstructing pixels.</p>
+          </article>
+          <article>
+            <span>02</span>
+            <h3>Low-level systems</h3>
+            <p>Own the Rust core for tensor logic, modules, losses, training primitives, and future acceleration paths.</p>
+          </article>
+          <article>
+            <span>03</span>
+            <h3>Model diagnostics</h3>
+            <p>Measure representation health, prediction geometry, selector behavior, and failure modes before promotion.</p>
+          </article>
+          <article>
+            <span>04</span>
+            <h3>Developer paths</h3>
+            <p>Turn experiments into workflows for data, training, reporting, comparison, and export.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="manifesto section-grid" id="manifesto" aria-labelledby="manifesto-title">
+        <div>
+          <p class="section-kicker">04 - Manifesto</p>
+          <h2 id="manifesto-title">Evidence before architecture.</h2>
+        </div>
+        <ol class="principles">
+          <li>
+            <strong>Small proofs before large systems.</strong>
+            Compact experiments expose weak abstractions faster than broad framework expansion.
+          </li>
+          <li>
+            <strong>Health metrics before loss-only wins.</strong>
+            A model does not improve if its representations collapse while the scalar objective looks better.
+          </li>
+          <li>
+            <strong>Readable code before clever code.</strong>
+            Research systems should be inspectable by the people extending them.
+          </li>
+          <li>
+            <strong>Reproducible claims before public claims.</strong>
+            The site should say only what the repo can defend.
+          </li>
+        </ol>
+      </section>
+
+      <section class="contact" id="contact" aria-labelledby="contact-title">
+        <div>
+          <p class="section-kicker">05 - Contact</p>
+          <h2 id="contact-title">Built by Krzysztof Romanowski.</h2>
+        </div>
+        <div class="contact-card">
+          <p>
+            Reach out about compact predictive models, JEPA-style systems, Rust ML tooling,
+            and research collaborations around JEPRA.
+          </p>
+          <div class="socials">
+            <a href="https://www.linkedin.com/in/krzysztof-romanowski-133213168/">LinkedIn</a>
+            <a href="https://x.com/ChrisRomanowski">X / Twitter</a>
+            <a href="https://github.com/ChrisRPL/jepra">GitHub</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <span>Latent Systems Lab</span>
+      <span>Compact predictive world models.</span>
+    </footer>
+  </body>
+</html>

@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" role="img" aria-label="Latent Systems Lab social card">
+  <defs>
+    <pattern id="paper" width="18" height="18" patternUnits="userSpaceOnUse">
+      <rect width="18" height="18" fill="#f4f0e8"/>
+      <path d="M0 18 L18 0" stroke="#e6dfd2" stroke-width=".7" opacity=".45"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="630" fill="url(#paper)"/>
+  <g opacity=".38" fill="none" stroke="#5e625f" stroke-width="1">
+    <path d="M650 420 C740 300, 880 480, 1060 280"/>
+    <path d="M710 440 C800 330, 900 470, 1110 350"/>
+    <path d="M760 470 C830 360, 960 430, 1150 255"/>
+    <path d="M610 370 C740 245, 890 330, 1120 190"/>
+    <path d="M685 510 C790 390, 960 545, 1160 390"/>
+  </g>
+  <g transform="translate(96 86)">
+    <path d="M0 58 C24 52, 28 24, 56 28 C74 31, 88 21, 106 14" fill="none" stroke="#171717" stroke-width="3" stroke-linecap="round"/>
+    <path d="M56 28 C74 31, 88 21, 106 14" fill="none" stroke="#171717" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 9"/>
+    <circle cx="0" cy="58" r="6" fill="#171717"/>
+    <circle cx="31" cy="37" r="6" fill="#171717"/>
+    <circle cx="56" cy="28" r="6" fill="#171717"/>
+    <circle cx="106" cy="14" r="7" fill="#f4f0e8" stroke="#171717" stroke-width="3"/>
+    <path d="M136 8 V78" stroke="#171717" stroke-width="2"/>
+    <text x="176" y="66" fill="#171717" font-family="Source Serif 4, Georgia, serif" font-size="50">Latent Systems Lab</text>
+  </g>
+  <text x="96" y="320" fill="#171717" font-family="Source Serif 4, Georgia, serif" font-size="92" letter-spacing="-2">Compact predictive</text>
+  <text x="96" y="420" fill="#171717" font-family="Source Serif 4, Georgia, serif" font-size="92" letter-spacing="-2">world models.</text>
+  <path d="M100 470 H166" stroke="#a9472b" stroke-width="3"/>
+  <text x="96" y="535" fill="#5e625f" font-family="IBM Plex Sans, Helvetica, sans-serif" font-size="28">Rust-first systems and diagnostics for JEPA-style latent prediction.</text>
+</svg>

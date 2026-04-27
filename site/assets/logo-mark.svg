@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 86" role="img" aria-label="Latent Systems Lab mark">
+  <path d="M14 58 C38 52, 42 24, 70 28 C88 31, 102 21, 120 14" fill="none" stroke="#171717" stroke-width="3" stroke-linecap="round"/>
+  <path d="M70 28 C88 31, 102 21, 120 14" fill="none" stroke="#171717" stroke-width="3" stroke-linecap="round" stroke-dasharray="7 9"/>
+  <circle cx="14" cy="58" r="6" fill="#171717"/>
+  <circle cx="45" cy="37" r="6" fill="#171717"/>
+  <circle cx="70" cy="28" r="6" fill="#171717"/>
+  <circle cx="120" cy="14" r="7" fill="#f4f0e8" stroke="#171717" stroke-width="3"/>
+  <path d="M150 8 V78" stroke="#171717" stroke-width="2"/>
+</svg>

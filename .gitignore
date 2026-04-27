@@ -2,6 +2,7 @@
 __pycache__/
 *.py[codz]
 *$py.class
+.DS_Store
 
 # C extensions
 *.so
@@ -222,3 +223,7 @@ jepa_benchmark_plan.md
 jepa_datasets.py
 jepra_recipes_research.md
 jepra_rust.md
+
+# Public GitHub Pages site.
+!/site/
+!/site/**
