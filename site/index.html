@@ -13,6 +13,8 @@
     <meta property="og:title" content="Latent Systems Lab">
     <meta property="og:description" content="Compact predictive world models.">
     <meta property="og:image" content="https://chrisrpl.github.io/jepra/assets/og-image.png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="Latent Systems Lab">
     <meta name="twitter:description" content="Compact predictive world models.">
@@ -25,8 +27,9 @@
     <link rel="stylesheet" href="styles.css">
   </head>
   <body>
+    <a class="skip-link" href="#content">Skip to content</a>
     <header class="site-header" aria-label="Primary">
-      <a class="brand" href="#top" aria-label="Latent Systems Lab home">
+      <a class="brand" href="#content" aria-label="Latent Systems Lab home">
         <img src="assets/logo-mark.svg" alt="" width="86" height="42">
         <span>Latent Systems Lab</span>
       </a>
@@ -38,7 +41,7 @@
       </nav>
     </header>
 
-    <main id="top">
+    <main id="content">
       <section class="hero" aria-labelledby="hero-title">
         <div class="hero-copy">
           <p class="eyebrow">Independent AI research lab</p>
@@ -69,18 +72,21 @@
               <path d="M92 390 H560"/>
               <path d="M126 430 V88"/>
             </g>
-            <path class="trajectory" d="M126 390 C214 330 232 226 326 232 C386 236 428 168 502 132"/>
+            <path class="trajectory observed" d="M126 390 C214 330 232 226 326 232"/>
             <path class="trajectory predicted" d="M326 232 C386 236 428 168 502 132"/>
             <g class="points">
-              <circle cx="126" cy="390" r="8"/>
-              <circle cx="232" cy="286" r="8"/>
-              <circle cx="326" cy="232" r="8"/>
-              <circle class="open" cx="502" cy="132" r="10"/>
+              <circle class="point point-1" cx="126" cy="390" r="8"/>
+              <circle class="point point-2" cx="232" cy="286" r="8"/>
+              <circle class="point point-3" cx="326" cy="232" r="8"/>
+              <circle class="point point-4 open" cx="502" cy="132" r="10"/>
             </g>
             <text x="102" y="418">z0</text>
             <text x="214" y="316">z1</text>
             <text x="336" y="224">z2</text>
             <text x="512" y="126">z3</text>
+            <text class="diagram-note" x="86" y="360">observed states</text>
+            <text class="diagram-note" x="360" y="184">prediction path</text>
+            <text class="diagram-note" x="438" y="454">latent field</text>
           </svg>
         </div>
       </section>
