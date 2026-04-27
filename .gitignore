@@ -210,6 +210,7 @@ __marimo__/
 .codex/
 VISION.md
 agent-wiki/
+lab-wiki/
 
 # External ML Intern scratch outputs.
 # Preserve useful content under agent-wiki/ml-intern/ before cleanup.
