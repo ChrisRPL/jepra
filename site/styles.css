@@ -33,7 +33,7 @@ body {
   color: var(--ink);
   font-family: var(--sans);
   font-size: 16px;
-  font-weight: 300;
+  font-weight: 400;
   line-height: 1.7;
   -webkit-font-smoothing: antialiased;
 }
@@ -48,6 +48,7 @@ body::before {
     linear-gradient(rgba(23, 23, 23, 0.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(23, 23, 23, 0.025) 1px, transparent 1px);
   background-size: 54px 54px;
+  -webkit-mask-image: radial-gradient(circle at 68% 20%, black, transparent 62%);
   mask-image: radial-gradient(circle at 68% 20%, black, transparent 62%);
 }
 
@@ -206,10 +207,10 @@ h1 {
   margin-bottom: 2rem;
   color: var(--ink);
   font-family: var(--serif);
-  font-size: clamp(4.2rem, 9.4vw, 9.5rem);
+  font-size: clamp(3.7rem, 7.4vw, 7.6rem);
   font-weight: 300;
-  letter-spacing: -0.065em;
-  line-height: 0.92;
+  letter-spacing: -0.055em;
+  line-height: 0.96;
 }
 
 .hero-lede {
@@ -324,12 +325,12 @@ h1 {
 }
 
 .trajectory.observed {
-  stroke-dasharray: none;
+  stroke-dasharray: 1;
   stroke-dashoffset: 0;
 }
 
 .trajectory.predicted {
-  stroke-dasharray: 7 9;
+  stroke-dasharray: 0.06 0.075;
   stroke-dashoffset: 0;
 }
 
@@ -391,6 +392,7 @@ h1 {
   max-width: 42rem;
   color: var(--iron);
   font-size: 1.08rem;
+  font-weight: 400;
 }
 
 .section-copy p:last-child,
@@ -412,6 +414,7 @@ h1 {
   max-width: 47rem;
   color: var(--iron);
   font-size: 1.05rem;
+  font-weight: 400;
 }
 
 .status-grid {
@@ -479,6 +482,7 @@ h1 {
 .principles li,
 .contact-card {
   color: var(--iron);
+  font-weight: 400;
 }
 
 .principles {
@@ -584,8 +588,8 @@ h1 {
   }
 
   .trajectory.observed {
-    stroke-dasharray: 430;
-    stroke-dashoffset: 430;
+    stroke-dasharray: 1;
+    stroke-dashoffset: 1;
     animation: trace-draw 1.2s cubic-bezier(0.6, 0, 0.2, 1) 360ms both;
   }
 
@@ -630,7 +634,7 @@ h1 {
 
 @keyframes dash {
   to {
-    stroke-dashoffset: -64;
+    stroke-dashoffset: -1;
   }
 }
 
@@ -643,7 +647,7 @@ h1 {
 @keyframes prediction-resolve {
   from {
     opacity: 0;
-    stroke-dashoffset: 72;
+    stroke-dashoffset: 1;
   }
   to {
     opacity: 1;
@@ -680,6 +684,10 @@ h1 {
     gap: 1.1rem;
   }
 
+  h1 {
+    max-width: 11.5ch;
+  }
+
   .hero,
   .section-grid,
   .jepra-panel,
@@ -713,6 +721,10 @@ h1 {
 }
 
 @media (max-width: 640px) {
+  .site-header {
+    position: static;
+  }
+
   .brand img {
     width: 4.2rem;
   }
@@ -726,7 +738,9 @@ h1 {
   }
 
   h1 {
-    font-size: clamp(3.6rem, 18vw, 5.2rem);
+    font-size: clamp(3.05rem, 14.5vw, 4.35rem);
+    letter-spacing: -0.052em;
+    line-height: 0.98;
   }
 
   .hero-lede {
@@ -739,6 +753,10 @@ h1 {
 
   .field-diagram {
     min-height: 18rem;
+  }
+
+  .field-diagram .diagram-note {
+    display: none;
   }
 
   .status-grid,
