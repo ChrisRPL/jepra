@@ -16,12 +16,13 @@ use projected_temporal::{
     ProjectedSignedCandidateCentroidIntegration, ProjectedSignedCandidateRadiusHeadIntegration,
     ProjectedSignedCandidateSelectorHeadIntegration,
     ProjectedSignedCandidateSelectorHeadObjectiveReport, ProjectedSignedCandidateSelectorProbe,
+    ProjectedSignedCandidateSelectorReadoutDiagnostics,
     ProjectedSignedCandidateUnitMixHeadIntegration, ProjectedSignedCandidateUnitMixObjectiveReport,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
-    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionGeometryCounterfactual,
-    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
-    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
-    projected_signed_angular_radial_objective_loss_and_grad,
+    ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionCounterfactualMetrics,
+    ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedStateSeparability,
+    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
+    ProjectedVelocityBankRanking, projected_signed_angular_radial_objective_loss_and_grad,
     projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
@@ -1966,16 +1967,17 @@ fn print_signed_candidate_selector_head_integration(
     integration: Option<ProjectedSignedCandidateSelectorHeadIntegration>,
 ) {
     if let Some(integration) = integration {
+        let legacy_readout = integration.readout_diagnostics.selector_soft_unit_mix;
         println!(
             "{} | signed candidate selector head integration learned_selector_mrr {:.6} | learned_selector_top1 {:.6} | learned_selector_margin {:.6} | learned_selector_positive_margin_rate {:.6} | learned_selector_sign_margin {:.6} | learned_selector_speed_margin {:.6} | learned_selector_norm_ratio {:.6} | objective_loss {:.6} | objective_ce {:.6} | objective_entropy_reg {:.6} | objective_kl_to_prior {:.6} | objective_entropy {:.6} | objective_true_probability {:.6} | objective_max_probability {:.6} | softmax_temperature {:.6} | selector_steps {} | lr {:.6} | entropy_floor {:.6} | entropy_weight {:.6} | kl_weight {:.6} | support_samples {} | query_samples {} | candidates {}",
             tag,
-            integration.learned_selector.mrr,
-            integration.learned_selector.top1,
-            integration.learned_selector.margin,
-            integration.learned_selector.positive_margin_rate,
-            integration.learned_selector.sign_margin,
-            integration.learned_selector.speed_margin,
-            integration.learned_selector.norm_ratio,
+            legacy_readout.mrr,
+            legacy_readout.top1,
+            legacy_readout.margin,
+            legacy_readout.positive_margin_rate,
+            legacy_readout.sign_margin,
+            legacy_readout.speed_margin,
+            legacy_readout.norm_ratio,
             integration.objective_report.loss,
             integration.objective_report.cross_entropy_loss,
             integration.objective_report.entropy_regularization_loss,
@@ -1993,7 +1995,90 @@ fn print_signed_candidate_selector_head_integration(
             integration.query_samples,
             integration.candidates,
         );
+        print_signed_candidate_selector_readout_diagnostics(tag, integration.readout_diagnostics);
+        println!(
+            "{} | signed candidate selector head integration objective_loss {:.6} | objective_ce {:.6} | objective_entropy_reg {:.6} | objective_kl_to_prior {:.6} | objective_entropy {:.6} | objective_true_probability {:.6} | objective_max_probability {:.6} | softmax_temperature {:.6} | selector_steps {} | lr {:.6} | entropy_floor {:.6} | entropy_weight {:.6} | kl_weight {:.6} | support_samples {} | query_samples {} | samples {} | candidates {}",
+            tag,
+            integration.objective_report.loss,
+            integration.objective_report.cross_entropy_loss,
+            integration.objective_report.entropy_regularization_loss,
+            integration.objective_report.kl_to_prior_loss,
+            integration.objective_report.entropy,
+            integration.objective_report.true_probability,
+            integration.objective_report.max_probability,
+            integration.softmax_temperature,
+            integration.selector_steps,
+            integration.learning_rate,
+            integration.entropy_floor,
+            integration.entropy_regularization_weight,
+            integration.kl_to_prior_weight,
+            integration.support_samples,
+            integration.query_samples,
+            integration.samples,
+            integration.candidates,
+        );
     }
+}
+
+fn print_signed_candidate_selector_readout_diagnostics(
+    tag: &str,
+    readout: ProjectedSignedCandidateSelectorReadoutDiagnostics,
+) {
+    print_signed_candidate_selector_readout_metrics(
+        tag,
+        "base_prediction",
+        readout.base_prediction,
+    );
+    print_signed_candidate_selector_readout_metrics(
+        tag,
+        "selector_soft_unit_mix",
+        readout.selector_soft_unit_mix,
+    );
+    print_signed_candidate_selector_readout_metrics(
+        tag,
+        "selector_soft_full",
+        readout.selector_soft_full,
+    );
+    print_signed_candidate_selector_readout_metrics(
+        tag,
+        "selector_hard_full",
+        readout.selector_hard_full,
+    );
+    print_signed_candidate_selector_readout_metrics(
+        tag,
+        "selector_soft_radius",
+        readout.selector_soft_radius,
+    );
+    print_signed_candidate_selector_readout_metrics(
+        tag,
+        "selector_hard_radius",
+        readout.selector_hard_radius,
+    );
+}
+
+fn print_signed_candidate_selector_readout_metrics(
+    tag: &str,
+    field: &str,
+    metrics: ProjectedSignedPredictionCounterfactualMetrics,
+) {
+    println!(
+        "{} | signed candidate selector readout {}_mrr {:.6} | {}_top1 {:.6} | {}_margin {:.6} | {}_positive_margin_rate {:.6} | {}_sign_margin {:.6} | {}_speed_margin {:.6} | {}_norm_ratio {:.6}",
+        tag,
+        field,
+        metrics.mrr,
+        field,
+        metrics.top1,
+        field,
+        metrics.margin,
+        field,
+        metrics.positive_margin_rate,
+        field,
+        metrics.sign_margin,
+        field,
+        metrics.speed_margin,
+        field,
+        metrics.norm_ratio,
+    );
 }
 
 fn maybe_projected_signed_candidate_selector_probe<P>(

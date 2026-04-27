@@ -223,8 +223,18 @@ pub struct ProjectedSignedCandidateSelectorHeadObjectiveReport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateSelectorReadoutDiagnostics {
+    pub base_prediction: ProjectedSignedPredictionCounterfactualMetrics,
+    pub selector_soft_unit_mix: ProjectedSignedPredictionCounterfactualMetrics,
+    pub selector_soft_full: ProjectedSignedPredictionCounterfactualMetrics,
+    pub selector_hard_full: ProjectedSignedPredictionCounterfactualMetrics,
+    pub selector_soft_radius: ProjectedSignedPredictionCounterfactualMetrics,
+    pub selector_hard_radius: ProjectedSignedPredictionCounterfactualMetrics,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedCandidateSelectorHeadIntegration {
-    pub learned_selector: ProjectedSignedPredictionCounterfactualMetrics,
+    pub readout_diagnostics: ProjectedSignedCandidateSelectorReadoutDiagnostics,
     pub objective_report: ProjectedSignedCandidateSelectorHeadObjectiveReport,
     pub softmax_temperature: f32,
     pub selector_steps: usize,
@@ -336,7 +346,12 @@ struct SignedCandidateUnitMixHeadIntegrationSampleOutcome {
 
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateSelectorHeadIntegrationSampleOutcome {
-    learned_selector: SignedPredictionCounterfactualSampleOutcome,
+    base_prediction: SignedPredictionCounterfactualSampleOutcome,
+    selector_soft_unit_mix: SignedPredictionCounterfactualSampleOutcome,
+    selector_soft_full: SignedPredictionCounterfactualSampleOutcome,
+    selector_hard_full: SignedPredictionCounterfactualSampleOutcome,
+    selector_soft_radius: SignedPredictionCounterfactualSampleOutcome,
+    selector_hard_radius: SignedPredictionCounterfactualSampleOutcome,
 }
 
 #[derive(Debug, Default)]
@@ -2555,7 +2570,12 @@ where
         "candidate selector head bias shape mismatch"
     );
 
-    let mut learned_selector_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut base_prediction_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut selector_soft_unit_mix_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut selector_soft_full_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut selector_hard_full_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut selector_soft_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
+    let mut selector_hard_radius_totals = SignedPredictionCounterfactualMetricTotals::default();
     let mut objective_totals = SignedCandidateSelectorHeadObjectiveReportTotals::default();
 
     for batch_idx in 0..validation_batches {
@@ -2586,18 +2606,51 @@ where
 
         objective_totals.observe(report);
         for outcome in outcomes {
-            learned_selector_totals.observe(outcome.learned_selector);
+            base_prediction_totals.observe(outcome.base_prediction);
+            selector_soft_unit_mix_totals.observe(outcome.selector_soft_unit_mix);
+            selector_soft_full_totals.observe(outcome.selector_soft_full);
+            selector_hard_full_totals.observe(outcome.selector_hard_full);
+            selector_soft_radius_totals.observe(outcome.selector_soft_radius);
+            selector_hard_radius_totals.observe(outcome.selector_hard_radius);
         }
     }
 
     let objective_report = objective_totals.into_report(candidates);
+    let samples = base_prediction_totals.samples;
     assert_eq!(
-        objective_report.samples, learned_selector_totals.samples,
-        "candidate selector head integration sample mismatch"
+        objective_report.samples, samples,
+        "candidate selector head base readout sample mismatch"
+    );
+    assert_eq!(
+        samples, selector_soft_unit_mix_totals.samples,
+        "candidate selector head soft unit-mix readout sample mismatch"
+    );
+    assert_eq!(
+        samples, selector_soft_full_totals.samples,
+        "candidate selector head soft/full readout sample mismatch"
+    );
+    assert_eq!(
+        samples, selector_hard_full_totals.samples,
+        "candidate selector head hard/full readout sample mismatch"
+    );
+    assert_eq!(
+        samples, selector_soft_radius_totals.samples,
+        "candidate selector head soft-radius readout sample mismatch"
+    );
+    assert_eq!(
+        samples, selector_hard_radius_totals.samples,
+        "candidate selector head hard-radius readout sample mismatch"
     );
 
     ProjectedSignedCandidateSelectorHeadIntegration {
-        learned_selector: learned_selector_totals.into_metrics(),
+        readout_diagnostics: ProjectedSignedCandidateSelectorReadoutDiagnostics {
+            base_prediction: base_prediction_totals.into_metrics(),
+            selector_soft_unit_mix: selector_soft_unit_mix_totals.into_metrics(),
+            selector_soft_full: selector_soft_full_totals.into_metrics(),
+            selector_hard_full: selector_hard_full_totals.into_metrics(),
+            selector_soft_radius: selector_soft_radius_totals.into_metrics(),
+            selector_hard_radius: selector_hard_radius_totals.into_metrics(),
+        },
         objective_report,
         softmax_temperature,
         selector_steps,
@@ -4057,27 +4110,120 @@ where
         let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
         let true_index = signed_velocity_candidate_index(true_dx);
         let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let prediction_norm = vector_l2_norm(&prediction_centered);
         let target_centered =
             centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
         let target_norm = vector_l2_norm(&target_centered).max(VELOCITY_BANK_TIE_EPSILON);
-        let components = signed_candidate_selector_unit_mix_components(
-            selector_logits,
-            &prediction,
-            &candidate_targets,
-            sample,
-            &centroid,
-        );
+        let sample_logits = (0..candidate_targets.len())
+            .map(|candidate_idx| selector_logits.get(&[sample, candidate_idx]))
+            .collect::<Vec<_>>();
+        let weights = stable_softmax(&sample_logits, "candidate selector readout");
+        let hard_index = max_logit_index(&sample_logits);
+        let mut candidate_centered = Vec::with_capacity(candidate_targets.len());
+        let mut candidate_units = Vec::with_capacity(candidate_targets.len());
+        let mut candidate_radii = Vec::with_capacity(candidate_targets.len());
+
+        for candidate_target in &candidate_targets {
+            let centered = centered_sample_vector(candidate_target, sample, &centroid);
+            candidate_radii.push(vector_l2_norm(&centered));
+            candidate_units.push(unit_vector(&centered));
+            candidate_centered.push(centered);
+        }
+
+        let mut selector_soft_unit_sum = vec![0.0f32; projection_dim];
+        let mut selector_soft_full_centered = vec![0.0f32; projection_dim];
+        let selector_soft_radius = weights
+            .iter()
+            .zip(candidate_radii.iter())
+            .map(|(weight, radius)| weight * radius)
+            .sum::<f32>();
+        for ((weight, centered), candidate_unit) in weights
+            .iter()
+            .zip(candidate_centered.iter())
+            .zip(candidate_units.iter())
+        {
+            for feature_idx in 0..projection_dim {
+                selector_soft_full_centered[feature_idx] += weight * centered[feature_idx];
+                selector_soft_unit_sum[feature_idx] += weight * candidate_unit[feature_idx];
+            }
+        }
+
+        let selector_soft_unit_norm = vector_l2_norm(&selector_soft_unit_sum);
+        let selector_soft_unit_mix_centered =
+            if selector_soft_unit_norm <= VELOCITY_BANK_TIE_EPSILON {
+                vec![0.0f32; projection_dim]
+            } else {
+                selector_soft_unit_sum
+                    .iter()
+                    .map(|value| value / selector_soft_unit_norm * selector_soft_radius)
+                    .collect::<Vec<_>>()
+            };
+        let selector_hard_radius = candidate_radii[hard_index];
+        let selector_soft_radius_centered = scale_vector(&prediction_unit, selector_soft_radius);
+        let selector_hard_radius_centered = scale_vector(&prediction_unit, selector_hard_radius);
 
         outcomes.push(SignedCandidateSelectorHeadIntegrationSampleOutcome {
-            learned_selector: signed_prediction_counterfactual_outcome(
+            base_prediction: signed_prediction_counterfactual_outcome(
                 candidate_dx_bank,
                 &candidate_targets,
                 sample,
                 true_dx,
                 true_index,
                 &centroid,
-                &components.centered_prediction,
-                components.predicted_radius / target_norm,
+                &prediction_centered,
+                prediction_norm / target_norm,
+            ),
+            selector_soft_unit_mix: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &selector_soft_unit_mix_centered,
+                vector_l2_norm(&selector_soft_unit_mix_centered) / target_norm,
+            ),
+            selector_soft_full: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &selector_soft_full_centered,
+                vector_l2_norm(&selector_soft_full_centered) / target_norm,
+            ),
+            selector_hard_full: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &candidate_centered[hard_index],
+                candidate_radii[hard_index] / target_norm,
+            ),
+            selector_soft_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &selector_soft_radius_centered,
+                selector_soft_radius / target_norm,
+            ),
+            selector_hard_radius: signed_prediction_counterfactual_outcome(
+                candidate_dx_bank,
+                &candidate_targets,
+                sample,
+                true_dx,
+                true_index,
+                &centroid,
+                &selector_hard_radius_centered,
+                selector_hard_radius / target_norm,
             ),
         });
     }
@@ -4611,83 +4757,6 @@ fn signed_candidate_selector_softmax_ce_loss_and_grad(
     totals.observe_logits(logits, true_candidate_indices);
 
     (totals.into_metrics(candidates), grad_logits)
-}
-
-fn signed_candidate_selector_unit_mix_components(
-    selector_logits: &Tensor,
-    prediction: &Tensor,
-    candidate_targets: &[Tensor],
-    sample: usize,
-    centroid: &[f32],
-) -> SignedCandidateUnitMixComponents {
-    assert!(
-        !candidate_targets.is_empty(),
-        "candidate selector unit-mix components require non-empty candidate targets"
-    );
-    assert_eq!(
-        selector_logits.shape,
-        vec![prediction.shape[0], candidate_targets.len()],
-        "candidate selector unit-mix logits shape mismatch"
-    );
-
-    let projection_dim = prediction.shape[1];
-    let candidates = candidate_targets.len();
-    let mut candidate_radii = Vec::with_capacity(candidates);
-    let mut candidate_units = Vec::with_capacity(candidates);
-
-    for candidate_target in candidate_targets {
-        let candidate_centered = centered_sample_vector(candidate_target, sample, centroid);
-        let candidate_radius = vector_l2_norm(&candidate_centered);
-        let candidate_unit = unit_vector(&candidate_centered);
-
-        candidate_radii.push(candidate_radius);
-        candidate_units.push(candidate_unit);
-    }
-
-    let sample_logits = (0..candidates)
-        .map(|candidate_idx| selector_logits.get(&[sample, candidate_idx]))
-        .collect::<Vec<_>>();
-    let weights = stable_softmax(&sample_logits, "candidate selector head unit-mix");
-    let mixed_radius = weights
-        .iter()
-        .zip(candidate_radii.iter())
-        .map(|(weight, radius)| weight * radius)
-        .sum::<f32>();
-    let mut mixed_unit_sum = vec![0.0f32; projection_dim];
-
-    for (weight, candidate_unit) in weights.iter().zip(candidate_units.iter()) {
-        for feature_idx in 0..projection_dim {
-            mixed_unit_sum[feature_idx] += weight * candidate_unit[feature_idx];
-        }
-    }
-
-    let mixed_unit_norm = vector_l2_norm(&mixed_unit_sum);
-    let mixed_unit = if mixed_unit_norm <= VELOCITY_BANK_TIE_EPSILON {
-        vec![0.0f32; projection_dim]
-    } else {
-        mixed_unit_sum
-            .iter()
-            .map(|value| value / mixed_unit_norm)
-            .collect::<Vec<_>>()
-    };
-    let centered_prediction = scale_vector(&mixed_unit, mixed_radius);
-    let predicted_radius = vector_l2_norm(&centered_prediction);
-
-    assert!(
-        predicted_radius.is_finite() && predicted_radius >= 0.0,
-        "candidate selector unit-mix produced non-finite radius"
-    );
-
-    SignedCandidateUnitMixComponents {
-        centered_prediction,
-        mixed_unit,
-        mixed_unit_norm,
-        mixed_radius,
-        predicted_radius,
-        weights,
-        candidate_radii,
-        candidate_units,
-    }
 }
 
 fn signed_candidate_selector_head_objective_loss_and_grad_from_logits(
@@ -5419,6 +5488,22 @@ fn nearest_unit_candidate_index(prediction_unit: &[f32], candidate_units: &[Vec<
         if distance < best_distance - VELOCITY_BANK_TIE_EPSILON {
             best_index = candidate_index;
             best_distance = distance;
+        }
+    }
+
+    best_index
+}
+
+fn max_logit_index(logits: &[f32]) -> usize {
+    assert!(!logits.is_empty(), "selector readout requires logits");
+
+    let mut best_index = 0usize;
+    let mut best_logit = logits[0];
+
+    for (candidate_idx, logit) in logits.iter().copied().enumerate().skip(1) {
+        if logit > best_logit + VELOCITY_BANK_TIE_EPSILON {
+            best_index = candidate_idx;
+            best_logit = logit;
         }
     }
 
