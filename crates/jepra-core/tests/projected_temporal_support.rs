@@ -1062,6 +1062,21 @@ fn projected_signed_prediction_ray_boundary_is_finite_and_bounded() {
     assert!((0.0..=1.0).contains(&boundary.infeasible_rate));
     assert!(boundary.finite_upper_samples <= boundary.feasible_samples);
     assert!(boundary.feasible_samples <= boundary.samples);
+    assert_eq!(
+        boundary.satisfied_by_dx.iter().sum::<usize>(),
+        (boundary.satisfied_rate * boundary.samples as f32).round() as usize
+    );
+    assert_eq!(
+        boundary.infeasible_by_dx.iter().sum::<usize>(),
+        (boundary.infeasible_rate * boundary.samples as f32).round() as usize
+    );
+    assert_eq!(
+        boundary.satisfied_by_dx.iter().sum::<usize>()
+            + boundary.infeasible_by_dx.iter().sum::<usize>()
+            + boundary.below_lower_by_dx.iter().sum::<usize>()
+            + boundary.upper_overshoot_by_dx.iter().sum::<usize>(),
+        boundary.samples
+    );
     assert_eq!(boundary.samples, BATCH_SIZE * 2);
     assert_eq!(boundary.candidates, 4);
 }

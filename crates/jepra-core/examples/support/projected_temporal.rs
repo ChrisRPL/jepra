@@ -142,6 +142,10 @@ pub struct ProjectedSignedPredictionRayBoundary {
     pub feasible_samples: usize,
     pub samples: usize,
     pub candidates: usize,
+    pub satisfied_by_dx: [usize; 4],
+    pub infeasible_by_dx: [usize; 4],
+    pub below_lower_by_dx: [usize; 4],
+    pub upper_overshoot_by_dx: [usize; 4],
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -348,11 +352,21 @@ struct SignedPredictionBankUnitGeometrySampleOutcome {
 
 #[derive(Debug, Clone, Copy)]
 struct SignedPredictionRayBoundarySampleOutcome {
+    true_dx: isize,
     current_radius: f32,
     required_radius: f32,
     upper_radius: f32,
     feasible: bool,
     satisfied: bool,
+    failure_kind: SignedPredictionRayBoundaryFailureKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignedPredictionRayBoundaryFailureKind {
+    Satisfied,
+    Infeasible,
+    BelowLower,
+    UpperOvershoot,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -565,6 +579,10 @@ struct SignedPredictionRayBoundaryTotals {
     infeasible_count: usize,
     feasible_samples: usize,
     samples: usize,
+    satisfied_by_dx: [usize; 4],
+    infeasible_by_dx: [usize; 4],
+    below_lower_by_dx: [usize; 4],
+    upper_overshoot_by_dx: [usize; 4],
 }
 
 #[derive(Debug, Default)]
@@ -1138,6 +1156,21 @@ impl SignedPredictionRayBoundaryTotals {
 
         self.samples += 1;
         self.current_radius += outcome.current_radius;
+        let dx_index = signed_velocity_candidate_index(outcome.true_dx);
+        match outcome.failure_kind {
+            SignedPredictionRayBoundaryFailureKind::Satisfied => {
+                self.satisfied_by_dx[dx_index] += 1;
+            }
+            SignedPredictionRayBoundaryFailureKind::Infeasible => {
+                self.infeasible_by_dx[dx_index] += 1;
+            }
+            SignedPredictionRayBoundaryFailureKind::BelowLower => {
+                self.below_lower_by_dx[dx_index] += 1;
+            }
+            SignedPredictionRayBoundaryFailureKind::UpperOvershoot => {
+                self.upper_overshoot_by_dx[dx_index] += 1;
+            }
+        }
 
         if outcome.feasible {
             let radius_margin = outcome.current_radius - outcome.required_radius;
@@ -1180,6 +1213,10 @@ impl SignedPredictionRayBoundaryTotals {
             feasible_samples: self.feasible_samples,
             samples: self.samples,
             candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+            satisfied_by_dx: self.satisfied_by_dx,
+            infeasible_by_dx: self.infeasible_by_dx,
+            below_lower_by_dx: self.below_lower_by_dx,
+            upper_overshoot_by_dx: self.upper_overshoot_by_dx,
         }
     }
 }
@@ -4338,20 +4375,33 @@ where
         );
 
         outcomes.push(match boundary {
-            Some((required_radius, upper_radius)) => SignedPredictionRayBoundarySampleOutcome {
-                current_radius,
-                required_radius,
-                upper_radius,
-                feasible: true,
-                satisfied: current_radius + VELOCITY_BANK_TIE_EPSILON >= required_radius
-                    && current_radius < upper_radius - VELOCITY_BANK_TIE_EPSILON,
-            },
+            Some((required_radius, upper_radius)) => {
+                let failure_kind = if current_radius + VELOCITY_BANK_TIE_EPSILON < required_radius {
+                    SignedPredictionRayBoundaryFailureKind::BelowLower
+                } else if current_radius >= upper_radius - VELOCITY_BANK_TIE_EPSILON {
+                    SignedPredictionRayBoundaryFailureKind::UpperOvershoot
+                } else {
+                    SignedPredictionRayBoundaryFailureKind::Satisfied
+                };
+
+                SignedPredictionRayBoundarySampleOutcome {
+                    true_dx,
+                    current_radius,
+                    required_radius,
+                    upper_radius,
+                    feasible: true,
+                    satisfied: failure_kind == SignedPredictionRayBoundaryFailureKind::Satisfied,
+                    failure_kind,
+                }
+            }
             None => SignedPredictionRayBoundarySampleOutcome {
+                true_dx,
                 current_radius,
                 required_radius: 0.0,
                 upper_radius: 0.0,
                 feasible: false,
                 satisfied: false,
+                failure_kind: SignedPredictionRayBoundaryFailureKind::Infeasible,
             },
         });
     }

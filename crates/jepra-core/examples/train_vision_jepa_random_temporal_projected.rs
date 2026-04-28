@@ -2187,7 +2187,7 @@ fn print_signed_prediction_ray_boundary(
 ) {
     if let Some(boundary) = boundary {
         println!(
-            "{} | signed prediction ray boundary current_radius {:.6} | required_radius {:.6} | upper_radius {:.6} | radius_margin {:.6} | radius_shortfall {:.6} | radius_overshoot {:.6} | satisfied_rate {:.6} | infeasible_rate {:.6} | finite_upper_samples {} | feasible_samples {} | samples {} | candidates {}",
+            "{} | signed prediction ray boundary current_radius {:.6} | required_radius {:.6} | upper_radius {:.6} | radius_margin {:.6} | radius_shortfall {:.6} | radius_overshoot {:.6} | satisfied_rate {:.6} | infeasible_rate {:.6} | finite_upper_samples {} | feasible_samples {} | samples {} | candidates {} | satisfied_dx_neg2 {} | satisfied_dx_neg1 {} | satisfied_dx_pos1 {} | satisfied_dx_pos2 {} | infeasible_dx_neg2 {} | infeasible_dx_neg1 {} | infeasible_dx_pos1 {} | infeasible_dx_pos2 {} | below_lower_dx_neg2 {} | below_lower_dx_neg1 {} | below_lower_dx_pos1 {} | below_lower_dx_pos2 {} | upper_overshoot_dx_neg2 {} | upper_overshoot_dx_neg1 {} | upper_overshoot_dx_pos1 {} | upper_overshoot_dx_pos2 {}",
             tag,
             boundary.current_radius,
             boundary.required_radius,
@@ -2201,6 +2201,22 @@ fn print_signed_prediction_ray_boundary(
             boundary.feasible_samples,
             boundary.samples,
             boundary.candidates,
+            boundary.satisfied_by_dx[0],
+            boundary.satisfied_by_dx[1],
+            boundary.satisfied_by_dx[2],
+            boundary.satisfied_by_dx[3],
+            boundary.infeasible_by_dx[0],
+            boundary.infeasible_by_dx[1],
+            boundary.infeasible_by_dx[2],
+            boundary.infeasible_by_dx[3],
+            boundary.below_lower_by_dx[0],
+            boundary.below_lower_by_dx[1],
+            boundary.below_lower_by_dx[2],
+            boundary.below_lower_by_dx[3],
+            boundary.upper_overshoot_by_dx[0],
+            boundary.upper_overshoot_by_dx[1],
+            boundary.upper_overshoot_by_dx[2],
+            boundary.upper_overshoot_by_dx[3],
         );
     }
 }
