@@ -15,7 +15,8 @@ use projected_temporal::{
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     ProjectedSignedCandidateCentroidIntegration, ProjectedSignedCandidateRadiusHeadIntegration,
     ProjectedSignedCandidateSelectorHeadIntegration,
-    ProjectedSignedCandidateSelectorHeadObjectiveReport, ProjectedSignedCandidateSelectorProbe,
+    ProjectedSignedCandidateSelectorHeadObjectiveReport,
+    ProjectedSignedCandidateSelectorOutputCouplingReport, ProjectedSignedCandidateSelectorProbe,
     ProjectedSignedCandidateSelectorReadoutDiagnostics,
     ProjectedSignedCandidateUnitMixHeadIntegration, ProjectedSignedCandidateUnitMixObjectiveReport,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
@@ -33,6 +34,8 @@ use projected_temporal::{
     projected_signed_candidate_radius_logit_head_features,
     projected_signed_candidate_radius_logit_head_integration_from_base_seed,
     projected_signed_candidate_radius_logit_mixing_loss_and_grad,
+    projected_signed_candidate_selector_hard_full_output_coupling_loss_and_grad,
+    projected_signed_candidate_selector_hard_full_output_coupling_report_from_base_seed,
     projected_signed_candidate_selector_head_features,
     projected_signed_candidate_selector_head_integration_from_base_seed,
     projected_signed_candidate_selector_head_loss_and_grad,
@@ -86,6 +89,7 @@ const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT: f32 = 0.1;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT: f32 = 0.0;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS: usize = 200;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR: f32 = 0.05;
@@ -133,6 +137,12 @@ struct SignedCandidateSelectorHeadRunConfig {
     entropy_floor: f32,
     entropy_weight: f32,
     kl_weight: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedCandidateSelectorOutputCouplingRunConfig {
+    enabled: bool,
+    loss_weight: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -448,6 +458,43 @@ impl SignedCandidateSelectorHeadRunConfig {
     }
 }
 
+impl SignedCandidateSelectorOutputCouplingRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let output_mode = parse_arg_value(&args, "--signed-candidate-selector-output")
+            .map(str::to_owned)
+            .or_else(|| std::env::var("JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT").ok())
+            .unwrap_or_else(|| "off".to_owned());
+        let output_mode = output_mode.trim().to_ascii_lowercase();
+        assert!(
+            matches!(output_mode.as_str(), "off" | "hard-full"),
+            "signed candidate selector output must be off|hard-full, got {}",
+            output_mode
+        );
+        let enabled = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-selector-output-coupling")
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING").unwrap_or(false)
+            || output_mode == "hard-full";
+        let loss_weight =
+            parse_f32_arg(&args, "--signed-candidate-selector-output-coupling-weight")
+                .or_else(|| {
+                    parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT")
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT);
+
+        assert!(
+            loss_weight.is_finite() && loss_weight > 0.0,
+            "signed candidate selector output coupling weight must be finite and positive"
+        );
+
+        Self {
+            enabled,
+            loss_weight,
+        }
+    }
+}
+
 impl SignedCandidateSelectorProbeRunConfig {
     fn from_args_and_env() -> Self {
         let args = std::env::args().collect::<Vec<_>>();
@@ -534,8 +581,21 @@ fn main() {
         SignedCandidateUnitMixHeadRunConfig::from_args_and_env();
     let signed_candidate_selector_head_config =
         SignedCandidateSelectorHeadRunConfig::from_args_and_env();
+    let signed_candidate_selector_output_coupling_config =
+        SignedCandidateSelectorOutputCouplingRunConfig::from_args_and_env();
     let signed_candidate_selector_probe_config =
         SignedCandidateSelectorProbeRunConfig::from_args_and_env();
+
+    assert!(
+        !signed_candidate_selector_output_coupling_config.enabled
+            || signed_candidate_selector_head_config.enabled,
+        "signed candidate selector output coupling requires --signed-candidate-selector-head"
+    );
+    assert!(
+        !signed_candidate_selector_output_coupling_config.enabled
+            || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate selector output coupling is only supported for signed-velocity-trail projected runs"
+    );
 
     println!(
         "temporal run config | train_base_seed {} | steps {} | log_every {}",
@@ -622,6 +682,11 @@ fn main() {
         signed_candidate_selector_head_config.kl_weight
     );
     println!(
+        "temporal run config | signed candidate selector output coupling enabled {} | detached_target hard-full | weight {}",
+        signed_candidate_selector_output_coupling_config.enabled,
+        signed_candidate_selector_output_coupling_config.loss_weight
+    );
+    println!(
         "temporal run config | signed candidate selector probe enabled {} | softmax_temperature {} | steps {} | lr {}",
         signed_candidate_selector_probe_config.enabled,
         signed_candidate_selector_probe_config.softmax_temperature,
@@ -636,6 +701,7 @@ fn main() {
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
+            signed_candidate_selector_output_coupling_config,
             signed_candidate_selector_probe_config,
             make_predictor(),
         ),
@@ -645,6 +711,7 @@ fn main() {
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
+            signed_candidate_selector_output_coupling_config,
             signed_candidate_selector_probe_config,
             make_bottleneck_predictor(),
         ),
@@ -654,6 +721,7 @@ fn main() {
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
+            signed_candidate_selector_output_coupling_config,
             signed_candidate_selector_probe_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
@@ -663,6 +731,7 @@ fn main() {
             signed_candidate_radius_head_config,
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
+            signed_candidate_selector_output_coupling_config,
             signed_candidate_selector_probe_config,
             make_state_radius_predictor(),
         ),
@@ -675,6 +744,7 @@ fn run_with_predictor<P>(
     signed_candidate_radius_head_config: SignedCandidateRadiusHeadRunConfig,
     signed_candidate_unit_mix_head_config: SignedCandidateUnitMixHeadRunConfig,
     signed_candidate_selector_head_config: SignedCandidateSelectorHeadRunConfig,
+    signed_candidate_selector_output_coupling_config: SignedCandidateSelectorOutputCouplingRunConfig,
     signed_candidate_selector_probe_config: SignedCandidateSelectorProbeRunConfig,
     predictor: P,
 ) where
@@ -810,6 +880,14 @@ fn run_with_predictor<P>(
             run_config,
             signed_candidate_selector_head_config,
         );
+    let initial_signed_candidate_selector_output_coupling =
+        maybe_projected_signed_candidate_selector_output_coupling_report(
+            &model,
+            signed_candidate_selector_head.as_ref(),
+            run_config,
+            signed_candidate_selector_head_config,
+            signed_candidate_selector_output_coupling_config,
+        );
     let initial_signed_candidate_selector_probe = maybe_projected_signed_candidate_selector_probe(
         &model,
         run_config,
@@ -877,6 +955,10 @@ fn run_with_predictor<P>(
         "initial",
         initial_signed_candidate_selector_head_integration,
     );
+    print_signed_candidate_selector_output_coupling_report(
+        "initial",
+        initial_signed_candidate_selector_output_coupling,
+    );
     print_signed_candidate_selector_probe("initial", initial_signed_candidate_selector_probe);
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
     print_signed_bank_softmax_objective_report(
@@ -940,6 +1022,16 @@ fn run_with_predictor<P>(
                     &x_t,
                     &x_t1,
                 );
+            let signed_candidate_selector_output_coupling_step =
+                maybe_projected_signed_candidate_selector_output_coupling_loss_and_grad(
+                    model,
+                    signed_candidate_selector_head.as_ref(),
+                    run_config,
+                    signed_candidate_selector_head_config,
+                    signed_candidate_selector_output_coupling_config,
+                    &x_t,
+                    &x_t1,
+                );
             let extra_prediction_loss = signed_margin_step
                 .as_ref()
                 .map(|(report, _)| run_config.signed_margin_weight * report.weighted_loss)
@@ -955,6 +1047,12 @@ fn run_with_predictor<P>(
                 + signed_angular_radial_step
                     .as_ref()
                     .map(|(report, _)| run_config.signed_angular_radial_weight * report.loss)
+                    .unwrap_or(0.0)
+                + signed_candidate_selector_output_coupling_step
+                    .as_ref()
+                    .map(|(report, _)| {
+                        signed_candidate_selector_output_coupling_config.loss_weight * report.loss
+                    })
                     .unwrap_or(0.0);
             let mut extra_prediction_grad = None;
             if let Some((_, grad)) = signed_margin_step.as_ref() {
@@ -983,6 +1081,13 @@ fn run_with_predictor<P>(
                     &mut extra_prediction_grad,
                     grad,
                     run_config.signed_angular_radial_weight,
+                );
+            }
+            if let Some((_, grad)) = signed_candidate_selector_output_coupling_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    signed_candidate_selector_output_coupling_config.loss_weight,
                 );
             }
             let (prediction_loss, regularizer_loss, projector_drift_loss, total_loss) =
@@ -1076,6 +1181,12 @@ fn run_with_predictor<P>(
                     &format!("step {:03} train", step),
                     signed_candidate_selector_head_step,
                 );
+                print_signed_candidate_selector_output_coupling_report(
+                    &format!("step {:03} train", step),
+                    signed_candidate_selector_output_coupling_step
+                        .as_ref()
+                        .map(|(report, _)| *report),
+                );
             }
 
             total_loss
@@ -1145,6 +1256,14 @@ fn run_with_predictor<P>(
             signed_candidate_selector_head.as_ref(),
             run_config,
             signed_candidate_selector_head_config,
+        );
+    let final_signed_candidate_selector_output_coupling =
+        maybe_projected_signed_candidate_selector_output_coupling_report(
+            &model,
+            signed_candidate_selector_head.as_ref(),
+            run_config,
+            signed_candidate_selector_head_config,
+            signed_candidate_selector_output_coupling_config,
         );
     let final_signed_candidate_selector_probe = maybe_projected_signed_candidate_selector_probe(
         &model,
@@ -1237,6 +1356,10 @@ fn run_with_predictor<P>(
     print_signed_candidate_selector_head_integration(
         "final",
         final_signed_candidate_selector_head_integration,
+    );
+    print_signed_candidate_selector_output_coupling_report(
+        "final",
+        final_signed_candidate_selector_output_coupling,
     );
     print_signed_candidate_selector_probe("final", final_signed_candidate_selector_probe);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
@@ -1418,6 +1541,50 @@ where
     selector_head.sgd_step(&grads, head_config.learning_rate);
 
     Some(report)
+}
+
+fn maybe_projected_signed_candidate_selector_output_coupling_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    selector_head: Option<&Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateSelectorHeadRunConfig,
+    coupling_config: SignedCandidateSelectorOutputCouplingRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<(ProjectedSignedCandidateSelectorOutputCouplingReport, Tensor)>
+where
+    P: PredictorModule,
+{
+    if !coupling_config.enabled {
+        return None;
+    }
+    assert!(
+        head_config.enabled,
+        "signed candidate selector output coupling requires selector head config"
+    );
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate selector output coupling is only supported for signed-velocity-trail projected runs"
+    );
+    let selector_head =
+        selector_head.expect("enabled selector output coupling missing selector head");
+
+    let features = projected_signed_candidate_selector_head_features(
+        model,
+        x_t,
+        head_config.softmax_temperature,
+    );
+    let selector_logits = selector_head.forward(&features);
+
+    Some(
+        projected_signed_candidate_selector_hard_full_output_coupling_loss_and_grad(
+            model,
+            x_t,
+            x_t1,
+            &selector_logits,
+        ),
+    )
 }
 
 fn parse_arg_value<'a>(args: &'a [String], flag: &'a str) -> Option<&'a str> {
@@ -1933,6 +2100,42 @@ where
     )
 }
 
+fn maybe_projected_signed_candidate_selector_output_coupling_report<P>(
+    model: &ProjectedVisionJepa<P>,
+    selector_head: Option<&Linear>,
+    run_config: temporal_vision::TemporalRunConfig,
+    head_config: SignedCandidateSelectorHeadRunConfig,
+    coupling_config: SignedCandidateSelectorOutputCouplingRunConfig,
+) -> Option<ProjectedSignedCandidateSelectorOutputCouplingReport>
+where
+    P: PredictorModule,
+{
+    if !coupling_config.enabled {
+        return None;
+    }
+    assert!(
+        head_config.enabled,
+        "signed candidate selector output coupling requires selector head config"
+    );
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed candidate selector output coupling is only supported for signed-velocity-trail projected runs"
+    );
+    let selector_head =
+        selector_head.expect("enabled selector output coupling missing selector head");
+
+    Some(
+        projected_signed_candidate_selector_hard_full_output_coupling_report_from_base_seed(
+            model,
+            selector_head,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            head_config.softmax_temperature,
+        ),
+    )
+}
+
 fn print_signed_candidate_unit_mix_head_integration(
     tag: &str,
     integration: Option<ProjectedSignedCandidateUnitMixHeadIntegration>,
@@ -2079,6 +2282,28 @@ fn print_signed_candidate_selector_readout_metrics(
         field,
         metrics.norm_ratio,
     );
+}
+
+fn print_signed_candidate_selector_output_coupling_report(
+    tag: &str,
+    report: Option<ProjectedSignedCandidateSelectorOutputCouplingReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed candidate selector output coupling loss {:.6} | detached_target hard-full | selector_max_probability {:.6} | base_prediction_top1 {:.6} | base_prediction_margin {:.6} | base_prediction_norm_ratio {:.6} | selector_hard_full_top1 {:.6} | selector_hard_full_margin {:.6} | selector_hard_full_norm_ratio {:.6} | samples {} | candidates {}",
+            tag,
+            report.loss,
+            report.selector_max_probability,
+            report.base_prediction_top1,
+            report.base_prediction_margin,
+            report.base_prediction_norm_ratio,
+            report.selector_hard_full_top1,
+            report.selector_hard_full_margin,
+            report.selector_hard_full_norm_ratio,
+            report.samples,
+            report.candidates,
+        );
+    }
 }
 
 fn maybe_projected_signed_candidate_selector_probe<P>(

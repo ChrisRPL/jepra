@@ -9,9 +9,10 @@ use jepra_core::{
     SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
     SignedCenteredRadiusScalarObjectiveReport, SignedMarginObjectiveConfig,
     SignedMarginObjectiveReport, SignedRadialCalibrationReport, Tensor,
-    gaussian_moment_regularizer, mse_loss, signed_angular_radial_objective_loss_and_grad,
-    signed_bank_softmax_objective_loss_and_grad, signed_centered_radius_scalar_loss_and_grad,
-    signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
+    gaussian_moment_regularizer, mse_loss, mse_loss_grad,
+    signed_angular_radial_objective_loss_and_grad, signed_bank_softmax_objective_loss_and_grad,
+    signed_centered_radius_scalar_loss_and_grad, signed_margin_objective_loss_and_grad,
+    signed_radial_calibration_loss_and_grad,
 };
 
 pub const PROJECTED_VALIDATION_BASE_SEED: u64 = 111_000;
@@ -223,6 +224,20 @@ pub struct ProjectedSignedCandidateSelectorHeadObjectiveReport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedCandidateSelectorOutputCouplingReport {
+    pub loss: f32,
+    pub selector_max_probability: f32,
+    pub base_prediction_top1: f32,
+    pub base_prediction_margin: f32,
+    pub base_prediction_norm_ratio: f32,
+    pub selector_hard_full_top1: f32,
+    pub selector_hard_full_margin: f32,
+    pub selector_hard_full_norm_ratio: f32,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedCandidateSelectorReadoutDiagnostics {
     pub base_prediction: ProjectedSignedPredictionCounterfactualMetrics,
     pub selector_soft_unit_mix: ProjectedSignedPredictionCounterfactualMetrics,
@@ -373,6 +388,19 @@ struct SignedCandidateSelectorHeadObjectiveReportTotals {
     entropy: f32,
     true_probability: f32,
     max_probability: f32,
+    samples: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedCandidateSelectorOutputCouplingReportTotals {
+    loss: f32,
+    selector_max_probability: f32,
+    base_prediction_top1: f32,
+    base_prediction_margin: f32,
+    base_prediction_norm_ratio: f32,
+    selector_hard_full_top1: f32,
+    selector_hard_full_margin: f32,
+    selector_hard_full_norm_ratio: f32,
     samples: usize,
 }
 
@@ -1207,6 +1235,61 @@ impl SignedCandidateSelectorHeadObjectiveReportTotals {
             entropy: self.entropy / self.samples as f32,
             true_probability: self.true_probability / self.samples as f32,
             max_probability: self.max_probability / self.samples as f32,
+            samples: self.samples,
+            candidates,
+        }
+    }
+}
+
+impl SignedCandidateSelectorOutputCouplingReportTotals {
+    fn observe(&mut self, report: ProjectedSignedCandidateSelectorOutputCouplingReport) {
+        assert!(
+            report.loss.is_finite()
+                && report.selector_max_probability.is_finite()
+                && report.base_prediction_top1.is_finite()
+                && report.base_prediction_margin.is_finite()
+                && report.base_prediction_norm_ratio.is_finite()
+                && report.selector_hard_full_top1.is_finite()
+                && report.selector_hard_full_margin.is_finite()
+                && report.selector_hard_full_norm_ratio.is_finite(),
+            "candidate selector output coupling report has non-finite fields"
+        );
+        assert!(
+            report.samples > 0,
+            "candidate selector output coupling report has no samples"
+        );
+
+        let samples = report.samples as f32;
+        self.loss += report.loss * samples;
+        self.selector_max_probability += report.selector_max_probability * samples;
+        self.base_prediction_top1 += report.base_prediction_top1 * samples;
+        self.base_prediction_margin += report.base_prediction_margin * samples;
+        self.base_prediction_norm_ratio += report.base_prediction_norm_ratio * samples;
+        self.selector_hard_full_top1 += report.selector_hard_full_top1 * samples;
+        self.selector_hard_full_margin += report.selector_hard_full_margin * samples;
+        self.selector_hard_full_norm_ratio += report.selector_hard_full_norm_ratio * samples;
+        self.samples += report.samples;
+    }
+
+    fn into_report(
+        self,
+        candidates: usize,
+    ) -> ProjectedSignedCandidateSelectorOutputCouplingReport {
+        assert!(
+            self.samples > 0,
+            "candidate selector output coupling report has no samples"
+        );
+
+        let samples = self.samples as f32;
+        ProjectedSignedCandidateSelectorOutputCouplingReport {
+            loss: self.loss / samples,
+            selector_max_probability: self.selector_max_probability / samples,
+            base_prediction_top1: self.base_prediction_top1 / samples,
+            base_prediction_margin: self.base_prediction_margin / samples,
+            base_prediction_norm_ratio: self.base_prediction_norm_ratio / samples,
+            selector_hard_full_top1: self.selector_hard_full_top1 / samples,
+            selector_hard_full_margin: self.selector_hard_full_margin / samples,
+            selector_hard_full_norm_ratio: self.selector_hard_full_norm_ratio / samples,
             samples: self.samples,
             candidates,
         }
@@ -2245,6 +2328,108 @@ where
         entropy_regularization_weight,
         kl_to_prior_weight,
     )
+}
+
+pub fn projected_signed_candidate_selector_hard_full_output_coupling_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    selector_logits: &Tensor,
+) -> (ProjectedSignedCandidateSelectorOutputCouplingReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "candidate selector output coupling expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate selector output coupling expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let hard_full_target = signed_candidate_selector_hard_full_targets(model, x_t, selector_logits);
+    let loss = mse_loss(&prediction, &hard_full_target);
+    let grad = mse_loss_grad(&prediction, &hard_full_target);
+    let report = projected_signed_candidate_selector_hard_full_output_coupling_report_from_logits(
+        model,
+        x_t,
+        x_t1,
+        selector_logits,
+        loss,
+    );
+
+    (report, grad)
+}
+
+pub fn projected_signed_candidate_selector_hard_full_output_coupling_report_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    selector_head: &Linear,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    softmax_temperature: f32,
+) -> ProjectedSignedCandidateSelectorOutputCouplingReport
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "candidate selector output coupling requires at least one validation batch"
+    );
+    assert!(
+        softmax_temperature.is_finite() && softmax_temperature > 0.0,
+        "candidate selector output coupling temperature must be finite and positive"
+    );
+
+    let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+    assert_eq!(
+        candidates, 4,
+        "candidate selector output coupling expects signed-velocity-trail K=4"
+    );
+
+    let (sample_x_t, _) = make_temporal_batch_for_task(
+        BATCH_SIZE,
+        validation_base_seed,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let sample_features =
+        projected_signed_candidate_selector_head_features(model, &sample_x_t, softmax_temperature);
+    assert_eq!(
+        selector_head.weight.shape,
+        vec![sample_features.shape[1], candidates],
+        "candidate selector output coupling head weight shape mismatch"
+    );
+    assert_eq!(
+        selector_head.bias.shape,
+        vec![candidates],
+        "candidate selector output coupling head bias shape mismatch"
+    );
+
+    let mut totals = SignedCandidateSelectorOutputCouplingReportTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let features =
+            projected_signed_candidate_selector_head_features(model, &x_t, softmax_temperature);
+        let selector_logits = selector_head.forward(&features);
+        let (report, _) =
+            projected_signed_candidate_selector_hard_full_output_coupling_loss_and_grad(
+                model,
+                &x_t,
+                &x_t1,
+                &selector_logits,
+            );
+
+        totals.observe(report);
+    }
+
+    totals.into_report(candidates)
 }
 
 pub fn projected_signed_candidate_radius_head_integration_from_base_seed<P>(
@@ -4229,6 +4414,170 @@ where
     }
 
     outcomes
+}
+
+fn projected_signed_candidate_selector_hard_full_output_coupling_report_from_logits<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    selector_logits: &Tensor,
+    loss: f32,
+) -> ProjectedSignedCandidateSelectorOutputCouplingReport
+where
+    P: PredictorModule,
+{
+    assert!(
+        loss.is_finite() && loss >= 0.0,
+        "candidate selector output coupling loss must be finite and non-negative"
+    );
+    assert!(
+        selector_logits.shape.len() == 2,
+        "candidate selector output coupling logits must be rank-2, got {:?}",
+        selector_logits.shape
+    );
+
+    let batch_size = selector_logits.shape[0];
+    let candidates = selector_logits.shape[1];
+    assert!(
+        batch_size > 0,
+        "candidate selector output coupling has no samples"
+    );
+    assert_eq!(
+        candidates,
+        SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+        "candidate selector output coupling candidate count mismatch"
+    );
+
+    let outcomes = projected_signed_candidate_selector_head_integration_sample_outcomes(
+        model,
+        x_t,
+        x_t1,
+        selector_logits,
+    );
+    assert_eq!(
+        outcomes.len(),
+        batch_size,
+        "candidate selector output coupling outcome batch mismatch"
+    );
+
+    let mut selector_max_probability_sum = 0.0f32;
+    let mut base_prediction_top1 = 0usize;
+    let mut base_prediction_margin_sum = 0.0f32;
+    let mut base_prediction_norm_ratio_sum = 0.0f32;
+    let mut selector_hard_full_top1 = 0usize;
+    let mut selector_hard_full_margin_sum = 0.0f32;
+    let mut selector_hard_full_norm_ratio_sum = 0.0f32;
+
+    for (sample, outcome) in outcomes.into_iter().enumerate() {
+        let sample_logits = (0..candidates)
+            .map(|candidate_idx| selector_logits.get(&[sample, candidate_idx]))
+            .collect::<Vec<_>>();
+        let probabilities = stable_softmax(&sample_logits, "candidate selector output coupling");
+        let selector_max_probability = probabilities
+            .iter()
+            .copied()
+            .fold(f32::NEG_INFINITY, |best, value| best.max(value));
+        let base_prediction_margin =
+            outcome.base_prediction.nearest_wrong_distance - outcome.base_prediction.true_distance;
+        let selector_hard_full_margin = outcome.selector_hard_full.nearest_wrong_distance
+            - outcome.selector_hard_full.true_distance;
+
+        assert!(
+            selector_max_probability.is_finite()
+                && base_prediction_margin.is_finite()
+                && outcome.base_prediction.norm_ratio.is_finite()
+                && selector_hard_full_margin.is_finite()
+                && outcome.selector_hard_full.norm_ratio.is_finite(),
+            "candidate selector output coupling produced non-finite report metrics"
+        );
+
+        selector_max_probability_sum += selector_max_probability;
+        base_prediction_top1 += usize::from(outcome.base_prediction.rank == 1);
+        base_prediction_margin_sum += base_prediction_margin;
+        base_prediction_norm_ratio_sum += outcome.base_prediction.norm_ratio;
+        selector_hard_full_top1 += usize::from(outcome.selector_hard_full.rank == 1);
+        selector_hard_full_margin_sum += selector_hard_full_margin;
+        selector_hard_full_norm_ratio_sum += outcome.selector_hard_full.norm_ratio;
+    }
+
+    let samples = batch_size as f32;
+    ProjectedSignedCandidateSelectorOutputCouplingReport {
+        loss,
+        selector_max_probability: selector_max_probability_sum / samples,
+        base_prediction_top1: base_prediction_top1 as f32 / samples,
+        base_prediction_margin: base_prediction_margin_sum / samples,
+        base_prediction_norm_ratio: base_prediction_norm_ratio_sum / samples,
+        selector_hard_full_top1: selector_hard_full_top1 as f32 / samples,
+        selector_hard_full_margin: selector_hard_full_margin_sum / samples,
+        selector_hard_full_norm_ratio: selector_hard_full_norm_ratio_sum / samples,
+        samples: batch_size,
+        candidates,
+    }
+}
+
+fn signed_candidate_selector_hard_full_targets<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    selector_logits: &Tensor,
+) -> Tensor
+where
+    P: PredictorModule,
+{
+    assert!(
+        selector_logits.shape.len() == 2,
+        "candidate selector hard-full targets logits must be rank-2, got {:?}",
+        selector_logits.shape
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "candidate selector hard-full targets expect rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let batch_size = x_t.shape[0];
+    let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
+    assert_eq!(
+        selector_logits.shape,
+        vec![batch_size, candidates],
+        "candidate selector hard-full targets logit shape mismatch"
+    );
+
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    assert_eq!(
+        candidate_targets.len(),
+        candidates,
+        "candidate selector hard-full target count mismatch"
+    );
+    let target_shape = candidate_targets
+        .first()
+        .expect("candidate selector hard-full targets require non-empty candidates")
+        .shape
+        .clone();
+    assert!(
+        target_shape.len() == 2 && target_shape[0] == batch_size,
+        "candidate selector hard-full targets expect rank-2 projected targets, got {:?}",
+        target_shape
+    );
+    for candidate_target in &candidate_targets {
+        assert_eq!(
+            candidate_target.shape, target_shape,
+            "candidate selector hard-full target shape mismatch"
+        );
+    }
+
+    let projection_dim = target_shape[1];
+    let mut data = Vec::with_capacity(batch_size * projection_dim);
+    for sample in 0..batch_size {
+        let sample_logits = (0..candidates)
+            .map(|candidate_idx| selector_logits.get(&[sample, candidate_idx]))
+            .collect::<Vec<_>>();
+        let hard_index = max_logit_index(&sample_logits);
+        for feature_idx in 0..projection_dim {
+            data.push(candidate_targets[hard_index].get(&[sample, feature_idx]));
+        }
+    }
+
+    Tensor::new(data, target_shape)
 }
 
 fn signed_candidate_radius_head_features_from_prediction(
