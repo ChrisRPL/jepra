@@ -9,7 +9,8 @@ use jepra_core::{
     Linear, LinearGrads, Predictor, ProjectedVisionJepa, SignedAngularRadialObjectiveConfig,
     SignedBankSoftmaxObjectiveConfig, SignedMarginObjectiveConfig, Tensor,
     combine_projection_grads, gaussian_moment_regularizer, gaussian_moment_regularizer_grad,
-    projection_stats, projector_drift_regularizer, projector_drift_regularizer_grads,
+    mse_loss, mse_loss_grad, projection_stats, projector_drift_regularizer,
+    projector_drift_regularizer_grads,
 };
 use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
@@ -25,6 +26,7 @@ use projected_temporal::{
     projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
+    projected_signed_true_target_mse_amplification_loss_and_grad,
     projected_signed_velocity_bank_breakdown_from_base_seed, projected_step,
     projected_validation_batch_losses, projected_validation_batch_losses_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
@@ -619,6 +621,28 @@ fn projected_extra_prediction_grad_zero_path_matches_existing_step() {
 
     assert_eq!(existing_losses, extra_losses);
     assert_eq!(existing_step_model, extra_step_model);
+}
+
+#[test]
+fn projected_true_target_mse_amplification_matches_base_prediction_loss_and_grad() {
+    let (x_t, x_t1) = make_train_batch(TRAIN_BASE_SEED, 1);
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let prediction = model.predict_next_projection(&x_t);
+    let target = model.target_projection(&x_t1);
+    let expected_loss = mse_loss(&prediction, &target);
+    let expected_grad = mse_loss_grad(&prediction, &target);
+    let (loss, grad) =
+        projected_signed_true_target_mse_amplification_loss_and_grad(&model, &x_t, &x_t1);
+
+    assert!((loss - expected_loss).abs() < 1e-6);
+    assert_eq!(grad.shape, expected_grad.shape);
+    for (actual, expected) in grad.data.iter().zip(&expected_grad.data) {
+        assert!((actual - expected).abs() < 1e-6);
+    }
 }
 
 #[test]

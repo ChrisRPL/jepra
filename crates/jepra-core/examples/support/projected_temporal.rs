@@ -2391,6 +2391,32 @@ where
     (report, grad)
 }
 
+pub fn projected_signed_true_target_mse_amplification_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> (f32, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed true-target MSE amplification expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "signed true-target MSE amplification expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let target = model.target_projection(x_t1);
+    (
+        mse_loss(&prediction, &target),
+        mse_loss_grad(&prediction, &target),
+    )
+}
+
 pub fn projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,

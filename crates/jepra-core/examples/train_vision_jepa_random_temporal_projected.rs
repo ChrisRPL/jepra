@@ -55,6 +55,7 @@ use projected_temporal::{
     projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
+    projected_signed_true_target_mse_amplification_loss_and_grad,
     projected_signed_velocity_bank_breakdown_from_base_seed,
     projected_validation_batch_losses_from_base_seed_for_task,
     projected_velocity_bank_ranking_from_base_seed,
@@ -94,6 +95,7 @@ const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT: f32 = 0.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WARMUP_STEPS: usize = 0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_MIN_CONFIDENCE: f32 = 0.0;
+const DEFAULT_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT: f32 = 0.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS: usize = 200;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR: f32 = 0.05;
@@ -150,6 +152,11 @@ struct SignedCandidateSelectorOutputCouplingRunConfig {
     warmup_steps: usize,
     freeze_selector_after_warmup: bool,
     min_confidence: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedTrueTargetMseAmplificationRunConfig {
+    weight: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -590,6 +597,29 @@ impl SignedCandidateSelectorOutputCouplingRunConfig {
     }
 }
 
+impl SignedTrueTargetMseAmplificationRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let weight =
+            parse_nonnegative_f32_arg(&args, "--signed-true-target-mse-amplification-weight")
+                .or_else(|| {
+                    parse_nonnegative_f32_env("JEPRA_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT")
+                })
+                .unwrap_or(DEFAULT_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT);
+
+        assert!(
+            weight.is_finite() && weight >= 0.0,
+            "signed true-target MSE amplification weight must be finite and non-negative"
+        );
+
+        Self { weight }
+    }
+
+    fn enabled(self) -> bool {
+        self.weight > 0.0
+    }
+}
+
 impl SignedCandidateSelectorProbeRunConfig {
     fn from_args_and_env() -> Self {
         let args = std::env::args().collect::<Vec<_>>();
@@ -678,6 +708,8 @@ fn main() {
         SignedCandidateSelectorHeadRunConfig::from_args_and_env();
     let signed_candidate_selector_output_coupling_config =
         SignedCandidateSelectorOutputCouplingRunConfig::from_args_and_env();
+    let signed_true_target_mse_amplification_config =
+        SignedTrueTargetMseAmplificationRunConfig::from_args_and_env();
     let signed_candidate_selector_probe_config =
         SignedCandidateSelectorProbeRunConfig::from_args_and_env();
 
@@ -694,6 +726,11 @@ fn main() {
             .enabled()
             || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
         "signed candidate selector output coupling is only supported for signed-velocity-trail projected runs"
+    );
+    assert!(
+        !signed_true_target_mse_amplification_config.enabled()
+            || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+        "signed true-target MSE amplification is only supported for signed-velocity-trail projected runs"
     );
 
     println!(
@@ -791,6 +828,10 @@ fn main() {
         signed_candidate_selector_output_coupling_config.min_confidence
     );
     println!(
+        "temporal run config | signed true-target MSE amplification weight {}",
+        signed_true_target_mse_amplification_config.weight
+    );
+    println!(
         "temporal run config | signed candidate selector probe enabled {} | softmax_temperature {} | steps {} | lr {}",
         signed_candidate_selector_probe_config.enabled,
         signed_candidate_selector_probe_config.softmax_temperature,
@@ -806,6 +847,7 @@ fn main() {
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
+            signed_true_target_mse_amplification_config,
             signed_candidate_selector_probe_config,
             make_predictor(),
         ),
@@ -816,6 +858,7 @@ fn main() {
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
+            signed_true_target_mse_amplification_config,
             signed_candidate_selector_probe_config,
             make_bottleneck_predictor(),
         ),
@@ -826,6 +869,7 @@ fn main() {
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
+            signed_true_target_mse_amplification_config,
             signed_candidate_selector_probe_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
@@ -836,6 +880,7 @@ fn main() {
             signed_candidate_unit_mix_head_config,
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
+            signed_true_target_mse_amplification_config,
             signed_candidate_selector_probe_config,
             make_state_radius_predictor(),
         ),
@@ -849,6 +894,7 @@ fn run_with_predictor<P>(
     signed_candidate_unit_mix_head_config: SignedCandidateUnitMixHeadRunConfig,
     signed_candidate_selector_head_config: SignedCandidateSelectorHeadRunConfig,
     signed_candidate_selector_output_coupling_config: SignedCandidateSelectorOutputCouplingRunConfig,
+    signed_true_target_mse_amplification_config: SignedTrueTargetMseAmplificationRunConfig,
     signed_candidate_selector_probe_config: SignedCandidateSelectorProbeRunConfig,
     predictor: P,
 ) where
@@ -1143,6 +1189,21 @@ fn run_with_predictor<P>(
                     &x_t,
                     &x_t1,
                 );
+            let signed_true_target_mse_amplification_step =
+                if signed_true_target_mse_amplification_config.enabled() {
+                    assert_eq!(
+                        run_config.temporal_task_mode,
+                        TemporalTaskMode::SignedVelocityTrail,
+                        "signed true-target MSE amplification is only supported for signed-velocity-trail projected runs"
+                    );
+                    Some(
+                        projected_signed_true_target_mse_amplification_loss_and_grad(
+                            model, &x_t, &x_t1,
+                        ),
+                    )
+                } else {
+                    None
+                };
             let extra_prediction_loss = signed_margin_step
                 .as_ref()
                 .map(|(report, _)| run_config.signed_margin_weight * report.weighted_loss)
@@ -1164,6 +1225,10 @@ fn run_with_predictor<P>(
                     .map(|(report, _)| {
                         signed_candidate_selector_output_coupling_config.loss_weight * report.loss
                     })
+                    .unwrap_or(0.0)
+                + signed_true_target_mse_amplification_step
+                    .as_ref()
+                    .map(|(loss, _)| signed_true_target_mse_amplification_config.weight * loss)
                     .unwrap_or(0.0);
             let mut extra_prediction_grad = None;
             if let Some((_, grad)) = signed_margin_step.as_ref() {
@@ -1199,6 +1264,13 @@ fn run_with_predictor<P>(
                     &mut extra_prediction_grad,
                     grad,
                     signed_candidate_selector_output_coupling_config.loss_weight,
+                );
+            }
+            if let Some((_, grad)) = signed_true_target_mse_amplification_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    signed_true_target_mse_amplification_config.weight,
                 );
             }
             let (prediction_loss, regularizer_loss, projector_drift_loss, total_loss) =
@@ -1297,6 +1369,12 @@ fn run_with_predictor<P>(
                     signed_candidate_selector_output_coupling_step
                         .as_ref()
                         .map(|(report, _)| *report),
+                );
+                print_signed_true_target_mse_amplification_loss(
+                    &format!("step {:03} train", step),
+                    signed_true_target_mse_amplification_step
+                        .as_ref()
+                        .map(|(loss, _)| *loss),
                 );
             }
 
@@ -2446,6 +2524,15 @@ fn print_signed_candidate_selector_output_coupling_report(
             report.active_samples,
             report.samples,
             report.candidates,
+        );
+    }
+}
+
+fn print_signed_true_target_mse_amplification_loss(tag: &str, loss: Option<f32>) {
+    if let Some(loss) = loss {
+        println!(
+            "{} | signed true-target MSE amplification loss {:.6}",
+            tag, loss
         );
     }
 }
