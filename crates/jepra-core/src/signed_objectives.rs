@@ -93,6 +93,22 @@ pub struct SignedBankSoftmaxObjectiveReport {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SignedDirectCandidateMarginObjectiveReport {
+    pub loss: f32,
+    pub active_rate: f32,
+    pub true_distance: f32,
+    pub wrong_distance: f32,
+    pub margin: f32,
+    pub positive_margin_rate: f32,
+    pub top1: f32,
+    pub samples: usize,
+    pub active_count: usize,
+}
+
+pub type SignedHardNegativeCandidateMarginObjectiveReport =
+    SignedDirectCandidateMarginObjectiveReport;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SignedAngularRadialObjectiveConfig {
     pub angular_weight: f32,
     pub radial_weight: f32,
@@ -156,6 +172,143 @@ pub struct SignedCenteredRadiusScalarObjectiveReport {
     pub target_radius: f32,
     pub radius_ratio: f32,
     pub samples: usize,
+}
+
+pub fn signed_direct_candidate_margin_objective_loss_and_grad(
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+    required_margin: f32,
+) -> (SignedDirectCandidateMarginObjectiveReport, Tensor) {
+    assert!(
+        required_margin.is_finite() && required_margin >= 0.0,
+        "signed direct candidate-margin objective margin must be finite and non-negative, got {}",
+        required_margin
+    );
+    assert!(
+        prediction.ndim() == 2,
+        "signed direct candidate-margin prediction must be rank-2, got {:?}",
+        prediction.shape
+    );
+    assert!(
+        candidate_targets.len() >= 2,
+        "signed direct candidate-margin objective requires at least two candidates"
+    );
+    assert!(
+        true_candidate_indices.len() == prediction.shape[0],
+        "signed direct candidate-margin true-index count {} must match batch {}",
+        true_candidate_indices.len(),
+        prediction.shape[0]
+    );
+
+    for target in candidate_targets {
+        assert!(
+            target.shape == prediction.shape,
+            "signed direct candidate-margin candidate target shape mismatch: prediction {:?}, candidate {:?}",
+            prediction.shape,
+            target.shape
+        );
+    }
+
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    assert!(
+        batch_size > 0,
+        "signed direct candidate-margin objective requires a non-empty batch"
+    );
+    assert!(
+        projection_dim > 0,
+        "signed direct candidate-margin objective requires non-empty projection dim"
+    );
+
+    let mut grad = Tensor::zeros(prediction.shape.clone());
+    let mut loss_sum = 0.0f32;
+    let mut true_distance_sum = 0.0f32;
+    let mut wrong_distance_sum = 0.0f32;
+    let mut margin_sum = 0.0f32;
+    let mut positive_margin_count = 0usize;
+    let mut top1_count = 0usize;
+    let mut active_count = 0usize;
+
+    for (sample, &true_index) in true_candidate_indices.iter().enumerate() {
+        assert!(
+            true_index < candidate_targets.len(),
+            "signed direct candidate-margin true index {} out of bounds for {} candidates",
+            true_index,
+            candidate_targets.len()
+        );
+
+        let distances = candidate_targets
+            .iter()
+            .map(|target| {
+                let distance = sample_mean_squared_distance(prediction, target, sample);
+                assert!(
+                    distance.is_finite(),
+                    "signed direct candidate-margin produced non-finite distance"
+                );
+                distance
+            })
+            .collect::<Vec<_>>();
+        let true_distance = distances[true_index];
+        let wrong_index = nearest_candidate_index(
+            "signed direct candidate-margin objective",
+            &distances,
+            |candidate_index| candidate_index != true_index,
+        );
+        let wrong_distance = distances[wrong_index];
+        let achieved_margin = wrong_distance - true_distance;
+        let hinge = required_margin - achieved_margin;
+
+        loss_sum += hinge.max(0.0);
+        true_distance_sum += true_distance;
+        wrong_distance_sum += wrong_distance;
+        margin_sum += achieved_margin;
+        positive_margin_count += usize::from(achieved_margin > 0.0);
+
+        let top1_index =
+            nearest_candidate_index("signed direct candidate-margin top1", &distances, |_| true);
+        top1_count += usize::from(top1_index == true_index);
+
+        if hinge > 0.0 {
+            active_count += 1;
+            add_signed_margin_pair_grad(
+                &mut grad,
+                &candidate_targets[true_index],
+                &candidate_targets[wrong_index],
+                sample,
+                1.0 / batch_size as f32,
+            );
+        }
+    }
+
+    (
+        SignedDirectCandidateMarginObjectiveReport {
+            loss: loss_sum / batch_size as f32,
+            active_rate: active_count as f32 / batch_size as f32,
+            true_distance: true_distance_sum / batch_size as f32,
+            wrong_distance: wrong_distance_sum / batch_size as f32,
+            margin: margin_sum / batch_size as f32,
+            positive_margin_rate: positive_margin_count as f32 / batch_size as f32,
+            top1: top1_count as f32 / batch_size as f32,
+            samples: batch_size,
+            active_count,
+        },
+        grad,
+    )
+}
+
+pub fn signed_hard_negative_candidate_margin_objective_loss_and_grad(
+    prediction: &Tensor,
+    candidate_targets: &[Tensor],
+    true_candidate_indices: &[usize],
+    required_margin: f32,
+) -> (SignedHardNegativeCandidateMarginObjectiveReport, Tensor) {
+    signed_direct_candidate_margin_objective_loss_and_grad(
+        prediction,
+        candidate_targets,
+        true_candidate_indices,
+        required_margin,
+    )
 }
 
 pub fn signed_bank_softmax_objective_loss_and_grad(
@@ -935,6 +1088,25 @@ fn add_signed_margin_pair_grad(
                     - true_target.get(&[sample, feature_idx]));
         grad.set(&[sample, feature_idx], value);
     }
+}
+
+fn nearest_candidate_index(
+    context: &str,
+    distances: &[f32],
+    mut include_candidate: impl FnMut(usize) -> bool,
+) -> usize {
+    let mut best_index = None;
+    let mut best_distance = f32::INFINITY;
+
+    for (candidate_index, &distance) in distances.iter().enumerate() {
+        assert!(distance.is_finite(), "{} distance must be finite", context);
+        if include_candidate(candidate_index) && distance < best_distance {
+            best_index = Some(candidate_index);
+            best_distance = distance;
+        }
+    }
+
+    best_index.unwrap_or_else(|| panic!("{} missing required candidate", context))
 }
 
 fn best_candidate_index(

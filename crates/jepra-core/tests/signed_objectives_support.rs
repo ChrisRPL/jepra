@@ -1,3 +1,4 @@
+use jepra_core::signed_objectives::signed_direct_candidate_margin_objective_loss_and_grad;
 use jepra_core::{
     SignedAngularRadialObjectiveConfig, SignedBankSoftmaxObjectiveConfig,
     SignedMarginObjectiveConfig, Tensor, signed_angular_radial_objective_loss_and_grad,
@@ -38,6 +39,39 @@ fn centered_radius_fixture_candidates() -> Vec<Tensor> {
         Tensor::new(vec![2.0, 0.0, 1.0, 3.0], vec![2, 2]),
         Tensor::new(vec![0.0, 2.0, 4.0, 1.0], vec![2, 2]),
     ]
+}
+
+fn direct_candidate_margin_fixture_prediction(value: f32) -> Tensor {
+    Tensor::new(vec![value, 0.2], vec![1, 2])
+}
+
+fn direct_candidate_margin_fixture_candidates() -> Vec<Tensor> {
+    vec![
+        Tensor::new(vec![0.0, 0.0], vec![1, 2]),
+        Tensor::new(vec![1.0, 0.2], vec![1, 2]),
+        Tensor::new(vec![3.0, 3.0], vec![1, 2]),
+    ]
+}
+
+fn direct_candidate_margin_batch_prediction() -> Tensor {
+    Tensor::new(vec![0.4, 0.2, 1.05, 0.0], vec![2, 2])
+}
+
+fn direct_candidate_margin_batch_candidates() -> Vec<Tensor> {
+    vec![
+        Tensor::new(vec![0.0, 0.0, 0.0, 0.0], vec![2, 2]),
+        Tensor::new(vec![1.0, 0.2, 1.0, 0.0], vec![2, 2]),
+        Tensor::new(vec![3.0, 3.0, 1.2, 0.0], vec![2, 2]),
+    ]
+}
+
+fn assert_close(actual: f32, expected: f32) {
+    assert!(
+        (actual - expected).abs() < 1e-6,
+        "actual {:.8} != expected {:.8}",
+        actual,
+        expected
+    );
 }
 
 #[test]
@@ -86,6 +120,134 @@ fn signed_margin_objective_grad_matches_finite_difference() {
         "finite difference {:.6} != grad {:.6}",
         finite_difference,
         grad.data[0]
+    );
+}
+
+#[test]
+fn signed_direct_candidate_margin_reports_hard_wrong_metrics() {
+    let candidate_targets = direct_candidate_margin_batch_candidates();
+    let true_indices = [0usize, 1usize];
+    let prediction = direct_candidate_margin_batch_prediction();
+    let (report, grad) = signed_direct_candidate_margin_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_indices,
+        0.05,
+    );
+
+    assert_close(report.loss, 0.02);
+    assert_close(report.active_rate, 0.5);
+    assert_close(report.true_distance, 0.050625);
+    assert_close(report.wrong_distance, 0.095625);
+    assert_close(report.margin, 0.045);
+    assert_close(report.positive_margin_rate, 1.0);
+    assert_close(report.top1, 1.0);
+    assert_eq!(report.samples, 2);
+    assert_eq!(report.active_count, 1);
+    assert_eq!(grad.shape, vec![2, 2]);
+    assert_close(grad.data[0], 0.0);
+    assert_close(grad.data[1], 0.0);
+    assert_close(grad.data[2], 0.1);
+    assert_close(grad.data[3], 0.0);
+}
+
+#[test]
+fn signed_direct_candidate_margin_uses_deterministic_ties() {
+    let prediction = Tensor::new(vec![0.0, 0.0], vec![1, 2]);
+    let candidate_targets = vec![
+        Tensor::new(vec![-1.0, 0.0], vec![1, 2]),
+        Tensor::new(vec![1.0, 0.0], vec![1, 2]),
+        Tensor::new(vec![0.0, 1.0], vec![1, 2]),
+    ];
+    let (report, grad) = signed_direct_candidate_margin_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &[1usize],
+        0.5,
+    );
+
+    assert_close(report.loss, 0.5);
+    assert_close(report.true_distance, 0.5);
+    assert_close(report.wrong_distance, 0.5);
+    assert_close(report.margin, 0.0);
+    assert_close(report.positive_margin_rate, 0.0);
+    assert_close(report.top1, 0.0);
+    assert_eq!(report.active_count, 1);
+    assert_close(grad.data[0], -2.0);
+    assert_close(grad.data[1], 0.0);
+}
+
+#[test]
+fn signed_direct_candidate_margin_grad_matches_finite_difference() {
+    let candidate_targets = direct_candidate_margin_fixture_candidates();
+    let true_indices = [0usize];
+    let prediction = direct_candidate_margin_fixture_prediction(0.4);
+    let (report, grad) = signed_direct_candidate_margin_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_indices,
+        0.5,
+    );
+
+    assert!(report.loss.is_finite() && report.loss > 0.0);
+    assert_eq!(report.active_count, 1);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
+
+    let epsilon = 1e-3;
+    let plus = direct_candidate_margin_fixture_prediction(0.4 + epsilon);
+    let minus = direct_candidate_margin_fixture_prediction(0.4 - epsilon);
+    let plus_loss = signed_direct_candidate_margin_objective_loss_and_grad(
+        &plus,
+        &candidate_targets,
+        &true_indices,
+        0.5,
+    )
+    .0
+    .loss;
+    let minus_loss = signed_direct_candidate_margin_objective_loss_and_grad(
+        &minus,
+        &candidate_targets,
+        &true_indices,
+        0.5,
+    )
+    .0
+    .loss;
+    let finite_difference = (plus_loss - minus_loss) / (2.0 * epsilon);
+
+    assert!(
+        (finite_difference - grad.data[0]).abs() < 1e-3,
+        "finite difference {:.6} != grad {:.6}",
+        finite_difference,
+        grad.data[0]
+    );
+}
+
+#[test]
+fn signed_direct_candidate_margin_inactive_hinge_has_zero_grad() {
+    let candidate_targets = direct_candidate_margin_fixture_candidates();
+    let true_indices = [0usize];
+    let prediction = Tensor::new(vec![0.01, 0.0], vec![1, 2]);
+    let (report, grad) = signed_direct_candidate_margin_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_indices,
+        0.05,
+    );
+
+    assert_close(report.loss, 0.0);
+    assert_close(report.active_rate, 0.0);
+    assert_eq!(report.active_count, 0);
+    assert!(grad.data.iter().all(|value| value.abs() < 1e-6));
+}
+
+#[test]
+#[should_panic(expected = "margin must be finite and non-negative")]
+fn signed_direct_candidate_margin_rejects_negative_margin() {
+    let _ = signed_direct_candidate_margin_objective_loss_and_grad(
+        &direct_candidate_margin_fixture_prediction(0.4),
+        &direct_candidate_margin_fixture_candidates(),
+        &[0usize],
+        -0.1,
     );
 }
 

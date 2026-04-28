@@ -12,6 +12,10 @@ use jepra_core::{
     gaussian_moment_regularizer, mse_loss, mse_loss_grad,
     signed_angular_radial_objective_loss_and_grad, signed_bank_softmax_objective_loss_and_grad,
     signed_centered_radius_scalar_loss_and_grad, signed_margin_objective_loss_and_grad,
+    signed_objectives::{
+        SignedDirectCandidateMarginObjectiveReport,
+        signed_direct_candidate_margin_objective_loss_and_grad,
+    },
     signed_radial_calibration_loss_and_grad,
 };
 
@@ -3239,6 +3243,37 @@ where
     )
 }
 
+pub fn projected_signed_direct_candidate_margin_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    required_margin: f32,
+) -> (SignedDirectCandidateMarginObjectiveReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed direct candidate-margin objective expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "signed direct candidate-margin objective expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let true_candidate_indices = signed_velocity_true_candidate_indices(x_t, x_t1);
+
+    signed_direct_candidate_margin_objective_loss_and_grad(
+        &prediction,
+        &candidate_targets,
+        &true_candidate_indices,
+        required_margin,
+    )
+}
+
 pub fn projected_signed_bank_softmax_objective_loss_and_grad<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -3358,6 +3393,72 @@ where
     }
 
     totals.into_report()
+}
+
+pub fn projected_signed_direct_candidate_margin_objective_report_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+    required_margin: f32,
+) -> SignedDirectCandidateMarginObjectiveReport
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut loss = 0.0f32;
+    let mut active_rate = 0.0f32;
+    let mut true_distance = 0.0f32;
+    let mut wrong_distance = 0.0f32;
+    let mut margin = 0.0f32;
+    let mut positive_margin_rate = 0.0f32;
+    let mut top1 = 0.0f32;
+    let mut samples = 0usize;
+    let mut active_count = 0usize;
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let (report, _) = projected_signed_direct_candidate_margin_objective_loss_and_grad(
+            model,
+            &x_t,
+            &x_t1,
+            required_margin,
+        );
+        let report_samples = report.samples;
+        loss += report.loss * report_samples as f32;
+        active_rate += report.active_rate * report_samples as f32;
+        true_distance += report.true_distance * report_samples as f32;
+        wrong_distance += report.wrong_distance * report_samples as f32;
+        margin += report.margin * report_samples as f32;
+        positive_margin_rate += report.positive_margin_rate * report_samples as f32;
+        top1 += report.top1 * report_samples as f32;
+        samples += report_samples;
+        active_count += report.active_count;
+    }
+
+    assert!(
+        samples > 0,
+        "signed direct candidate-margin objective has no samples"
+    );
+
+    SignedDirectCandidateMarginObjectiveReport {
+        loss: loss / samples as f32,
+        active_rate: active_rate / samples as f32,
+        true_distance: true_distance / samples as f32,
+        wrong_distance: wrong_distance / samples as f32,
+        margin: margin / samples as f32,
+        positive_margin_rate: positive_margin_rate / samples as f32,
+        top1: top1 / samples as f32,
+        samples,
+        active_count,
+    }
 }
 
 pub fn projected_signed_bank_softmax_objective_report_from_base_seed<P>(

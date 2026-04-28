@@ -3,6 +3,7 @@ mod projected_temporal;
 #[path = "support/temporal_vision.rs"]
 mod temporal_vision;
 
+use jepra_core::signed_objectives::SignedDirectCandidateMarginObjectiveReport;
 use jepra_core::{
     BottleneckPredictor, Linear, Predictor, PredictorModule, ProjectedVisionJepa,
     ResidualBottleneckPredictor, SignedAngularRadialObjectiveReport,
@@ -45,6 +46,8 @@ use projected_temporal::{
     projected_signed_candidate_unit_mix_head_features,
     projected_signed_candidate_unit_mix_head_integration_from_base_seed,
     projected_signed_candidate_unit_mix_loss_and_grad,
+    projected_signed_direct_candidate_margin_objective_loss_and_grad,
+    projected_signed_direct_candidate_margin_objective_report_from_base_seed,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_margin_objective_report_from_base_seed,
     projected_signed_objective_error_breakdown_from_base_seed,
@@ -96,6 +99,7 @@ const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WARMUP_STEPS: usize = 0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_MIN_CONFIDENCE: f32 = 0.0;
 const DEFAULT_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT: f32 = 0.0;
+const DEFAULT_SIGNED_DIRECT_CANDIDATE_MARGIN: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS: usize = 200;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR: f32 = 0.05;
@@ -157,6 +161,12 @@ struct SignedCandidateSelectorOutputCouplingRunConfig {
 #[derive(Debug, Clone, Copy)]
 struct SignedTrueTargetMseAmplificationRunConfig {
     weight: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedDirectCandidateMarginRunConfig {
+    weight: f32,
+    margin: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -620,6 +630,24 @@ impl SignedTrueTargetMseAmplificationRunConfig {
     }
 }
 
+impl SignedDirectCandidateMarginRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let weight = parse_nonnegative_f32_arg(&args, "--signed-direct-candidate-margin-weight")
+            .or_else(|| parse_nonnegative_f32_env("JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT"))
+            .unwrap_or(0.0);
+        let margin = parse_nonnegative_f32_arg(&args, "--signed-direct-candidate-margin")
+            .or_else(|| parse_nonnegative_f32_env("JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN"))
+            .unwrap_or(DEFAULT_SIGNED_DIRECT_CANDIDATE_MARGIN);
+
+        Self { weight, margin }
+    }
+
+    fn enabled(self) -> bool {
+        self.weight > 0.0
+    }
+}
+
 impl SignedCandidateSelectorProbeRunConfig {
     fn from_args_and_env() -> Self {
         let args = std::env::args().collect::<Vec<_>>();
@@ -710,6 +738,8 @@ fn main() {
         SignedCandidateSelectorOutputCouplingRunConfig::from_args_and_env();
     let signed_true_target_mse_amplification_config =
         SignedTrueTargetMseAmplificationRunConfig::from_args_and_env();
+    let signed_direct_candidate_margin_config =
+        SignedDirectCandidateMarginRunConfig::from_args_and_env();
     let signed_candidate_selector_probe_config =
         SignedCandidateSelectorProbeRunConfig::from_args_and_env();
 
@@ -731,6 +761,11 @@ fn main() {
         !signed_true_target_mse_amplification_config.enabled()
             || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
         "signed true-target MSE amplification is only supported for signed-velocity-trail projected runs"
+    );
+    assert!(
+        !signed_direct_candidate_margin_config.enabled()
+            || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+        "signed direct candidate-margin objective is only supported for signed-velocity-trail projected runs"
     );
 
     println!(
@@ -832,6 +867,10 @@ fn main() {
         signed_true_target_mse_amplification_config.weight
     );
     println!(
+        "temporal run config | signed direct candidate-margin weight {} | margin {}",
+        signed_direct_candidate_margin_config.weight, signed_direct_candidate_margin_config.margin
+    );
+    println!(
         "temporal run config | signed candidate selector probe enabled {} | softmax_temperature {} | steps {} | lr {}",
         signed_candidate_selector_probe_config.enabled,
         signed_candidate_selector_probe_config.softmax_temperature,
@@ -848,6 +887,7 @@ fn main() {
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
+            signed_direct_candidate_margin_config,
             signed_candidate_selector_probe_config,
             make_predictor(),
         ),
@@ -859,6 +899,7 @@ fn main() {
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
+            signed_direct_candidate_margin_config,
             signed_candidate_selector_probe_config,
             make_bottleneck_predictor(),
         ),
@@ -870,6 +911,7 @@ fn main() {
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
+            signed_direct_candidate_margin_config,
             signed_candidate_selector_probe_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
@@ -881,6 +923,7 @@ fn main() {
             signed_candidate_selector_head_config,
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
+            signed_direct_candidate_margin_config,
             signed_candidate_selector_probe_config,
             make_state_radius_predictor(),
         ),
@@ -895,6 +938,7 @@ fn run_with_predictor<P>(
     signed_candidate_selector_head_config: SignedCandidateSelectorHeadRunConfig,
     signed_candidate_selector_output_coupling_config: SignedCandidateSelectorOutputCouplingRunConfig,
     signed_true_target_mse_amplification_config: SignedTrueTargetMseAmplificationRunConfig,
+    signed_direct_candidate_margin_config: SignedDirectCandidateMarginRunConfig,
     signed_candidate_selector_probe_config: SignedCandidateSelectorProbeRunConfig,
     predictor: P,
 ) where
@@ -1045,6 +1089,12 @@ fn run_with_predictor<P>(
     );
     let initial_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
+    let initial_signed_direct_candidate_margin_objective_report =
+        maybe_projected_signed_direct_candidate_margin_objective_report(
+            &model,
+            run_config,
+            signed_direct_candidate_margin_config,
+        );
     let initial_signed_bank_softmax_objective_report =
         maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
     let initial_signed_radial_calibration_report =
@@ -1111,6 +1161,10 @@ fn run_with_predictor<P>(
     );
     print_signed_candidate_selector_probe("initial", initial_signed_candidate_selector_probe);
     print_signed_margin_objective_report("initial", initial_signed_margin_objective_report);
+    print_signed_direct_candidate_margin_objective_report(
+        "initial",
+        initial_signed_direct_candidate_margin_objective_report,
+    );
     print_signed_bank_softmax_objective_report(
         "initial",
         initial_signed_bank_softmax_objective_report,
@@ -1134,6 +1188,14 @@ fn run_with_predictor<P>(
             let signed_margin_step = maybe_projected_signed_margin_objective_loss_and_grad(
                 model, run_config, &x_t, &x_t1,
             );
+            let signed_direct_candidate_margin_step =
+                maybe_projected_signed_direct_candidate_margin_objective_loss_and_grad(
+                    model,
+                    run_config,
+                    signed_direct_candidate_margin_config,
+                    &x_t,
+                    &x_t1,
+                );
             let signed_bank_softmax_step =
                 maybe_projected_signed_bank_softmax_objective_loss_and_grad(
                     model, run_config, &x_t, &x_t1,
@@ -1208,6 +1270,10 @@ fn run_with_predictor<P>(
                 .as_ref()
                 .map(|(report, _)| run_config.signed_margin_weight * report.weighted_loss)
                 .unwrap_or(0.0)
+                + signed_direct_candidate_margin_step
+                    .as_ref()
+                    .map(|(report, _)| signed_direct_candidate_margin_config.weight * report.loss)
+                    .unwrap_or(0.0)
                 + signed_bank_softmax_step
                     .as_ref()
                     .map(|(report, _)| run_config.signed_bank_softmax_weight * report.loss)
@@ -1236,6 +1302,13 @@ fn run_with_predictor<P>(
                     &mut extra_prediction_grad,
                     grad,
                     run_config.signed_margin_weight,
+                );
+            }
+            if let Some((_, grad)) = signed_direct_candidate_margin_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    signed_direct_candidate_margin_config.weight,
                 );
             }
             if let Some((_, grad)) = signed_bank_softmax_step.as_ref() {
@@ -1330,6 +1403,12 @@ fn run_with_predictor<P>(
                 }
                 if let Some((report, _)) = signed_margin_step {
                     print_signed_margin_objective_report(
+                        &format!("step {:03} train", step),
+                        Some(report),
+                    );
+                }
+                if let Some((report, _)) = signed_direct_candidate_margin_step {
+                    print_signed_direct_candidate_margin_objective_report(
                         &format!("step {:03} train", step),
                         Some(report),
                     );
@@ -1463,6 +1542,12 @@ fn run_with_predictor<P>(
         maybe_projected_signed_objective_error_breakdown(&model, run_config);
     let final_signed_margin_objective_report =
         maybe_projected_signed_margin_objective_report(&model, run_config);
+    let final_signed_direct_candidate_margin_objective_report =
+        maybe_projected_signed_direct_candidate_margin_objective_report(
+            &model,
+            run_config,
+            signed_direct_candidate_margin_config,
+        );
     let final_signed_bank_softmax_objective_report =
         maybe_projected_signed_bank_softmax_objective_report(&model, run_config);
     let final_signed_radial_calibration_report =
@@ -1553,6 +1638,10 @@ fn run_with_predictor<P>(
     print_signed_candidate_selector_probe("final", final_signed_candidate_selector_probe);
     print_signed_objective_error_breakdown("final", final_signed_objective_error_breakdown);
     print_signed_margin_objective_report("final", final_signed_margin_objective_report);
+    print_signed_direct_candidate_margin_objective_report(
+        "final",
+        final_signed_direct_candidate_margin_objective_report,
+    );
     print_signed_bank_softmax_objective_report("final", final_signed_bank_softmax_objective_report);
     print_signed_radial_calibration_report("final", final_signed_radial_calibration_report);
     print_signed_angular_radial_objective_report(
@@ -2723,6 +2812,62 @@ where
     ))
 }
 
+fn maybe_projected_signed_direct_candidate_margin_objective_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    direct_config: SignedDirectCandidateMarginRunConfig,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Option<(SignedDirectCandidateMarginObjectiveReport, Tensor)>
+where
+    P: PredictorModule,
+{
+    if !direct_config.enabled() {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed direct candidate-margin objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(
+        projected_signed_direct_candidate_margin_objective_loss_and_grad(
+            model,
+            x_t,
+            x_t1,
+            direct_config.margin,
+        ),
+    )
+}
+
+fn maybe_projected_signed_direct_candidate_margin_objective_report<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+    direct_config: SignedDirectCandidateMarginRunConfig,
+) -> Option<SignedDirectCandidateMarginObjectiveReport>
+where
+    P: PredictorModule,
+{
+    if !direct_config.enabled() {
+        return None;
+    }
+    assert_eq!(
+        run_config.temporal_task_mode,
+        TemporalTaskMode::SignedVelocityTrail,
+        "signed direct candidate-margin objective is only supported for signed-velocity-trail projected runs"
+    );
+
+    Some(
+        projected_signed_direct_candidate_margin_objective_report_from_base_seed(
+            model,
+            PROJECTED_VALIDATION_BASE_SEED,
+            PROJECTED_VALIDATION_BATCHES,
+            direct_config.margin,
+        ),
+    )
+}
+
 fn maybe_projected_signed_bank_softmax_objective_loss_and_grad<P>(
     model: &ProjectedVisionJepa<P>,
     run_config: temporal_vision::TemporalRunConfig,
@@ -2954,6 +3099,27 @@ fn print_signed_margin_objective_report(tag: &str, report: Option<SignedMarginOb
             report.active_bank_pairs as f32 / report.bank_pairs as f32,
             report.active_sign_pairs as f32 / report.sign_pairs as f32,
             report.active_speed_pairs as f32 / report.speed_pairs as f32,
+            report.samples,
+        );
+    }
+}
+
+fn print_signed_direct_candidate_margin_objective_report(
+    tag: &str,
+    report: Option<SignedDirectCandidateMarginObjectiveReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed direct candidate-margin objective loss {:.6} | active_rate {:.6} | true_distance {:.6} | wrong_distance {:.6} | margin {:.6} | positive_margin_rate {:.6} | top1 {:.6} | active_count {} | samples {}",
+            tag,
+            report.loss,
+            report.active_rate,
+            report.true_distance,
+            report.wrong_distance,
+            report.margin,
+            report.positive_margin_rate,
+            report.top1,
+            report.active_count,
             report.samples,
         );
     }

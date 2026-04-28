@@ -18,6 +18,7 @@ use projected_temporal::{
     projected_batch_losses, projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_candidate_selector_active_normalized_stable_hard_full_output_coupling_loss_and_grad,
     projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad,
+    projected_signed_direct_candidate_margin_objective_loss_and_grad,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
@@ -508,6 +509,33 @@ fn projected_signed_margin_objective_grad_is_finite_for_signed_batch() {
     assert!(report.sign_loss.is_finite() && report.sign_loss >= 0.0);
     assert!(report.speed_loss.is_finite() && report.speed_loss >= 0.0);
     assert!(report.weighted_loss.is_finite() && report.weighted_loss >= 0.0);
+    assert_eq!(report.samples, BATCH_SIZE);
+    assert_eq!(grad.shape, vec![BATCH_SIZE, PROJECTION_DIM]);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
+}
+
+#[test]
+fn projected_signed_direct_candidate_margin_objective_grad_is_finite_for_signed_batch() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+    let (x_t, x_t1) = temporal_vision::make_temporal_batch_for_task(
+        BATCH_SIZE,
+        PROJECTED_VALIDATION_BASE_SEED,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    let (report, grad) =
+        projected_signed_direct_candidate_margin_objective_loss_and_grad(&model, &x_t, &x_t1, 0.05);
+
+    assert!(report.loss.is_finite() && report.loss >= 0.0);
+    assert!((0.0..=1.0).contains(&report.active_rate));
+    assert!(report.true_distance.is_finite() && report.true_distance >= 0.0);
+    assert!(report.wrong_distance.is_finite() && report.wrong_distance >= 0.0);
+    assert!(report.margin.is_finite());
+    assert!((0.0..=1.0).contains(&report.positive_margin_rate));
+    assert!((0.0..=1.0).contains(&report.top1));
     assert_eq!(report.samples, BATCH_SIZE);
     assert_eq!(grad.shape, vec![BATCH_SIZE, PROJECTION_DIM]);
     assert!(grad.data.iter().all(|value| value.is_finite()));

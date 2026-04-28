@@ -28,10 +28,13 @@ pub use regularizers::{
 pub use signed_objectives::{
     SignedAngularRadialObjectiveConfig, SignedAngularRadialObjectiveReport,
     SignedBankSoftmaxObjectiveConfig, SignedBankSoftmaxObjectiveReport,
-    SignedCenteredRadiusScalarObjectiveReport, SignedMarginObjectiveConfig,
+    SignedCenteredRadiusScalarObjectiveReport, SignedDirectCandidateMarginObjectiveReport,
+    SignedHardNegativeCandidateMarginObjectiveReport, SignedMarginObjectiveConfig,
     SignedMarginObjectiveReport, SignedRadialCalibrationReport,
     signed_angular_radial_objective_loss_and_grad, signed_bank_softmax_objective_loss_and_grad,
     signed_candidate_centered_radius_targets, signed_centered_radius_scalar_loss_and_grad,
+    signed_direct_candidate_margin_objective_loss_and_grad,
+    signed_hard_negative_candidate_margin_objective_loss_and_grad,
     signed_margin_objective_loss_and_grad, signed_radial_calibration_loss_and_grad,
 };
 pub use tensor::Tensor;

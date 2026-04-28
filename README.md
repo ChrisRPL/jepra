@@ -45,7 +45,7 @@ Expected signal: the examples print training/validation loss plus representation
 | Core Rust JEPA primitives | Active | Tensor ops, linear layers, predictors, encoders, JEPA wrappers, losses, and telemetry live in `crates/jepra-core`. |
 | Temporal proof tasks | Active | `random-speed`, `velocity-trail`, and `signed-velocity-trail` examples provide deterministic training/validation loops. |
 | Compact model research | Active | Conservative defaults stay baseline; bottleneck, residual, state-radius, and signed candidate heads are opt-in probes. |
-| Current bottleneck | In progress | Selector/readout signal is real, but MSE-style transfer is rejected: true-target MSE amplification lowers loss/true distance while raw PPR worsens. Next work is direct candidate-margin training. |
+| Current bottleneck | In progress | Selector/readout signal is real, but MSE-style transfer is rejected: true-target MSE amplification lowers loss/true distance while raw PPR worsens. Direct hard-negative candidate-margin training is now wired default-off for v23 evidence. |
 | Public API/product polish | Early | The framework is not yet a stable end-user training SDK. Current work is still proof-path hardening. |
 
 ## Current Research State
@@ -53,7 +53,8 @@ Expected signal: the examples print training/validation loss plus representation
 - Synthetic temporal prediction is the active proof path because it is deterministic, cheap, and exposes representation-health failures quickly.
 - Signed direction/magnitude cues are measurable, but the base predictor still often lands closer to wrong signed candidates than the true target.
 - Selector-head metrics and hard/full report-only readout clear narrow geometry gates, but direct hard/full output coupling is rejected: raw PPR stays pinned and selector top1 drops.
-- Selector-stable, active-normalized selector-output coupling, and true-target MSE amplification are implemented as default-off diagnostics. They protect or improve parts of health/loss, but none solve raw candidate ranking, so the next proof step is direct candidate-margin loss.
+- Selector-stable, active-normalized selector-output coupling, and true-target MSE amplification are implemented as default-off diagnostics. They protect or improve parts of health/loss, but none solve raw candidate ranking.
+- The next proof hook is default-off direct hard-negative candidate-margin loss: it optimizes the true signed candidate against the nearest wrong candidate directly, rather than adding another MSE-style transfer path.
 
 ## Algorithm Path
 
@@ -92,7 +93,8 @@ flowchart TD
   J --> K[naive hard/full coupling rejected]
   K --> L[stable + active-normalized coupling rejected]
   L --> M[true-target MSE amplification rejected]
-  M --> N{direct candidate-margin objective}
+  M --> N[direct hard-negative candidate-margin objective wired]
+  N --> O{bounded v23 evidence}
 ```
 
 ## Current Scope
@@ -198,6 +200,8 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--signed-candidate-selector-output-freeze-selector-after-warmup` stops selector-head updates after warmup while keeping output coupling active.
 - `--signed-candidate-selector-output-min-confidence <float>` gates selector-output coupling by selector max probability (`0.0` default; must be in `[0, 1]`).
 - `--signed-true-target-mse-amplification-weight <float>` adds default-off extra true-target MSE loss/grad on projected `signed-velocity-trail` runs. It is a control for MSE underpowering, not a promoted objective.
+- `--signed-direct-candidate-margin-weight <float>` adds default-off direct hard-negative candidate-margin loss/grad on projected `signed-velocity-trail` runs. It is the v23 proof hook for raw candidate ranking.
+- `--signed-direct-candidate-margin <float>` sets the required true-vs-nearest-wrong candidate gap for direct candidate-margin loss (`0.05` default).
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -216,6 +220,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT` are environment fallbacks for the direct selector head
 - `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_WARMUP_STEPS`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_FREEZE_SELECTOR_AFTER_WARMUP`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_MIN_CONFIDENCE` are environment fallbacks for default-off selector-to-output coupling
 - `JEPRA_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT` is the environment fallback for the true-target MSE amplification control
+- `JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT` and `JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN` are environment fallbacks for the direct hard-negative candidate-margin control
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
@@ -232,7 +237,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints a compact structured row per path/seed/predictor. When `JEPRA_PREDICTOR_COMPARISON_REPORT` is set, the CSV schema includes the wider evidence fields:
 
 ```text
-schema=jepra_predictor_compare_v22 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck|state-radius> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> signed_true_target_mse_amplification_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> selector_head_top1_end=<n|na> selector_head_entropy_end=<n|na> selector_readout_hard_full_top1_end=<n|na> selector_readout_hard_full_norm_ratio_end=<n|na> selector_output_mode=<off|hard-full|stable-hard-full|active-normalized-stable-hard-full> selector_output_coupling_warmup_steps=<n> selector_output_coupling_active_rate_end=<n|na> selector_output_coupling_base_prediction_top1_end=<n|na> selector_output_coupling_hard_full_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v23 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck|state-radius> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> signed_true_target_mse_amplification_weight=<n> signed_direct_candidate_margin_weight=<n> signed_direct_candidate_margin=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_direct_candidate_margin_loss_end=<n|na> signed_direct_candidate_margin_positive_margin_rate_end=<n|na> signed_direct_candidate_margin_top1_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> selector_head_top1_end=<n|na> selector_head_entropy_end=<n|na> selector_readout_hard_full_top1_end=<n|na> selector_readout_hard_full_norm_ratio_end=<n|na> selector_output_mode=<off|hard-full|stable-hard-full|active-normalized-stable-hard-full> selector_output_coupling_warmup_steps=<n> selector_output_coupling_active_rate_end=<n|na> selector_output_coupling_base_prediction_top1_end=<n|na> selector_output_coupling_hard_full_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -353,11 +358,12 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - `jepra_predictor_compare_v20` adds `stable-hard-full` plus warmup, selector freeze, min-confidence, and active-rate diagnostics. Fixed stable evidence (`2026-04-28`, warmup `200`, freeze enabled, min confidence `0.25`) keeps rows health-ok and improves selector/readout (`selector_top1=0.416667`, active/readout top1 `0.447917`), but raw PPR remains `0.281250`.
 - `jepra_predictor_compare_v21` adds `active-normalized-stable-hard-full`, which rescales gated loss/grad by active sample count. Fixed evidence (`2026-04-28`, same v20 schedule) stays health-ok and preserves selector/unit geometry, but raw PPR remains `0.281250`, so active-normalized MSE coupling is rejected for promotion.
 - `jepra_predictor_compare_v22` adds the default-off true-target MSE amplification control. Fixed evidence (`2026-04-28`, extra weight `3.0`) stays health-ok and lowers mean val loss (`0.362500` vs `0.387471`) plus true distance (`1.449999` vs `1.549884`), but raw PPR worsens (`0.239583` vs `0.281250`) and unit geometry fails preservation (`unit_ppr=0.307292`).
-- Decision: scalar/logit radius heads, candidate unit-mix, soft/full averaging, radius-only selector readouts, naive hard/full output coupling, selector-stable coupling, active-normalized MSE coupling, and true-target MSE amplification remain diagnostic hooks. The next active proof step is direct candidate-margin loss.
+- `jepra_predictor_compare_v23` adds the default-off direct hard-negative candidate-margin control. It reports direct objective loss, active rate, true/wrong distances, achieved margin, positive margin rate, and top1 for the new raw-ranking proof hook.
+- Decision: scalar/logit radius heads, candidate unit-mix, soft/full averaging, radius-only selector readouts, naive hard/full output coupling, selector-stable coupling, active-normalized MSE coupling, and true-target MSE amplification remain diagnostic hooks. The active proof step is bounded v23 evidence for direct candidate-margin loss.
 
 Candidate-centroid-aware geometry acceptance gate:
 
-- Use the existing `jepra_predictor_compare_v22` fields for current selector/readout/coupling/MSE-control evidence. Only bump the schema again if a future patch emits new candidate-margin diagnostics that cannot be derived from current prediction-bank/unit/counterfactual/selector/readout/coupling fields.
+- Use the existing `jepra_predictor_compare_v23` fields for current selector/readout/coupling/MSE-control/direct-margin evidence. Only bump the schema again if a future patch emits new objective diagnostics that cannot be derived from current prediction-bank/unit/counterfactual/selector/readout/coupling/direct-margin fields.
 - Run fixed comparison against same-run baseline/config: `JEPRA_TEMPORAL_TASK=signed-velocity-trail`, `JEPRA_COMPACT_ENCODER_MODE=signed-direction-magnitude`, `JEPRA_PREDICTOR_MODES='baseline'`, seeds `11000 11001 11002`, `JEPRA_TRAIN_STEPS=300`, report CSV enabled.
 - Hard health gate: every candidate row has `status=ok`; mean `val_pred_end <= 1.05 * baseline_val_pred_end`; mean `target_drift_end <= max(0.02, 2.5 * baseline_target_drift_end)`.
 - Hard raw-ranking gate: mean `prediction_bank_positive_margin_rate_end >= baseline_raw_ppr + 0.5 * (baseline_oracle_radius_ppr - baseline_raw_ppr)`; with current evidence this is approximately `>= 0.364583`. This proves at least half of the radius-counterfactual gap is closed.
