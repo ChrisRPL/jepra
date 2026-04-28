@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFEST_PATH="${JEPRA_MANIFEST_PATH:-$ROOT_DIR/crates/jepra-core/Cargo.toml}"
-SCHEMA="jepra_predictor_compare_v20"
+SCHEMA="jepra_predictor_compare_v21"
 TRAIN_STEPS="${JEPRA_TRAIN_STEPS:-300}"
 LOG_EVERY="${JEPRA_LOG_EVERY:-25}"
 TEMPORAL_TASK="${JEPRA_TEMPORAL_TASK:-random-speed}"
@@ -95,7 +95,7 @@ Environment:
   JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR Signed candidate selector head entropy floor (default: 1.0)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT Signed candidate selector head entropy weight (default: 0.1)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT Signed candidate selector head KL-to-prior weight (default: 0.0)
-  JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT        Selector-to-output mode: off|hard-full|stable-hard-full (default: off)
+  JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT        Selector-to-output mode: off|hard-full|stable-hard-full|active-normalized-stable-hard-full (default: off)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING Legacy boolean alias for hard-full output coupling (default: 0)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT Selector output coupling weight (default: 1.0)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_WARMUP_STEPS Selector output warmup steps before coupling (default: 0)
@@ -192,7 +192,7 @@ signed_candidate_selector_output_mode() {
   local mode
   mode="$(tr '[:upper:]' '[:lower:]' <<< "$SIGNED_CANDIDATE_SELECTOR_OUTPUT")"
   case "$mode" in
-    hard-full|stable-hard-full) printf '%s' "$mode" ;;
+    hard-full|stable-hard-full|active-normalized-stable-hard-full) printf '%s' "$mode" ;;
     off)
       if [[ "$(signed_candidate_selector_output_coupling_alias_enabled)" == "true" ]]; then
         printf '%s' "hard-full"
@@ -201,7 +201,7 @@ signed_candidate_selector_output_mode() {
       fi
       ;;
     *)
-      echo "Unsupported JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT: $SIGNED_CANDIDATE_SELECTOR_OUTPUT (expected off|hard-full|stable-hard-full)" >&2
+      echo "Unsupported JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT: $SIGNED_CANDIDATE_SELECTOR_OUTPUT (expected off|hard-full|stable-hard-full|active-normalized-stable-hard-full)" >&2
       exit 2
       ;;
   esac

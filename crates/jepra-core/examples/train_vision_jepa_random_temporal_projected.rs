@@ -34,6 +34,7 @@ use projected_temporal::{
     projected_signed_candidate_radius_logit_head_features,
     projected_signed_candidate_radius_logit_head_integration_from_base_seed,
     projected_signed_candidate_radius_logit_mixing_loss_and_grad,
+    projected_signed_candidate_selector_active_normalized_stable_hard_full_output_coupling_loss_and_grad,
     projected_signed_candidate_selector_hard_full_output_coupling_loss_and_grad,
     projected_signed_candidate_selector_hard_full_output_coupling_report_from_base_seed,
     projected_signed_candidate_selector_head_features,
@@ -156,6 +157,7 @@ enum SignedCandidateSelectorOutputMode {
     Off,
     HardFull,
     StableHardFull,
+    ActiveNormalizedStableHardFull,
 }
 
 impl SignedCandidateSelectorOutputMode {
@@ -164,8 +166,9 @@ impl SignedCandidateSelectorOutputMode {
             "off" => Self::Off,
             "hard-full" => Self::HardFull,
             "stable-hard-full" => Self::StableHardFull,
+            "active-normalized-stable-hard-full" => Self::ActiveNormalizedStableHardFull,
             raw => panic!(
-                "signed candidate selector output must be off|hard-full|stable-hard-full, got {}",
+                "signed candidate selector output must be off|hard-full|stable-hard-full|active-normalized-stable-hard-full, got {}",
                 raw
             ),
         }
@@ -176,6 +179,7 @@ impl SignedCandidateSelectorOutputMode {
             Self::Off => "off",
             Self::HardFull => "hard-full",
             Self::StableHardFull => "stable-hard-full",
+            Self::ActiveNormalizedStableHardFull => "active-normalized-stable-hard-full",
         }
     }
 
@@ -184,7 +188,14 @@ impl SignedCandidateSelectorOutputMode {
     }
 
     fn requires_correct_selector(self) -> bool {
-        self == Self::StableHardFull
+        matches!(
+            self,
+            Self::StableHardFull | Self::ActiveNormalizedStableHardFull
+        )
+    }
+
+    fn active_normalized(self) -> bool {
+        self == Self::ActiveNormalizedStableHardFull
     }
 }
 
@@ -1678,7 +1689,15 @@ where
     );
     let selector_logits = selector_head.forward(&features);
 
-    Some(if coupling_config.mode.requires_correct_selector() {
+    Some(if coupling_config.mode.active_normalized() {
+        projected_signed_candidate_selector_active_normalized_stable_hard_full_output_coupling_loss_and_grad(
+            model,
+            x_t,
+            x_t1,
+            &selector_logits,
+            coupling_config.min_confidence,
+        )
+    } else if coupling_config.mode.requires_correct_selector() {
         projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad(
             model,
             x_t,
@@ -2254,6 +2273,7 @@ where
             head_config.softmax_temperature,
             coupling_config.min_confidence,
             coupling_config.mode.requires_correct_selector(),
+            coupling_config.mode.active_normalized(),
         ),
     )
 }

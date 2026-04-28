@@ -2434,6 +2434,59 @@ where
     (report, grad)
 }
 
+pub fn projected_signed_candidate_selector_active_normalized_stable_hard_full_output_coupling_loss_and_grad<
+    P,
+>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    selector_logits: &Tensor,
+    min_confidence: f32,
+) -> (ProjectedSignedCandidateSelectorOutputCouplingReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "active-normalized stable selector output coupling expects matching pair shapes"
+    );
+    assert!(
+        min_confidence.is_finite() && (0.0..=1.0).contains(&min_confidence),
+        "active-normalized stable selector output coupling min confidence must be in [0, 1]"
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let (hard_full_target, active_samples) = signed_candidate_selector_gated_hard_full_targets(
+        model,
+        x_t,
+        selector_logits,
+        &prediction,
+        Some(x_t1),
+        true,
+        min_confidence,
+    );
+    let normalization = if active_samples > 0 {
+        prediction.shape[0] as f32 / active_samples as f32
+    } else {
+        0.0
+    };
+    let loss = mse_loss(&prediction, &hard_full_target) * normalization;
+    let grad = scale_tensor_values(
+        &mse_loss_grad(&prediction, &hard_full_target),
+        normalization,
+    );
+    let report = projected_signed_candidate_selector_hard_full_output_coupling_report_from_logits(
+        model,
+        x_t,
+        x_t1,
+        selector_logits,
+        loss,
+        active_samples,
+    );
+
+    (report, grad)
+}
+
 pub fn projected_signed_candidate_selector_hard_full_output_coupling_report_from_base_seed<P>(
     model: &ProjectedVisionJepa<P>,
     selector_head: &Linear,
@@ -2442,6 +2495,7 @@ pub fn projected_signed_candidate_selector_hard_full_output_coupling_report_from
     softmax_temperature: f32,
     min_confidence: f32,
     require_correct_selector: bool,
+    active_normalized: bool,
 ) -> ProjectedSignedCandidateSelectorOutputCouplingReport
 where
     P: PredictorModule,
@@ -2457,6 +2511,10 @@ where
     assert!(
         min_confidence.is_finite() && (0.0..=1.0).contains(&min_confidence),
         "candidate selector output coupling min confidence must be in [0, 1]"
+    );
+    assert!(
+        !active_normalized || require_correct_selector,
+        "active-normalized selector output coupling requires correct-selector gating"
     );
 
     let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
@@ -2494,7 +2552,15 @@ where
         let features =
             projected_signed_candidate_selector_head_features(model, &x_t, softmax_temperature);
         let selector_logits = selector_head.forward(&features);
-        let (report, _) = if require_correct_selector {
+        let (report, _) = if active_normalized {
+            projected_signed_candidate_selector_active_normalized_stable_hard_full_output_coupling_loss_and_grad(
+                model,
+                &x_t,
+                &x_t1,
+                &selector_logits,
+                min_confidence,
+            )
+        } else if require_correct_selector {
             projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad(
                 model,
                 &x_t,
@@ -4606,6 +4672,18 @@ where
         samples: batch_size,
         candidates,
     }
+}
+
+fn scale_tensor_values(tensor: &Tensor, scale: f32) -> Tensor {
+    assert!(
+        scale.is_finite(),
+        "tensor scale must be finite, got {}",
+        scale
+    );
+    Tensor::new(
+        tensor.data.iter().map(|value| value * scale).collect(),
+        tensor.shape.clone(),
+    )
 }
 
 fn signed_candidate_selector_gated_hard_full_targets<P>(
