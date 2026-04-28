@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate/analyze jepra_predictor_compare_v23 direct-margin CSV evidence."""
+"""Gate/analyze v23+ direct-margin CSV evidence."""
 
 import argparse
 import csv
@@ -7,7 +7,10 @@ import math
 import sys
 from collections import defaultdict
 
-SCHEMA = "jepra_predictor_compare_v23"
+SUPPORTED_SCHEMAS = {
+    "jepra_predictor_compare_v23",
+    "jepra_predictor_compare_v24",
+}
 EPS = 1e-12
 
 PAIR_FIELDS = (
@@ -95,7 +98,7 @@ def ok_status(row):
 
 
 def wanted(row, args):
-    if not args.all_schemas and text(row, "schema") != SCHEMA:
+    if not args.all_schemas and text(row, "schema") not in SUPPORTED_SCHEMAS:
         return False
     if args.predictor != "any" and text(row, "predictor") != args.predictor:
         return False
@@ -208,7 +211,7 @@ def gate_group(group_key, pairs, missing_seeds):
     )
     passed = health_ok and raw_ok and unit_ok and norm_ok
 
-    print(("PASS" if passed else "REJECT") + f" direct-margin v23 pairs={len(pairs)}")
+    print(("PASS" if passed else "REJECT") + f" direct-margin v23/v24 pairs={len(pairs)}")
     print("group " + " ".join(f"{field}={value}" for field, value in zip(GROUP_FIELDS, group_key)))
     if missing_seeds:
         print("missing_baseline_seeds=" + ",".join(sorted(set(missing_seeds))))
@@ -292,9 +295,9 @@ def secondary_summary(pairs):
 
 def parse_args(argv):
     parser = argparse.ArgumentParser(
-        description="Gate v23 direct-margin evidence against same-seed baseline/off CSV rows.",
+        description="Gate v23/v24 direct-margin evidence against same-seed baseline/off CSV rows.",
     )
-    parser.add_argument("csv_path", help="jepra_predictor_compare_v23 CSV report")
+    parser.add_argument("csv_path", help="jepra_predictor_compare_v23 or v24 CSV report")
     parser.add_argument(
         "--candidate-weight",
         type=float,
@@ -313,7 +316,7 @@ def parse_args(argv):
     parser.add_argument(
         "--all-schemas",
         action="store_true",
-        help=f"Do not require schema={SCHEMA}",
+        help=f"Do not require one of schemas={','.join(sorted(SUPPORTED_SCHEMAS))}",
     )
     return parser.parse_args(argv)
 

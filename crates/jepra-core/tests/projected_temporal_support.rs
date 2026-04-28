@@ -24,6 +24,7 @@ use projected_temporal::{
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_prediction_bank_unit_geometry_from_base_seed,
     projected_signed_prediction_geometry_counterfactual_from_base_seed,
+    projected_signed_prediction_ray_boundary_from_base_seed,
     projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
@@ -1024,6 +1025,45 @@ fn projected_signed_prediction_bank_unit_geometry_is_finite_and_bounded() {
     assert!(geometry.true_target_center_norm >= 0.0);
     assert_eq!(geometry.samples, BATCH_SIZE * 2);
     assert_eq!(geometry.candidates, 4);
+}
+
+#[test]
+fn projected_signed_prediction_ray_boundary_is_finite_and_bounded() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+
+    let boundary = projected_signed_prediction_ray_boundary_from_base_seed(
+        &model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        2,
+    );
+
+    for value in [
+        boundary.current_radius,
+        boundary.required_radius,
+        boundary.upper_radius,
+        boundary.radius_margin,
+        boundary.radius_shortfall,
+        boundary.radius_overshoot,
+        boundary.satisfied_rate,
+        boundary.infeasible_rate,
+    ] {
+        assert!(value.is_finite());
+    }
+
+    assert!(boundary.current_radius >= 0.0);
+    assert!(boundary.required_radius >= 0.0);
+    assert!(boundary.upper_radius >= 0.0);
+    assert!(boundary.radius_shortfall >= 0.0);
+    assert!(boundary.radius_overshoot >= 0.0);
+    assert!((0.0..=1.0).contains(&boundary.satisfied_rate));
+    assert!((0.0..=1.0).contains(&boundary.infeasible_rate));
+    assert!(boundary.finite_upper_samples <= boundary.feasible_samples);
+    assert!(boundary.feasible_samples <= boundary.samples);
+    assert_eq!(boundary.samples, BATCH_SIZE * 2);
+    assert_eq!(boundary.candidates, 4);
 }
 
 #[test]

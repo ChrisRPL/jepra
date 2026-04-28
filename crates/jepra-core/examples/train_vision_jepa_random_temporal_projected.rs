@@ -22,9 +22,10 @@ use projected_temporal::{
     ProjectedSignedCandidateUnitMixHeadIntegration, ProjectedSignedCandidateUnitMixObjectiveReport,
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
     ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionCounterfactualMetrics,
-    ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedStateSeparability,
-    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
-    ProjectedVelocityBankRanking, projected_signed_angular_radial_objective_loss_and_grad,
+    ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedPredictionRayBoundary,
+    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
+    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
+    projected_signed_angular_radial_objective_loss_and_grad,
     projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
@@ -54,6 +55,7 @@ use projected_temporal::{
     projected_signed_prediction_bank_margin_from_base_seed,
     projected_signed_prediction_bank_unit_geometry_from_base_seed,
     projected_signed_prediction_geometry_counterfactual_from_base_seed,
+    projected_signed_prediction_ray_boundary_from_base_seed,
     projected_signed_radial_calibration_loss_and_grad,
     projected_signed_radial_calibration_report_from_base_seed,
     projected_signed_state_separability_from_base_seed,
@@ -1045,6 +1047,8 @@ fn run_with_predictor<P>(
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let initial_signed_prediction_bank_unit_geometry =
         maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
+    let initial_signed_prediction_ray_boundary =
+        maybe_projected_signed_prediction_ray_boundary(&model, run_config);
     let initial_signed_prediction_geometry_counterfactual =
         maybe_projected_signed_prediction_geometry_counterfactual(&model, run_config);
     let initial_signed_candidate_centroid_integration =
@@ -1135,6 +1139,7 @@ fn run_with_predictor<P>(
         "initial",
         initial_signed_prediction_bank_unit_geometry,
     );
+    print_signed_prediction_ray_boundary("initial", initial_signed_prediction_ray_boundary);
     print_signed_prediction_geometry_counterfactual(
         "initial",
         initial_signed_prediction_geometry_counterfactual,
@@ -1496,6 +1501,8 @@ fn run_with_predictor<P>(
         maybe_projected_signed_prediction_bank_margin(&model, run_config);
     let final_signed_prediction_bank_unit_geometry =
         maybe_projected_signed_prediction_bank_unit_geometry(&model, run_config);
+    let final_signed_prediction_ray_boundary =
+        maybe_projected_signed_prediction_ray_boundary(&model, run_config);
     let final_signed_prediction_geometry_counterfactual =
         maybe_projected_signed_prediction_geometry_counterfactual(&model, run_config);
     let final_signed_candidate_centroid_integration =
@@ -1611,6 +1618,7 @@ fn run_with_predictor<P>(
     print_signed_target_bank_separability("final", final_signed_target_bank_separability);
     print_signed_prediction_bank_margin("final", final_signed_prediction_bank_margin);
     print_signed_prediction_bank_unit_geometry("final", final_signed_prediction_bank_unit_geometry);
+    print_signed_prediction_ray_boundary("final", final_signed_prediction_ray_boundary);
     print_signed_prediction_geometry_counterfactual(
         "final",
         final_signed_prediction_geometry_counterfactual,
@@ -2151,6 +2159,48 @@ fn print_signed_prediction_bank_unit_geometry(
             geometry.true_target_center_norm,
             geometry.samples,
             geometry.candidates,
+        );
+    }
+}
+
+fn maybe_projected_signed_prediction_ray_boundary<P>(
+    model: &ProjectedVisionJepa<P>,
+    run_config: temporal_vision::TemporalRunConfig,
+) -> Option<ProjectedSignedPredictionRayBoundary>
+where
+    P: PredictorModule,
+{
+    if run_config.temporal_task_mode != TemporalTaskMode::SignedVelocityTrail {
+        return None;
+    }
+
+    Some(projected_signed_prediction_ray_boundary_from_base_seed(
+        model,
+        PROJECTED_VALIDATION_BASE_SEED,
+        PROJECTED_VALIDATION_BATCHES,
+    ))
+}
+
+fn print_signed_prediction_ray_boundary(
+    tag: &str,
+    boundary: Option<ProjectedSignedPredictionRayBoundary>,
+) {
+    if let Some(boundary) = boundary {
+        println!(
+            "{} | signed prediction ray boundary current_radius {:.6} | required_radius {:.6} | upper_radius {:.6} | radius_margin {:.6} | radius_shortfall {:.6} | radius_overshoot {:.6} | satisfied_rate {:.6} | infeasible_rate {:.6} | finite_upper_samples {} | feasible_samples {} | samples {} | candidates {}",
+            tag,
+            boundary.current_radius,
+            boundary.required_radius,
+            boundary.upper_radius,
+            boundary.radius_margin,
+            boundary.radius_shortfall,
+            boundary.radius_overshoot,
+            boundary.satisfied_rate,
+            boundary.infeasible_rate,
+            boundary.finite_upper_samples,
+            boundary.feasible_samples,
+            boundary.samples,
+            boundary.candidates,
         );
     }
 }

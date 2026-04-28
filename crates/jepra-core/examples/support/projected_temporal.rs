@@ -129,6 +129,22 @@ pub struct ProjectedSignedPredictionBankUnitGeometry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedPredictionRayBoundary {
+    pub current_radius: f32,
+    pub required_radius: f32,
+    pub upper_radius: f32,
+    pub radius_margin: f32,
+    pub radius_shortfall: f32,
+    pub radius_overshoot: f32,
+    pub satisfied_rate: f32,
+    pub infeasible_rate: f32,
+    pub finite_upper_samples: usize,
+    pub feasible_samples: usize,
+    pub samples: usize,
+    pub candidates: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedSignedPredictionCounterfactualMetrics {
     pub mrr: f32,
     pub top1: f32,
@@ -331,6 +347,15 @@ struct SignedPredictionBankUnitGeometrySampleOutcome {
 }
 
 #[derive(Debug, Clone, Copy)]
+struct SignedPredictionRayBoundarySampleOutcome {
+    current_radius: f32,
+    required_radius: f32,
+    upper_radius: f32,
+    feasible: bool,
+    satisfied: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
 struct SignedPredictionCounterfactualSampleOutcome {
     true_dx: isize,
     true_distance: f32,
@@ -525,6 +550,21 @@ struct SignedPredictionBankUnitGeometryTotals {
     positive_samples: usize,
     slow_samples: usize,
     fast_samples: usize,
+}
+
+#[derive(Debug, Default)]
+struct SignedPredictionRayBoundaryTotals {
+    current_radius: f32,
+    required_radius: f32,
+    upper_radius: f32,
+    radius_margin: f32,
+    radius_shortfall: f32,
+    radius_overshoot: f32,
+    finite_upper_samples: usize,
+    satisfied_count: usize,
+    infeasible_count: usize,
+    feasible_samples: usize,
+    samples: usize,
 }
 
 #[derive(Debug, Default)]
@@ -1077,6 +1117,67 @@ impl SignedPredictionBankUnitGeometryTotals {
             speed_margin: self.speed_margin / self.samples as f32,
             prediction_center_norm: self.prediction_center_norm / self.samples as f32,
             true_target_center_norm: self.true_target_center_norm / self.samples as f32,
+            samples: self.samples,
+            candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
+        }
+    }
+}
+
+impl SignedPredictionRayBoundaryTotals {
+    fn observe(&mut self, outcome: SignedPredictionRayBoundarySampleOutcome) {
+        assert!(
+            outcome.current_radius.is_finite()
+                && outcome.current_radius >= 0.0
+                && outcome.required_radius.is_finite()
+                && outcome.required_radius >= 0.0
+                && (outcome.upper_radius.is_finite()
+                    || outcome.upper_radius.is_infinite()
+                        && outcome.upper_radius.is_sign_positive()),
+            "signed prediction ray-boundary produced non-finite metrics"
+        );
+
+        self.samples += 1;
+        self.current_radius += outcome.current_radius;
+
+        if outcome.feasible {
+            let radius_margin = outcome.current_radius - outcome.required_radius;
+            self.feasible_samples += 1;
+            self.required_radius += outcome.required_radius;
+            self.radius_margin += radius_margin;
+            self.radius_shortfall += (-radius_margin).max(0.0);
+            if outcome.upper_radius.is_finite() {
+                self.upper_radius += outcome.upper_radius;
+                self.radius_overshoot += (outcome.current_radius - outcome.upper_radius).max(0.0);
+                self.finite_upper_samples += 1;
+            }
+            self.satisfied_count += usize::from(outcome.satisfied);
+        } else {
+            self.infeasible_count += 1;
+        }
+    }
+
+    fn into_boundary(self) -> ProjectedSignedPredictionRayBoundary {
+        assert!(
+            self.samples > 0,
+            "signed prediction ray-boundary has no samples"
+        );
+
+        let feasible_samples = self.feasible_samples as f32;
+        let feasible_denominator = feasible_samples.max(1.0);
+        let finite_upper_samples = self.finite_upper_samples as f32;
+        let finite_upper_denominator = finite_upper_samples.max(1.0);
+
+        ProjectedSignedPredictionRayBoundary {
+            current_radius: self.current_radius / self.samples as f32,
+            required_radius: self.required_radius / feasible_denominator,
+            upper_radius: self.upper_radius / finite_upper_denominator,
+            radius_margin: self.radius_margin / feasible_denominator,
+            radius_shortfall: self.radius_shortfall / feasible_denominator,
+            radius_overshoot: self.radius_overshoot / finite_upper_denominator,
+            satisfied_rate: self.satisfied_count as f32 / self.samples as f32,
+            infeasible_rate: self.infeasible_count as f32 / self.samples as f32,
+            finite_upper_samples: self.finite_upper_samples,
+            feasible_samples: self.feasible_samples,
             samples: self.samples,
             candidates: SIGNED_VELOCITY_BANK_CANDIDATE_DX.len(),
         }
@@ -1896,6 +1997,56 @@ where
     }
 
     totals.into_geometry()
+}
+
+#[allow(dead_code)]
+pub fn projected_signed_prediction_ray_boundary<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> ProjectedSignedPredictionRayBoundary
+where
+    P: PredictorModule,
+{
+    let outcomes = projected_signed_prediction_ray_boundary_sample_outcomes(model, x_t, x_t1);
+    let mut totals = SignedPredictionRayBoundaryTotals::default();
+
+    for outcome in outcomes {
+        totals.observe(outcome);
+    }
+
+    totals.into_boundary()
+}
+
+pub fn projected_signed_prediction_ray_boundary_from_base_seed<P>(
+    model: &ProjectedVisionJepa<P>,
+    validation_base_seed: u64,
+    validation_batches: usize,
+) -> ProjectedSignedPredictionRayBoundary
+where
+    P: PredictorModule,
+{
+    assert!(
+        validation_batches > 0,
+        "validation_batches must be greater than 0"
+    );
+
+    let mut totals = SignedPredictionRayBoundaryTotals::default();
+
+    for batch_idx in 0..validation_batches {
+        let (x_t, x_t1) = make_temporal_batch_for_task(
+            BATCH_SIZE,
+            validation_base_seed + batch_idx as u64,
+            TemporalTaskMode::SignedVelocityTrail,
+        );
+        let outcomes = projected_signed_prediction_ray_boundary_sample_outcomes(model, &x_t, &x_t1);
+
+        for outcome in outcomes {
+            totals.observe(outcome);
+        }
+    }
+
+    totals.into_boundary()
 }
 
 pub fn projected_signed_prediction_geometry_counterfactual_from_base_seed<P>(
@@ -4147,6 +4298,67 @@ where
     (prediction_norm_sum, target_norm_sum, batch_size)
 }
 
+fn projected_signed_prediction_ray_boundary_sample_outcomes<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+) -> Vec<SignedPredictionRayBoundarySampleOutcome>
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "prediction ray-boundary expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "prediction ray-boundary expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = x_t.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut outcomes = Vec::with_capacity(batch_size);
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let current_radius = vector_l2_norm(&prediction_centered);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let boundary = signed_ray_boundary_interval(
+            &candidate_targets,
+            sample,
+            &centroid,
+            &prediction_unit,
+            true_index,
+        );
+
+        outcomes.push(match boundary {
+            Some((required_radius, upper_radius)) => SignedPredictionRayBoundarySampleOutcome {
+                current_radius,
+                required_radius,
+                upper_radius,
+                feasible: true,
+                satisfied: current_radius + VELOCITY_BANK_TIE_EPSILON >= required_radius
+                    && current_radius < upper_radius - VELOCITY_BANK_TIE_EPSILON,
+            },
+            None => SignedPredictionRayBoundarySampleOutcome {
+                current_radius,
+                required_radius: 0.0,
+                upper_radius: 0.0,
+                feasible: false,
+                satisfied: false,
+            },
+        });
+    }
+
+    outcomes
+}
+
 fn projected_signed_prediction_geometry_counterfactual_sample_outcomes<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
@@ -6333,7 +6545,11 @@ fn scale_vector(vector: &[f32], scale: f32) -> Vec<f32> {
 }
 
 fn vector_l2_norm(vector: &[f32]) -> f32 {
-    vector.iter().map(|value| value * value).sum::<f32>().sqrt()
+    vector_squared_norm(vector).sqrt()
+}
+
+fn vector_squared_norm(vector: &[f32]) -> f32 {
+    vector.iter().map(|value| value * value).sum()
 }
 
 fn unit_vector(vector: &[f32]) -> Vec<f32> {
@@ -6373,6 +6589,60 @@ fn vector_dot(left: &[f32], right: &[f32]) -> f32 {
         .zip(right.iter())
         .map(|(left_value, right_value)| left_value * right_value)
         .sum()
+}
+
+fn signed_ray_boundary_interval(
+    candidate_targets: &[Tensor],
+    sample: usize,
+    centroid: &[f32],
+    prediction_unit: &[f32],
+    true_index: usize,
+) -> Option<(f32, f32)> {
+    assert!(
+        true_index < candidate_targets.len(),
+        "ray-boundary true index exceeds candidate count"
+    );
+    assert_eq!(
+        centroid.len(),
+        prediction_unit.len(),
+        "ray-boundary unit dim mismatch"
+    );
+
+    let true_centered = centered_sample_vector(&candidate_targets[true_index], sample, centroid);
+    let true_norm_sq = vector_squared_norm(&true_centered);
+    let mut lower_radius = 0.0f32;
+    let mut upper_radius = f32::INFINITY;
+
+    for (candidate_index, candidate_target) in candidate_targets.iter().enumerate() {
+        if candidate_index == true_index {
+            continue;
+        }
+
+        let wrong_centered = centered_sample_vector(candidate_target, sample, centroid);
+        let wrong_norm_sq = vector_squared_norm(&wrong_centered);
+        let true_minus_wrong = true_centered
+            .iter()
+            .zip(&wrong_centered)
+            .map(|(true_value, wrong_value)| true_value - wrong_value)
+            .collect::<Vec<_>>();
+        let denominator = 2.0 * vector_dot(prediction_unit, &true_minus_wrong);
+        let numerator = true_norm_sq - wrong_norm_sq;
+
+        if denominator > VELOCITY_BANK_TIE_EPSILON {
+            lower_radius = lower_radius.max(numerator / denominator);
+        } else if denominator < -VELOCITY_BANK_TIE_EPSILON {
+            upper_radius = upper_radius.min(numerator / denominator);
+        } else if numerator >= -VELOCITY_BANK_TIE_EPSILON {
+            return None;
+        }
+    }
+
+    let required_radius = lower_radius.max(0.0);
+    if required_radius + VELOCITY_BANK_TIE_EPSILON >= upper_radius {
+        return None;
+    }
+
+    Some((required_radius, upper_radius))
 }
 
 fn best_group_distance(
