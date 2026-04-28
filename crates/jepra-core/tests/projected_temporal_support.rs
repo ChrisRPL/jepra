@@ -15,6 +15,7 @@ use projected_temporal::{
     PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO, PROJECTED_VALIDATION_BASE_SEED,
     PROJECTED_VALIDATION_BATCHES, PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO,
     projected_batch_losses, projected_signed_angular_radial_objective_report_from_base_seed,
+    projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad,
     projected_signed_margin_objective_loss_and_grad,
     projected_signed_objective_error_breakdown_from_base_seed,
     projected_signed_prediction_bank_margin_from_base_seed,
@@ -507,6 +508,37 @@ fn projected_signed_margin_objective_grad_is_finite_for_signed_batch() {
     assert_eq!(report.samples, BATCH_SIZE);
     assert_eq!(grad.shape, vec![BATCH_SIZE, PROJECTION_DIM]);
     assert!(grad.data.iter().all(|value| value.is_finite()));
+}
+
+#[test]
+fn projected_stable_selector_output_coupling_zeroes_inactive_gate() {
+    let encoder = make_compact_frozen_encoder_signed_direction_magnitude();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+    let (x_t, x_t1) = temporal_vision::make_temporal_batch_for_task(
+        BATCH_SIZE,
+        PROJECTED_VALIDATION_BASE_SEED,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+    let selector_logits = Tensor::new(vec![0.0; BATCH_SIZE * 4], vec![BATCH_SIZE, 4]);
+
+    let (report, grad) =
+        projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad(
+            &model,
+            &x_t,
+            &x_t1,
+            &selector_logits,
+            1.0,
+        );
+
+    assert_eq!(report.active_samples, 0);
+    assert_eq!(report.active_rate, 0.0);
+    assert_eq!(report.samples, BATCH_SIZE);
+    assert_eq!(report.candidates, 4);
+    assert_eq!(report.loss, 0.0);
+    assert_eq!(grad.shape, vec![BATCH_SIZE, PROJECTION_DIM]);
+    assert!(grad.data.iter().all(|value| value.abs() < 1e-7));
 }
 
 #[test]

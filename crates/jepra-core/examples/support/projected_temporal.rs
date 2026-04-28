@@ -227,12 +227,14 @@ pub struct ProjectedSignedCandidateSelectorHeadObjectiveReport {
 pub struct ProjectedSignedCandidateSelectorOutputCouplingReport {
     pub loss: f32,
     pub selector_max_probability: f32,
+    pub active_rate: f32,
     pub base_prediction_top1: f32,
     pub base_prediction_margin: f32,
     pub base_prediction_norm_ratio: f32,
     pub selector_hard_full_top1: f32,
     pub selector_hard_full_margin: f32,
     pub selector_hard_full_norm_ratio: f32,
+    pub active_samples: usize,
     pub samples: usize,
     pub candidates: usize,
 }
@@ -395,12 +397,14 @@ struct SignedCandidateSelectorHeadObjectiveReportTotals {
 struct SignedCandidateSelectorOutputCouplingReportTotals {
     loss: f32,
     selector_max_probability: f32,
+    active_rate: f32,
     base_prediction_top1: f32,
     base_prediction_margin: f32,
     base_prediction_norm_ratio: f32,
     selector_hard_full_top1: f32,
     selector_hard_full_margin: f32,
     selector_hard_full_norm_ratio: f32,
+    active_samples: usize,
     samples: usize,
 }
 
@@ -1246,6 +1250,7 @@ impl SignedCandidateSelectorOutputCouplingReportTotals {
         assert!(
             report.loss.is_finite()
                 && report.selector_max_probability.is_finite()
+                && report.active_rate.is_finite()
                 && report.base_prediction_top1.is_finite()
                 && report.base_prediction_margin.is_finite()
                 && report.base_prediction_norm_ratio.is_finite()
@@ -1258,16 +1263,22 @@ impl SignedCandidateSelectorOutputCouplingReportTotals {
             report.samples > 0,
             "candidate selector output coupling report has no samples"
         );
+        assert!(
+            report.active_samples <= report.samples,
+            "candidate selector output coupling report active samples exceed sample count"
+        );
 
         let samples = report.samples as f32;
         self.loss += report.loss * samples;
         self.selector_max_probability += report.selector_max_probability * samples;
+        self.active_rate += report.active_rate * samples;
         self.base_prediction_top1 += report.base_prediction_top1 * samples;
         self.base_prediction_margin += report.base_prediction_margin * samples;
         self.base_prediction_norm_ratio += report.base_prediction_norm_ratio * samples;
         self.selector_hard_full_top1 += report.selector_hard_full_top1 * samples;
         self.selector_hard_full_margin += report.selector_hard_full_margin * samples;
         self.selector_hard_full_norm_ratio += report.selector_hard_full_norm_ratio * samples;
+        self.active_samples += report.active_samples;
         self.samples += report.samples;
     }
 
@@ -1284,12 +1295,14 @@ impl SignedCandidateSelectorOutputCouplingReportTotals {
         ProjectedSignedCandidateSelectorOutputCouplingReport {
             loss: self.loss / samples,
             selector_max_probability: self.selector_max_probability / samples,
+            active_rate: self.active_rate / samples,
             base_prediction_top1: self.base_prediction_top1 / samples,
             base_prediction_margin: self.base_prediction_margin / samples,
             base_prediction_norm_ratio: self.base_prediction_norm_ratio / samples,
             selector_hard_full_top1: self.selector_hard_full_top1 / samples,
             selector_hard_full_margin: self.selector_hard_full_margin / samples,
             selector_hard_full_norm_ratio: self.selector_hard_full_norm_ratio / samples,
+            active_samples: self.active_samples,
             samples: self.samples,
             candidates,
         }
@@ -2335,6 +2348,7 @@ pub fn projected_signed_candidate_selector_hard_full_output_coupling_loss_and_gr
     x_t: &Tensor,
     x_t1: &Tensor,
     selector_logits: &Tensor,
+    min_confidence: f32,
 ) -> (ProjectedSignedCandidateSelectorOutputCouplingReport, Tensor)
 where
     P: PredictorModule,
@@ -2348,9 +2362,21 @@ where
         "candidate selector output coupling expects rank-4 temporal batches, got {:?}",
         x_t.shape
     );
+    assert!(
+        min_confidence.is_finite() && (0.0..=1.0).contains(&min_confidence),
+        "candidate selector output coupling min confidence must be in [0, 1]"
+    );
 
     let prediction = model.predict_next_projection(x_t);
-    let hard_full_target = signed_candidate_selector_hard_full_targets(model, x_t, selector_logits);
+    let (hard_full_target, active_samples) = signed_candidate_selector_gated_hard_full_targets(
+        model,
+        x_t,
+        selector_logits,
+        &prediction,
+        None,
+        false,
+        min_confidence,
+    );
     let loss = mse_loss(&prediction, &hard_full_target);
     let grad = mse_loss_grad(&prediction, &hard_full_target);
     let report = projected_signed_candidate_selector_hard_full_output_coupling_report_from_logits(
@@ -2359,6 +2385,50 @@ where
         x_t1,
         selector_logits,
         loss,
+        active_samples,
+    );
+
+    (report, grad)
+}
+
+pub fn projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    selector_logits: &Tensor,
+    min_confidence: f32,
+) -> (ProjectedSignedCandidateSelectorOutputCouplingReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "stable candidate selector output coupling expects matching pair shapes"
+    );
+    assert!(
+        min_confidence.is_finite() && (0.0..=1.0).contains(&min_confidence),
+        "stable candidate selector output coupling min confidence must be in [0, 1]"
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let (hard_full_target, active_samples) = signed_candidate_selector_gated_hard_full_targets(
+        model,
+        x_t,
+        selector_logits,
+        &prediction,
+        Some(x_t1),
+        true,
+        min_confidence,
+    );
+    let loss = mse_loss(&prediction, &hard_full_target);
+    let grad = mse_loss_grad(&prediction, &hard_full_target);
+    let report = projected_signed_candidate_selector_hard_full_output_coupling_report_from_logits(
+        model,
+        x_t,
+        x_t1,
+        selector_logits,
+        loss,
+        active_samples,
     );
 
     (report, grad)
@@ -2370,6 +2440,8 @@ pub fn projected_signed_candidate_selector_hard_full_output_coupling_report_from
     validation_base_seed: u64,
     validation_batches: usize,
     softmax_temperature: f32,
+    min_confidence: f32,
+    require_correct_selector: bool,
 ) -> ProjectedSignedCandidateSelectorOutputCouplingReport
 where
     P: PredictorModule,
@@ -2381,6 +2453,10 @@ where
     assert!(
         softmax_temperature.is_finite() && softmax_temperature > 0.0,
         "candidate selector output coupling temperature must be finite and positive"
+    );
+    assert!(
+        min_confidence.is_finite() && (0.0..=1.0).contains(&min_confidence),
+        "candidate selector output coupling min confidence must be in [0, 1]"
     );
 
     let candidates = SIGNED_VELOCITY_BANK_CANDIDATE_DX.len();
@@ -2418,13 +2494,23 @@ where
         let features =
             projected_signed_candidate_selector_head_features(model, &x_t, softmax_temperature);
         let selector_logits = selector_head.forward(&features);
-        let (report, _) =
+        let (report, _) = if require_correct_selector {
+            projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad(
+                model,
+                &x_t,
+                &x_t1,
+                &selector_logits,
+                min_confidence,
+            )
+        } else {
             projected_signed_candidate_selector_hard_full_output_coupling_loss_and_grad(
                 model,
                 &x_t,
                 &x_t1,
                 &selector_logits,
-            );
+                min_confidence,
+            )
+        };
 
         totals.observe(report);
     }
@@ -4422,6 +4508,7 @@ fn projected_signed_candidate_selector_hard_full_output_coupling_report_from_log
     x_t1: &Tensor,
     selector_logits: &Tensor,
     loss: f32,
+    active_samples: usize,
 ) -> ProjectedSignedCandidateSelectorOutputCouplingReport
 where
     P: PredictorModule,
@@ -4441,6 +4528,10 @@ where
     assert!(
         batch_size > 0,
         "candidate selector output coupling has no samples"
+    );
+    assert!(
+        active_samples <= batch_size,
+        "candidate selector output coupling active sample count exceeds batch size"
     );
     assert_eq!(
         candidates,
@@ -4504,22 +4595,28 @@ where
     ProjectedSignedCandidateSelectorOutputCouplingReport {
         loss,
         selector_max_probability: selector_max_probability_sum / samples,
+        active_rate: active_samples as f32 / samples,
         base_prediction_top1: base_prediction_top1 as f32 / samples,
         base_prediction_margin: base_prediction_margin_sum / samples,
         base_prediction_norm_ratio: base_prediction_norm_ratio_sum / samples,
         selector_hard_full_top1: selector_hard_full_top1 as f32 / samples,
         selector_hard_full_margin: selector_hard_full_margin_sum / samples,
         selector_hard_full_norm_ratio: selector_hard_full_norm_ratio_sum / samples,
+        active_samples,
         samples: batch_size,
         candidates,
     }
 }
 
-fn signed_candidate_selector_hard_full_targets<P>(
+fn signed_candidate_selector_gated_hard_full_targets<P>(
     model: &ProjectedVisionJepa<P>,
     x_t: &Tensor,
     selector_logits: &Tensor,
-) -> Tensor
+    prediction: &Tensor,
+    x_t1: Option<&Tensor>,
+    require_correct_selector: bool,
+    min_confidence: f32,
+) -> (Tensor, usize)
 where
     P: PredictorModule,
 {
@@ -4532,6 +4629,10 @@ where
         x_t.shape.len() == 4,
         "candidate selector hard-full targets expect rank-4 temporal batches, got {:?}",
         x_t.shape
+    );
+    assert!(
+        min_confidence.is_finite() && (0.0..=1.0).contains(&min_confidence),
+        "candidate selector hard-full target min confidence must be in [0, 1]"
     );
 
     let batch_size = x_t.shape[0];
@@ -4564,20 +4665,43 @@ where
             "candidate selector hard-full target shape mismatch"
         );
     }
+    assert_eq!(
+        prediction.shape, target_shape,
+        "candidate selector hard-full target prediction shape mismatch"
+    );
+    let true_candidate_indices = if require_correct_selector {
+        let x_t1 =
+            x_t1.expect("correct-gated selector hard-full targets require the true future batch");
+        Some(signed_velocity_true_candidate_indices(x_t, x_t1))
+    } else {
+        None
+    };
 
     let projection_dim = target_shape[1];
     let mut data = Vec::with_capacity(batch_size * projection_dim);
+    let mut active_samples = 0usize;
     for sample in 0..batch_size {
         let sample_logits = (0..candidates)
             .map(|candidate_idx| selector_logits.get(&[sample, candidate_idx]))
             .collect::<Vec<_>>();
+        let probabilities = stable_softmax(&sample_logits, "candidate selector hard-full targets");
         let hard_index = max_logit_index(&sample_logits);
+        let max_probability = probabilities[hard_index];
+        let selector_is_correct = true_candidate_indices
+            .as_ref()
+            .map_or(true, |indices| hard_index == indices[sample]);
+        let sample_active = max_probability >= min_confidence && selector_is_correct;
+        active_samples += usize::from(sample_active);
         for feature_idx in 0..projection_dim {
-            data.push(candidate_targets[hard_index].get(&[sample, feature_idx]));
+            if sample_active {
+                data.push(candidate_targets[hard_index].get(&[sample, feature_idx]));
+            } else {
+                data.push(prediction.get(&[sample, feature_idx]));
+            }
         }
     }
 
-    Tensor::new(data, target_shape)
+    (Tensor::new(data, target_shape), active_samples)
 }
 
 fn signed_candidate_radius_head_features_from_prediction(

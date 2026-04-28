@@ -23,7 +23,7 @@ JEPA stands for Joint Embedding Predictive Architecture. Instead of reconstructi
 
 - Run the core Rust tests to verify tensor, predictor, temporal, and projected-path behavior.
 - Run a synthetic temporal prediction example and inspect representation-health metrics.
-- Use the signed temporal example to reproduce the current bottleneck: the hard/full selector signal exists, but naive selector-to-output coupling does not yet improve raw prediction geometry.
+- Use the signed temporal example to reproduce the current bottleneck: hard/full selector readout is useful, but direct selector-to-output coupling still does not move raw prediction geometry.
 
 ```bash
 cargo test --manifest-path crates/jepra-core/Cargo.toml --all-targets
@@ -45,15 +45,15 @@ Expected signal: the examples print training/validation loss plus representation
 | Core Rust JEPA primitives | Active | Tensor ops, linear layers, predictors, encoders, JEPA wrappers, losses, and telemetry live in `crates/jepra-core`. |
 | Temporal proof tasks | Active | `random-speed`, `velocity-trail`, and `signed-velocity-trail` examples provide deterministic training/validation loops. |
 | Compact model research | Active | Conservative defaults stay baseline; bottleneck, residual, state-radius, and signed candidate heads are opt-in probes. |
-| Current bottleneck | In progress | Stabilize selector-to-output coupling after naive hard/full coupling kept health intact but failed the raw PPR gate. |
+| Current bottleneck | In progress | Selector-stable coupling preserves health and selector signal, but raw base prediction PPR remains pinned; next work is stronger active-normalized coupling. |
 | Public API/product polish | Early | The framework is not yet a stable end-user training SDK. Current work is still proof-path hardening. |
 
 ## Current Research State
 
 - Synthetic temporal prediction is the active proof path because it is deterministic, cheap, and exposes representation-health failures quickly.
 - Signed direction/magnitude cues are measurable, but the base predictor still often lands closer to wrong signed candidates than the true target.
-- Selector-head metrics and hard/full report-only readout clear narrow geometry gates, but first direct hard/full output coupling is rejected: raw PPR stays pinned and selector top1 drops.
-- The next proof step is a selector-stable output path, likely warm-started, confidence-gated, or otherwise protected from noisy hard target reinforcement.
+- Selector-head metrics and hard/full report-only readout clear narrow geometry gates, but direct hard/full output coupling is rejected: raw PPR stays pinned and selector top1 drops.
+- Selector-stable hard/full coupling is implemented as a default-off diagnostic. It protects selector health and raises active readout quality, but base raw PPR remains pinned, so the next proof step is active-normalized or otherwise stronger gated coupling rather than broader architecture work.
 
 ## Algorithm Path
 
@@ -190,8 +190,11 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--signed-candidate-selector-probe-temperature`, `--signed-candidate-selector-probe-steps`, and `--signed-candidate-selector-probe-lr` configure that report-only probe.
 - `--signed-candidate-selector-head` enables the direct trainable candidate selector head for the signed task; it trains a side head over normalized candidate features and does not change the base predictor.
 - `--signed-candidate-selector-head-temperature`, `--signed-candidate-selector-head-lr`, `--signed-candidate-selector-head-weight`, `--signed-candidate-selector-head-entropy-floor`, `--signed-candidate-selector-head-entropy-weight`, and `--signed-candidate-selector-head-kl-weight` configure that selector head.
-- `--signed-candidate-selector-output <off|hard-full>` enables the default-off detached hard/full selector-to-output coupling path for projected `signed-velocity-trail` runs with the selector head enabled. Current evidence rejects it as a promotion candidate.
+- `--signed-candidate-selector-output <off|hard-full|stable-hard-full>` enables default-off detached selector-to-output coupling paths for projected `signed-velocity-trail` runs with the selector head enabled. `hard-full` is the naive live hard selector path; `stable-hard-full` only couples samples whose hard selector matches the signed candidate target and can be warm-started/frozen.
 - `--signed-candidate-selector-output-coupling-weight <float>` configures that output-coupling loss weight (`1.0` default).
+- `--signed-candidate-selector-output-warmup-steps <int>` delays selector-output coupling until after the warmup step count (`0` default).
+- `--signed-candidate-selector-output-freeze-selector-after-warmup` stops selector-head updates after warmup while keeping output coupling active.
+- `--signed-candidate-selector-output-min-confidence <float>` gates selector-output coupling by selector max probability (`0.0` default; must be in `[0, 1]`).
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -208,7 +211,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_HEAD`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_LR`, and `JEPRA_SIGNED_CANDIDATE_UNIT_MIX_WEIGHT` are environment fallbacks for the candidate unit-mix diagnostic head
 - `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_PROBE_LR` are environment fallbacks for the report-only selector probe
 - `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_WEIGHT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT` are environment fallbacks for the direct selector head
-- `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT` are environment fallbacks for default-off selector-to-output coupling
+- `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_WARMUP_STEPS`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_FREEZE_SELECTOR_AFTER_WARMUP`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_MIN_CONFIDENCE` are environment fallbacks for default-off selector-to-output coupling
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot
@@ -225,7 +228,7 @@ JEPRA_PREDICTOR_COMPARISON_REPORT=/tmp/jepra-predictor-compare.csv ./run-predict
 The script prints a compact structured row per path/seed/predictor. When `JEPRA_PREDICTOR_COMPARISON_REPORT` is set, the CSV schema includes the wider evidence fields:
 
 ```text
-schema=jepra_predictor_compare_v19 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck|state-radius> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> selector_head_top1_end=<n|na> selector_head_entropy_end=<n|na> selector_readout_hard_full_top1_end=<n|na> selector_readout_hard_full_norm_ratio_end=<n|na> selector_output_mode=<off|hard-full> selector_output_coupling_loss_end=<n|na> selector_output_coupling_base_prediction_top1_end=<n|na> selector_output_coupling_hard_full_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
+schema=jepra_predictor_compare_v20 temporal_task=<random-speed|velocity-trail|signed-velocity-trail> path=<unprojected|projected> predictor=<baseline|bottleneck|residual-bottleneck|state-radius> residual_delta_scale=<n> projector_drift_weight=<n> signed_margin_weight=<n> signed_bank_softmax_weight=<n> signed_radial_weight=<n> signed_angular_radial_weight=<n> seed=<seed> steps=<steps> ... pred_min_std_final=<n> target_min_std_final=<n> velocity_bank_mrr_end=<n|na> signed_bank_sign_top1_end=<n|na> prediction_bank_margin_end=<n|na> prediction_bank_positive_margin_rate_end=<n|na> prediction_unit_mrr_end=<n|na> prediction_unit_top1_end=<n|na> prediction_counterfactual_oracle_radius_positive_margin_rate_end=<n|na> prediction_counterfactual_oracle_angle_positive_margin_rate_end=<n|na> prediction_counterfactual_support_global_rescale_positive_margin_rate_end=<n|na> signed_objective_all_loss_end=<n|na> signed_margin_weighted_loss_end=<n|na> signed_bank_softmax_loss_end=<n|na> signed_radial_loss_end=<n|na> signed_angular_radial_loss_end=<n|na> state_projection_mrr_end=<n|na> selector_head_top1_end=<n|na> selector_head_entropy_end=<n|na> selector_readout_hard_full_top1_end=<n|na> selector_readout_hard_full_norm_ratio_end=<n|na> selector_output_mode=<off|hard-full|stable-hard-full> selector_output_coupling_warmup_steps=<n> selector_output_coupling_active_rate_end=<n|na> selector_output_coupling_base_prediction_top1_end=<n|na> selector_output_coupling_hard_full_top1_end=<n|na> status=<ok|accept_failed|run_failed|parse_failed>
 ```
 
 Latest predictor comparison evidence (`2026-04-24`, `random-speed` task, 300 steps, frozen-base encoder, projected target momentum `1.0`, residual delta scale `1.0`, projector drift weight `0.0`):
@@ -343,11 +346,12 @@ Signed-direction magnitude, unit-geometry, and counterfactual probes (`jepra_pre
 - `--signed-candidate-selector-head` adds a direct zero-initialized trainable selector over normalized candidate features with supervised CE, an entropy-floor hinge, and KL-to-prior defaulted off. Fixed three-seed evidence (`11000..11002`, `300` steps, temperature `0.05`, entropy floor `1.0`, weight `0.1`) keeps validation/drift and unit geometry healthy (`mean val=0.387471`, `mean drift=0.009131`, `unit_ppr=0.453125`) and clears the proof gate (`mean learned_selector_top1=0.390625`, entropy `1.233952`, true probability `0.333734`).
 - `run-predictor-mode-comparison.sh` schema `jepra_predictor_compare_v18` preserves selector-head metrics and adds explicit selector readout decomposition fields. Fixed replay of seeds `11000..11002` reproduces the selector head (`selector_head_top1_end=0.390625`, entropy `1.233952`) and shows hard/full readout crosses the geometry gate (`selector_readout_hard_full_top1_end=0.437500`, norm ratio `1.011065`) while soft/full averaging fails (`0.281250`) and radius-only variants are weaker.
 - `jepra_predictor_compare_v19` adds default-off selector-to-output coupling diagnostics. Fixed hard/full coupling evidence (`2026-04-28`, same seeds/config) keeps rows health-ok and target drift controlled, but fails promotion: raw PPR only reaches `0.286458` versus the `~0.364583` gate, selector top1 drops to `0.328125`, and centered norm ratio is still below gate.
-- Decision: scalar/logit radius heads, candidate unit-mix, soft/full averaging, radius-only selector readouts, and naive hard/full selector-to-output coupling remain diagnostic hooks. The next selector-output step should stabilize the selector before coupling, not tune the current hard/full loss blindly.
+- `jepra_predictor_compare_v20` adds `stable-hard-full` plus warmup, selector freeze, min-confidence, and active-rate diagnostics. Fixed stable evidence (`2026-04-28`, warmup `200`, freeze enabled, min confidence `0.25`) keeps rows health-ok and improves selector/readout (`selector_top1=0.416667`, active/readout top1 `0.447917`), but raw PPR remains `0.281250`.
+- Decision: scalar/logit radius heads, candidate unit-mix, soft/full averaging, radius-only selector readouts, naive hard/full output coupling, and selector-stable hard/full output coupling remain diagnostic hooks. The next selector-output step should strengthen the active coupling gradient, likely by active-normalizing gated samples, not by broad loss tuning or architecture expansion.
 
 Candidate-centroid-aware geometry acceptance gate:
 
-- Use the existing `jepra_predictor_compare_v19` fields for current selector/readout/coupling evidence. Only bump the schema again if a future patch emits new selector-to-output coupling diagnostics that cannot be derived from current prediction-bank/unit/counterfactual/selector/readout/coupling fields.
+- Use the existing `jepra_predictor_compare_v20` fields for current selector/readout/coupling evidence. Only bump the schema again if a future patch emits new selector-to-output coupling diagnostics that cannot be derived from current prediction-bank/unit/counterfactual/selector/readout/coupling fields.
 - Run fixed comparison against same-run baseline: `JEPRA_TEMPORAL_TASK=signed-velocity-trail`, `JEPRA_COMPACT_ENCODER_MODE=signed-direction-magnitude`, `JEPRA_PREDICTOR_MODES='baseline <candidate-mode>'`, seeds `11000 11001 11002`, `JEPRA_TRAIN_STEPS=300`, report CSV enabled.
 - Hard health gate: every candidate row has `status=ok`; mean `val_pred_end <= 1.05 * baseline_val_pred_end`; mean `target_drift_end <= max(0.02, 2.5 * baseline_target_drift_end)`.
 - Hard raw-ranking gate: mean `prediction_bank_positive_margin_rate_end >= baseline_raw_ppr + 0.5 * (baseline_oracle_radius_ppr - baseline_raw_ppr)`; with current evidence this is approximately `>= 0.364583`. This proves at least half of the radius-counterfactual gap is closed.

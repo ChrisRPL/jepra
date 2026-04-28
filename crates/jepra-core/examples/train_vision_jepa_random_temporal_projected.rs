@@ -40,6 +40,7 @@ use projected_temporal::{
     projected_signed_candidate_selector_head_integration_from_base_seed,
     projected_signed_candidate_selector_head_loss_and_grad,
     projected_signed_candidate_selector_probe_from_base_seed,
+    projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad,
     projected_signed_candidate_unit_mix_head_features,
     projected_signed_candidate_unit_mix_head_integration_from_base_seed,
     projected_signed_candidate_unit_mix_loss_and_grad,
@@ -90,6 +91,8 @@ const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_FLOOR: f32 = 1.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_ENTROPY_WEIGHT: f32 = 0.1;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_HEAD_KL_WEIGHT: f32 = 0.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT: f32 = 1.0;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WARMUP_STEPS: usize = 0;
+const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_MIN_CONFIDENCE: f32 = 0.0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS: usize = 200;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR: f32 = 0.05;
@@ -141,8 +144,48 @@ struct SignedCandidateSelectorHeadRunConfig {
 
 #[derive(Debug, Clone, Copy)]
 struct SignedCandidateSelectorOutputCouplingRunConfig {
-    enabled: bool,
+    mode: SignedCandidateSelectorOutputMode,
     loss_weight: f32,
+    warmup_steps: usize,
+    freeze_selector_after_warmup: bool,
+    min_confidence: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SignedCandidateSelectorOutputMode {
+    Off,
+    HardFull,
+    StableHardFull,
+}
+
+impl SignedCandidateSelectorOutputMode {
+    fn from_str(value: &str) -> Self {
+        match value {
+            "off" => Self::Off,
+            "hard-full" => Self::HardFull,
+            "stable-hard-full" => Self::StableHardFull,
+            raw => panic!(
+                "signed candidate selector output must be off|hard-full|stable-hard-full, got {}",
+                raw
+            ),
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::HardFull => "hard-full",
+            Self::StableHardFull => "stable-hard-full",
+        }
+    }
+
+    fn enabled(self) -> bool {
+        self != Self::Off
+    }
+
+    fn requires_correct_selector(self) -> bool {
+        self == Self::StableHardFull
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -466,32 +509,73 @@ impl SignedCandidateSelectorOutputCouplingRunConfig {
             .or_else(|| std::env::var("JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT").ok())
             .unwrap_or_else(|| "off".to_owned());
         let output_mode = output_mode.trim().to_ascii_lowercase();
-        assert!(
-            matches!(output_mode.as_str(), "off" | "hard-full"),
-            "signed candidate selector output must be off|hard-full, got {}",
-            output_mode
-        );
-        let enabled = args
+        let legacy_enabled = args
             .iter()
             .any(|arg| arg == "--signed-candidate-selector-output-coupling")
-            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING").unwrap_or(false)
-            || output_mode == "hard-full";
+            || parse_bool_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING").unwrap_or(false);
+        let mode = if legacy_enabled && output_mode == "off" {
+            SignedCandidateSelectorOutputMode::HardFull
+        } else {
+            SignedCandidateSelectorOutputMode::from_str(&output_mode)
+        };
         let loss_weight =
             parse_f32_arg(&args, "--signed-candidate-selector-output-coupling-weight")
                 .or_else(|| {
                     parse_positive_f32_env("JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT")
                 })
                 .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT);
+        let warmup_steps =
+            parse_nonnegative_usize_arg(&args, "--signed-candidate-selector-output-warmup-steps")
+                .or_else(|| {
+                    parse_nonnegative_usize_env(
+                        "JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_WARMUP_STEPS",
+                    )
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WARMUP_STEPS);
+        let freeze_selector_after_warmup = args
+            .iter()
+            .any(|arg| arg == "--signed-candidate-selector-output-freeze-selector-after-warmup")
+            || parse_bool_env(
+                "JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_FREEZE_SELECTOR_AFTER_WARMUP",
+            )
+            .unwrap_or(false);
+        let min_confidence =
+            parse_nonnegative_f32_arg(&args, "--signed-candidate-selector-output-min-confidence")
+                .or_else(|| {
+                    parse_nonnegative_f32_env(
+                        "JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_MIN_CONFIDENCE",
+                    )
+                })
+                .unwrap_or(DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_MIN_CONFIDENCE);
 
         assert!(
             loss_weight.is_finite() && loss_weight > 0.0,
             "signed candidate selector output coupling weight must be finite and positive"
         );
+        assert!(
+            min_confidence.is_finite() && (0.0..=1.0).contains(&min_confidence),
+            "signed candidate selector output min confidence must be in [0, 1]"
+        );
+        assert!(
+            !mode.enabled() || !freeze_selector_after_warmup || warmup_steps > 0,
+            "freezing selector after output warmup requires positive warmup steps"
+        );
 
         Self {
-            enabled,
+            mode,
             loss_weight,
+            warmup_steps,
+            freeze_selector_after_warmup,
+            min_confidence,
         }
+    }
+
+    fn coupling_active_at_step(self, step: usize) -> bool {
+        self.mode.enabled() && step > self.warmup_steps
+    }
+
+    fn selector_training_enabled_at_step(self, step: usize) -> bool {
+        !self.mode.enabled() || !self.freeze_selector_after_warmup || step <= self.warmup_steps
     }
 }
 
@@ -587,12 +671,16 @@ fn main() {
         SignedCandidateSelectorProbeRunConfig::from_args_and_env();
 
     assert!(
-        !signed_candidate_selector_output_coupling_config.enabled
+        !signed_candidate_selector_output_coupling_config
+            .mode
+            .enabled()
             || signed_candidate_selector_head_config.enabled,
         "signed candidate selector output coupling requires --signed-candidate-selector-head"
     );
     assert!(
-        !signed_candidate_selector_output_coupling_config.enabled
+        !signed_candidate_selector_output_coupling_config
+            .mode
+            .enabled()
             || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
         "signed candidate selector output coupling is only supported for signed-velocity-trail projected runs"
     );
@@ -682,9 +770,14 @@ fn main() {
         signed_candidate_selector_head_config.kl_weight
     );
     println!(
-        "temporal run config | signed candidate selector output coupling enabled {} | detached_target hard-full | weight {}",
-        signed_candidate_selector_output_coupling_config.enabled,
-        signed_candidate_selector_output_coupling_config.loss_weight
+        "temporal run config | signed candidate selector output mode {} | detached_target hard-full | weight {} | warmup_steps {} | freeze_selector_after_warmup {} | min_confidence {}",
+        signed_candidate_selector_output_coupling_config
+            .mode
+            .as_str(),
+        signed_candidate_selector_output_coupling_config.loss_weight,
+        signed_candidate_selector_output_coupling_config.warmup_steps,
+        signed_candidate_selector_output_coupling_config.freeze_selector_after_warmup,
+        signed_candidate_selector_output_coupling_config.min_confidence
     );
     println!(
         "temporal run config | signed candidate selector probe enabled {} | softmax_temperature {} | steps {} | lr {}",
@@ -1014,14 +1107,20 @@ fn run_with_predictor<P>(
                     &x_t1,
                 );
             let signed_candidate_selector_head_step =
-                maybe_train_projected_signed_candidate_selector_head(
-                    model,
-                    signed_candidate_selector_head.as_mut(),
-                    run_config,
-                    signed_candidate_selector_head_config,
-                    &x_t,
-                    &x_t1,
-                );
+                if signed_candidate_selector_output_coupling_config
+                    .selector_training_enabled_at_step(step)
+                {
+                    maybe_train_projected_signed_candidate_selector_head(
+                        model,
+                        signed_candidate_selector_head.as_mut(),
+                        run_config,
+                        signed_candidate_selector_head_config,
+                        &x_t,
+                        &x_t1,
+                    )
+                } else {
+                    None
+                };
             let signed_candidate_selector_output_coupling_step =
                 maybe_projected_signed_candidate_selector_output_coupling_loss_and_grad(
                     model,
@@ -1029,6 +1128,7 @@ fn run_with_predictor<P>(
                     run_config,
                     signed_candidate_selector_head_config,
                     signed_candidate_selector_output_coupling_config,
+                    step,
                     &x_t,
                     &x_t1,
                 );
@@ -1549,13 +1649,14 @@ fn maybe_projected_signed_candidate_selector_output_coupling_loss_and_grad<P>(
     run_config: temporal_vision::TemporalRunConfig,
     head_config: SignedCandidateSelectorHeadRunConfig,
     coupling_config: SignedCandidateSelectorOutputCouplingRunConfig,
+    step: usize,
     x_t: &Tensor,
     x_t1: &Tensor,
 ) -> Option<(ProjectedSignedCandidateSelectorOutputCouplingReport, Tensor)>
 where
     P: PredictorModule,
 {
-    if !coupling_config.enabled {
+    if !coupling_config.coupling_active_at_step(step) {
         return None;
     }
     assert!(
@@ -1577,14 +1678,23 @@ where
     );
     let selector_logits = selector_head.forward(&features);
 
-    Some(
+    Some(if coupling_config.mode.requires_correct_selector() {
+        projected_signed_candidate_selector_stable_hard_full_output_coupling_loss_and_grad(
+            model,
+            x_t,
+            x_t1,
+            &selector_logits,
+            coupling_config.min_confidence,
+        )
+    } else {
         projected_signed_candidate_selector_hard_full_output_coupling_loss_and_grad(
             model,
             x_t,
             x_t1,
             &selector_logits,
-        ),
-    )
+            coupling_config.min_confidence,
+        )
+    })
 }
 
 fn parse_arg_value<'a>(args: &'a [String], flag: &'a str) -> Option<&'a str> {
@@ -1615,6 +1725,10 @@ fn parse_usize_arg(args: &[String], flag: &str) -> Option<usize> {
         .filter(|value| *value > 0)
 }
 
+fn parse_nonnegative_usize_arg(args: &[String], flag: &str) -> Option<usize> {
+    parse_arg_value(args, flag).and_then(|value| value.parse::<usize>().ok())
+}
+
 fn parse_positive_f32_env(name: &str) -> Option<f32> {
     std::env::var(name)
         .ok()
@@ -1634,6 +1748,12 @@ fn parse_positive_usize_env(name: &str) -> Option<usize> {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
+}
+
+fn parse_nonnegative_usize_env(name: &str) -> Option<usize> {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
 }
 
 fn parse_bool_env(name: &str) -> Option<bool> {
@@ -2110,7 +2230,7 @@ fn maybe_projected_signed_candidate_selector_output_coupling_report<P>(
 where
     P: PredictorModule,
 {
-    if !coupling_config.enabled {
+    if !coupling_config.mode.enabled() {
         return None;
     }
     assert!(
@@ -2132,6 +2252,8 @@ where
             PROJECTED_VALIDATION_BASE_SEED,
             PROJECTED_VALIDATION_BATCHES,
             head_config.softmax_temperature,
+            coupling_config.min_confidence,
+            coupling_config.mode.requires_correct_selector(),
         ),
     )
 }
@@ -2290,16 +2412,18 @@ fn print_signed_candidate_selector_output_coupling_report(
 ) {
     if let Some(report) = report {
         println!(
-            "{} | signed candidate selector output coupling loss {:.6} | detached_target hard-full | selector_max_probability {:.6} | base_prediction_top1 {:.6} | base_prediction_margin {:.6} | base_prediction_norm_ratio {:.6} | selector_hard_full_top1 {:.6} | selector_hard_full_margin {:.6} | selector_hard_full_norm_ratio {:.6} | samples {} | candidates {}",
+            "{} | signed candidate selector output coupling loss {:.6} | detached_target hard-full | selector_max_probability {:.6} | active_rate {:.6} | base_prediction_top1 {:.6} | base_prediction_margin {:.6} | base_prediction_norm_ratio {:.6} | selector_hard_full_top1 {:.6} | selector_hard_full_margin {:.6} | selector_hard_full_norm_ratio {:.6} | active_samples {} | samples {} | candidates {}",
             tag,
             report.loss,
             report.selector_max_probability,
+            report.active_rate,
             report.base_prediction_top1,
             report.base_prediction_margin,
             report.base_prediction_norm_ratio,
             report.selector_hard_full_top1,
             report.selector_hard_full_margin,
             report.selector_hard_full_norm_ratio,
+            report.active_samples,
             report.samples,
             report.candidates,
         );
