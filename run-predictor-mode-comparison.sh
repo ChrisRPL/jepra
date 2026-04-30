@@ -35,6 +35,8 @@ SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT="${JEPRA_SIGNED_ANGULAR_RADIAL_RADIUS_WEIGHT
 SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT="${JEPRA_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT:-0.0}"
 SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT="${JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT:-0.0}"
 SIGNED_DIRECT_CANDIDATE_MARGIN="${JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN:-0.05}"
+SIGNED_RAY_DIRECTION_WEIGHT="${JEPRA_SIGNED_RAY_DIRECTION_WEIGHT:-0.0}"
+SIGNED_RAY_DIRECTION_MARGIN="${JEPRA_SIGNED_RAY_DIRECTION_MARGIN:-0.05}"
 SIGNED_CANDIDATE_SELECTOR_HEAD="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD:-0}"
 SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE:-0.05}"
 SIGNED_CANDIDATE_SELECTOR_HEAD_LR="${JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR:-0.05}"
@@ -94,6 +96,8 @@ Environment:
   JEPRA_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT Extra true-target MSE weight for signed projected runs (default: 0.0)
   JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT   Direct hard-negative candidate-margin objective weight (default: 0.0)
   JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN          Direct hard-negative candidate-margin objective gap (default: 0.05)
+  JEPRA_SIGNED_RAY_DIRECTION_WEIGHT             Ray-direction repair objective weight for signed projected runs (default: 0.0)
+  JEPRA_SIGNED_RAY_DIRECTION_MARGIN             Ray-direction repair near-parallel denominator margin (default: 0.05)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD          Enable signed candidate selector head reporting/training (default: 0)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_TEMPERATURE Signed candidate selector head temperature (default: 0.05)
   JEPRA_SIGNED_CANDIDATE_SELECTOR_HEAD_LR       Signed candidate selector head learning rate (default: 0.05)
@@ -186,6 +190,10 @@ signed_true_target_mse_amplification_enabled() {
 
 signed_direct_candidate_margin_enabled() {
   awk -v value="$SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT" 'BEGIN { if (value + 0 > 0) print "true"; else print "false" }'
+}
+
+signed_ray_direction_enabled() {
+  awk -v value="$SIGNED_RAY_DIRECTION_WEIGHT" 'BEGIN { if (value + 0 > 0) print "true"; else print "false" }'
 }
 
 signed_candidate_selector_head_enabled() {
@@ -1303,6 +1311,10 @@ run_one() {
   if [[ "$(signed_direct_candidate_margin_enabled)" == "true" ]]; then
     extra_args+=(--signed-direct-candidate-margin-weight "$SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT")
     extra_args+=(--signed-direct-candidate-margin "$SIGNED_DIRECT_CANDIDATE_MARGIN")
+  fi
+  if [[ "$(signed_ray_direction_enabled)" == "true" ]]; then
+    extra_args+=(--signed-ray-direction-weight "$SIGNED_RAY_DIRECTION_WEIGHT")
+    extra_args+=(--signed-ray-direction-margin "$SIGNED_RAY_DIRECTION_MARGIN")
   fi
   if [[ "$(signed_candidate_selector_head_enabled)" == "true" ]]; then
     extra_args+=(--signed-candidate-selector-head)

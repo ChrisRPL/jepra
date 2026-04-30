@@ -23,9 +23,9 @@ use projected_temporal::{
     ProjectedSignedObjectiveErrorBreakdown, ProjectedSignedPredictionBankMargin,
     ProjectedSignedPredictionBankUnitGeometry, ProjectedSignedPredictionCounterfactualMetrics,
     ProjectedSignedPredictionGeometryCounterfactual, ProjectedSignedPredictionRayBoundary,
-    ProjectedSignedStateSeparability, ProjectedSignedTargetBankSeparability,
-    ProjectedSignedVelocityBankBreakdown, ProjectedVelocityBankRanking,
-    projected_signed_angular_radial_objective_loss_and_grad,
+    ProjectedSignedRayDirectionRepairReport, ProjectedSignedStateSeparability,
+    ProjectedSignedTargetBankSeparability, ProjectedSignedVelocityBankBreakdown,
+    ProjectedVelocityBankRanking, projected_signed_angular_radial_objective_loss_and_grad,
     projected_signed_angular_radial_objective_report_from_base_seed,
     projected_signed_bank_softmax_objective_loss_and_grad,
     projected_signed_bank_softmax_objective_report_from_base_seed,
@@ -58,6 +58,7 @@ use projected_temporal::{
     projected_signed_prediction_ray_boundary_from_base_seed,
     projected_signed_radial_calibration_loss_and_grad,
     projected_signed_radial_calibration_report_from_base_seed,
+    projected_signed_ray_direction_repair_loss_and_grad,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_true_target_mse_amplification_loss_and_grad,
@@ -102,6 +103,7 @@ const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WARMUP_STEPS: usize = 0;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_MIN_CONFIDENCE: f32 = 0.0;
 const DEFAULT_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT: f32 = 0.0;
 const DEFAULT_SIGNED_DIRECT_CANDIDATE_MARGIN: f32 = 0.05;
+const DEFAULT_SIGNED_RAY_DIRECTION_MARGIN: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_TEMPERATURE: f32 = 0.05;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_STEPS: usize = 200;
 const DEFAULT_SIGNED_CANDIDATE_SELECTOR_PROBE_LR: f32 = 0.05;
@@ -167,6 +169,12 @@ struct SignedTrueTargetMseAmplificationRunConfig {
 
 #[derive(Debug, Clone, Copy)]
 struct SignedDirectCandidateMarginRunConfig {
+    weight: f32,
+    margin: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SignedRayDirectionRepairRunConfig {
     weight: f32,
     margin: f32,
 }
@@ -650,6 +658,24 @@ impl SignedDirectCandidateMarginRunConfig {
     }
 }
 
+impl SignedRayDirectionRepairRunConfig {
+    fn from_args_and_env() -> Self {
+        let args = std::env::args().collect::<Vec<_>>();
+        let weight = parse_nonnegative_f32_arg(&args, "--signed-ray-direction-weight")
+            .or_else(|| parse_nonnegative_f32_env("JEPRA_SIGNED_RAY_DIRECTION_WEIGHT"))
+            .unwrap_or(0.0);
+        let margin = parse_nonnegative_f32_arg(&args, "--signed-ray-direction-margin")
+            .or_else(|| parse_nonnegative_f32_env("JEPRA_SIGNED_RAY_DIRECTION_MARGIN"))
+            .unwrap_or(DEFAULT_SIGNED_RAY_DIRECTION_MARGIN);
+
+        Self { weight, margin }
+    }
+
+    fn enabled(self) -> bool {
+        self.weight > 0.0
+    }
+}
+
 impl SignedCandidateSelectorProbeRunConfig {
     fn from_args_and_env() -> Self {
         let args = std::env::args().collect::<Vec<_>>();
@@ -742,6 +768,7 @@ fn main() {
         SignedTrueTargetMseAmplificationRunConfig::from_args_and_env();
     let signed_direct_candidate_margin_config =
         SignedDirectCandidateMarginRunConfig::from_args_and_env();
+    let signed_ray_direction_repair_config = SignedRayDirectionRepairRunConfig::from_args_and_env();
     let signed_candidate_selector_probe_config =
         SignedCandidateSelectorProbeRunConfig::from_args_and_env();
 
@@ -768,6 +795,11 @@ fn main() {
         !signed_direct_candidate_margin_config.enabled()
             || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
         "signed direct candidate-margin objective is only supported for signed-velocity-trail projected runs"
+    );
+    assert!(
+        !signed_ray_direction_repair_config.enabled()
+            || run_config.temporal_task_mode == TemporalTaskMode::SignedVelocityTrail,
+        "signed ray-direction repair is only supported for signed-velocity-trail projected runs"
     );
 
     println!(
@@ -873,6 +905,10 @@ fn main() {
         signed_direct_candidate_margin_config.weight, signed_direct_candidate_margin_config.margin
     );
     println!(
+        "temporal run config | signed ray-direction repair weight {} | margin {}",
+        signed_ray_direction_repair_config.weight, signed_ray_direction_repair_config.margin
+    );
+    println!(
         "temporal run config | signed candidate selector probe enabled {} | softmax_temperature {} | steps {} | lr {}",
         signed_candidate_selector_probe_config.enabled,
         signed_candidate_selector_probe_config.softmax_temperature,
@@ -890,6 +926,7 @@ fn main() {
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
             signed_direct_candidate_margin_config,
+            signed_ray_direction_repair_config,
             signed_candidate_selector_probe_config,
             make_predictor(),
         ),
@@ -902,6 +939,7 @@ fn main() {
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
             signed_direct_candidate_margin_config,
+            signed_ray_direction_repair_config,
             signed_candidate_selector_probe_config,
             make_bottleneck_predictor(),
         ),
@@ -914,6 +952,7 @@ fn main() {
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
             signed_direct_candidate_margin_config,
+            signed_ray_direction_repair_config,
             signed_candidate_selector_probe_config,
             make_residual_bottleneck_predictor(run_config.residual_delta_scale),
         ),
@@ -926,6 +965,7 @@ fn main() {
             signed_candidate_selector_output_coupling_config,
             signed_true_target_mse_amplification_config,
             signed_direct_candidate_margin_config,
+            signed_ray_direction_repair_config,
             signed_candidate_selector_probe_config,
             make_state_radius_predictor(),
         ),
@@ -941,6 +981,7 @@ fn run_with_predictor<P>(
     signed_candidate_selector_output_coupling_config: SignedCandidateSelectorOutputCouplingRunConfig,
     signed_true_target_mse_amplification_config: SignedTrueTargetMseAmplificationRunConfig,
     signed_direct_candidate_margin_config: SignedDirectCandidateMarginRunConfig,
+    signed_ray_direction_repair_config: SignedRayDirectionRepairRunConfig,
     signed_candidate_selector_probe_config: SignedCandidateSelectorProbeRunConfig,
     predictor: P,
 ) where
@@ -1201,6 +1242,21 @@ fn run_with_predictor<P>(
                     &x_t,
                     &x_t1,
                 );
+            let signed_ray_direction_repair_step = if signed_ray_direction_repair_config.enabled() {
+                assert_eq!(
+                    run_config.temporal_task_mode,
+                    TemporalTaskMode::SignedVelocityTrail,
+                    "signed ray-direction repair is only supported for signed-velocity-trail projected runs"
+                );
+                Some(projected_signed_ray_direction_repair_loss_and_grad(
+                    model,
+                    &x_t,
+                    &x_t1,
+                    signed_ray_direction_repair_config.margin,
+                ))
+            } else {
+                None
+            };
             let signed_bank_softmax_step =
                 maybe_projected_signed_bank_softmax_objective_loss_and_grad(
                     model, run_config, &x_t, &x_t1,
@@ -1279,6 +1335,10 @@ fn run_with_predictor<P>(
                     .as_ref()
                     .map(|(report, _)| signed_direct_candidate_margin_config.weight * report.loss)
                     .unwrap_or(0.0)
+                + signed_ray_direction_repair_step
+                    .as_ref()
+                    .map(|(report, _)| signed_ray_direction_repair_config.weight * report.loss)
+                    .unwrap_or(0.0)
                 + signed_bank_softmax_step
                     .as_ref()
                     .map(|(report, _)| run_config.signed_bank_softmax_weight * report.loss)
@@ -1314,6 +1374,13 @@ fn run_with_predictor<P>(
                     &mut extra_prediction_grad,
                     grad,
                     signed_direct_candidate_margin_config.weight,
+                );
+            }
+            if let Some((_, grad)) = signed_ray_direction_repair_step.as_ref() {
+                add_scaled_extra_prediction_grad(
+                    &mut extra_prediction_grad,
+                    grad,
+                    signed_ray_direction_repair_config.weight,
                 );
             }
             if let Some((_, grad)) = signed_bank_softmax_step.as_ref() {
@@ -1414,6 +1481,12 @@ fn run_with_predictor<P>(
                 }
                 if let Some((report, _)) = signed_direct_candidate_margin_step {
                     print_signed_direct_candidate_margin_objective_report(
+                        &format!("step {:03} train", step),
+                        Some(report),
+                    );
+                }
+                if let Some((report, _)) = signed_ray_direction_repair_step {
+                    print_signed_ray_direction_repair_report(
                         &format!("step {:03} train", step),
                         Some(report),
                     );
@@ -2688,6 +2761,30 @@ fn print_signed_true_target_mse_amplification_loss(tag: &str, loss: Option<f32>)
         println!(
             "{} | signed true-target MSE amplification loss {:.6}",
             tag, loss
+        );
+    }
+}
+
+fn print_signed_ray_direction_repair_report(
+    tag: &str,
+    report: Option<ProjectedSignedRayDirectionRepairReport>,
+) {
+    if let Some(report) = report {
+        println!(
+            "{} | signed ray-direction repair loss {:.6} | gap_loss {:.6} | parallel_loss {:.6} | active_rate {:.6} | cosine {:.6} | current_radius {:.6} | target_radius {:.6} | active_count {} | gap_active_count {} | parallel_active_count {} | zero_direction_skipped {} | samples {}",
+            tag,
+            report.loss,
+            report.gap_loss,
+            report.parallel_loss,
+            report.active_rate,
+            report.cosine,
+            report.current_radius,
+            report.target_radius,
+            report.active_count,
+            report.gap_active_count,
+            report.parallel_active_count,
+            report.zero_direction_skipped,
+            report.samples,
         );
     }
 }

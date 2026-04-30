@@ -25,6 +25,7 @@ pub const PROJECTED_TRAIN_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 pub const PROJECTED_VALIDATION_LOSS_MAX_REDUCTION_RATIO: f32 = 0.2;
 const VELOCITY_BANK_TIE_EPSILON: f32 = 1e-7;
 const CANDIDATE_RADIUS_DELTA_CLAMP: f32 = 2.0;
+const RAY_DIRECTION_REPAIR_GRAD_CLIP: f32 = 10.0;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ProjectedVelocityBankRanking {
@@ -146,6 +147,22 @@ pub struct ProjectedSignedPredictionRayBoundary {
     pub infeasible_by_dx: [usize; 4],
     pub below_lower_by_dx: [usize; 4],
     pub upper_overshoot_by_dx: [usize; 4],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ProjectedSignedRayDirectionRepairReport {
+    pub loss: f32,
+    pub gap_loss: f32,
+    pub parallel_loss: f32,
+    pub active_rate: f32,
+    pub cosine: f32,
+    pub current_radius: f32,
+    pub target_radius: f32,
+    pub samples: usize,
+    pub active_count: usize,
+    pub gap_active_count: usize,
+    pub parallel_active_count: usize,
+    pub zero_direction_skipped: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -2606,6 +2623,192 @@ where
     (
         mse_loss(&prediction, &target),
         mse_loss_grad(&prediction, &target),
+    )
+}
+
+pub fn projected_signed_ray_direction_repair_loss_and_grad<P>(
+    model: &ProjectedVisionJepa<P>,
+    x_t: &Tensor,
+    x_t1: &Tensor,
+    denominator_margin: f32,
+) -> (ProjectedSignedRayDirectionRepairReport, Tensor)
+where
+    P: PredictorModule,
+{
+    assert_eq!(
+        x_t.shape, x_t1.shape,
+        "signed ray-direction repair expects matching pair shapes"
+    );
+    assert!(
+        x_t.shape.len() == 4,
+        "signed ray-direction repair expects rank-4 temporal batches, got {:?}",
+        x_t.shape
+    );
+    assert!(
+        denominator_margin.is_finite() && denominator_margin >= 0.0,
+        "signed ray-direction repair margin must be finite and non-negative"
+    );
+
+    let prediction = model.predict_next_projection(x_t);
+    let candidate_targets = signed_velocity_candidate_target_projections(model, x_t);
+    let batch_size = prediction.shape[0];
+    let projection_dim = prediction.shape[1];
+    let mut grad = Tensor::zeros(prediction.shape.clone());
+    let mut gap_loss_sum = 0.0f32;
+    let mut parallel_loss_sum = 0.0f32;
+    let mut cosine_sum = 0.0f32;
+    let mut current_radius_sum = 0.0f32;
+    let mut target_radius_sum = 0.0f32;
+    let mut active_count = 0usize;
+    let mut gap_active_count = 0usize;
+    let mut parallel_active_count = 0usize;
+    let mut zero_direction_skipped = 0usize;
+
+    for sample in 0..batch_size {
+        let true_dx = signed_motion_dx_for_sample(x_t, x_t1, sample);
+        let true_index = signed_velocity_candidate_index(true_dx);
+        let centroid = signed_candidate_centroid(&candidate_targets, sample, projection_dim);
+        let prediction_centered = centered_sample_vector(&prediction, sample, &centroid);
+        let prediction_unit = unit_vector(&prediction_centered);
+        let current_radius = vector_l2_norm(&prediction_centered);
+        let true_centered =
+            centered_sample_vector(&candidate_targets[true_index], sample, &centroid);
+        let true_radius = vector_l2_norm(&true_centered);
+        let true_unit = unit_vector(&true_centered);
+
+        assert!(
+            current_radius.is_finite()
+                && true_radius.is_finite()
+                && vector_squared_norm(&true_centered).is_finite(),
+            "signed ray-direction repair produced non-finite geometry"
+        );
+
+        cosine_sum += vector_dot(&prediction_unit, &true_unit).clamp(-1.0, 1.0);
+        current_radius_sum += current_radius;
+        target_radius_sum += true_radius;
+
+        if current_radius <= VELOCITY_BANK_TIE_EPSILON {
+            zero_direction_skipped += 1;
+            continue;
+        }
+
+        let true_norm_sq = vector_squared_norm(&true_centered);
+        let denominator_threshold = denominator_margin.max(VELOCITY_BANK_TIE_EPSILON);
+        let mut lower_radius = 0.0f32;
+        let mut upper_radius = f32::INFINITY;
+        let mut lower_grad = vec![0.0f32; projection_dim];
+        let mut upper_grad = vec![0.0f32; projection_dim];
+        let mut parallel_grad = vec![0.0f32; projection_dim];
+        let mut sample_parallel_loss = 0.0f32;
+        let mut sample_parallel_active_count = 0usize;
+        let wrong_count = (candidate_targets.len() - 1) as f32;
+
+        for (candidate_index, candidate_target) in candidate_targets.iter().enumerate() {
+            if candidate_index == true_index {
+                continue;
+            }
+
+            let wrong_centered = centered_sample_vector(candidate_target, sample, &centroid);
+            let wrong_norm_sq = vector_squared_norm(&wrong_centered);
+            let true_minus_wrong = true_centered
+                .iter()
+                .zip(&wrong_centered)
+                .map(|(true_value, wrong_value)| true_value - wrong_value)
+                .collect::<Vec<_>>();
+            let denominator = 2.0 * vector_dot(&prediction_unit, &true_minus_wrong);
+            let numerator = true_norm_sq - wrong_norm_sq;
+
+            if denominator > denominator_threshold {
+                let candidate_lower = numerator / denominator;
+                if candidate_lower > lower_radius {
+                    lower_radius = candidate_lower;
+                    for (feature_idx, direction_delta) in true_minus_wrong.iter().enumerate() {
+                        lower_grad[feature_idx] =
+                            -2.0 * numerator * direction_delta / (denominator * denominator);
+                    }
+                }
+            } else if denominator < -denominator_threshold {
+                let candidate_upper = numerator / denominator;
+                if candidate_upper < upper_radius {
+                    upper_radius = candidate_upper;
+                    for (feature_idx, direction_delta) in true_minus_wrong.iter().enumerate() {
+                        upper_grad[feature_idx] =
+                            -2.0 * numerator * direction_delta / (denominator * denominator);
+                    }
+                }
+            } else if numerator >= -VELOCITY_BANK_TIE_EPSILON {
+                let hinge = denominator_margin - denominator;
+                if hinge > 0.0 {
+                    sample_parallel_active_count += 1;
+                    sample_parallel_loss += hinge * hinge / wrong_count;
+                    for (feature_idx, direction_delta) in true_minus_wrong.iter().enumerate() {
+                        parallel_grad[feature_idx] += -4.0 * hinge * direction_delta / wrong_count;
+                    }
+                }
+            }
+        }
+
+        let mut sample_grad_u = parallel_grad;
+        let mut sample_active = sample_parallel_active_count > 0;
+        if sample_parallel_active_count > 0 {
+            parallel_active_count += sample_parallel_active_count;
+            parallel_loss_sum += sample_parallel_loss;
+        }
+
+        if upper_radius.is_finite() && lower_radius + VELOCITY_BANK_TIE_EPSILON >= upper_radius {
+            let interval_gap = lower_radius - upper_radius;
+            let interval_scale = 1.0 + lower_radius.abs() + upper_radius.abs();
+            let hinge = interval_gap / interval_scale;
+            gap_active_count += 1;
+            sample_active = true;
+            gap_loss_sum += hinge * hinge;
+            for feature_idx in 0..projection_dim {
+                sample_grad_u[feature_idx] +=
+                    2.0 * hinge * (lower_grad[feature_idx] - upper_grad[feature_idx])
+                        / interval_scale;
+            }
+        }
+
+        if !sample_active {
+            continue;
+        }
+
+        active_count += 1;
+        let sample_grad_norm = vector_l2_norm(&sample_grad_u);
+        if sample_grad_norm > RAY_DIRECTION_REPAIR_GRAD_CLIP {
+            let clip_scale = RAY_DIRECTION_REPAIR_GRAD_CLIP / sample_grad_norm;
+            for value in &mut sample_grad_u {
+                *value *= clip_scale;
+            }
+        }
+
+        let radial_grad = vector_dot(&sample_grad_u, &prediction_unit);
+        for feature_idx in 0..projection_dim {
+            let tangent_grad = (sample_grad_u[feature_idx]
+                - radial_grad * prediction_unit[feature_idx])
+                / current_radius;
+            let grad_value = grad.get(&[sample, feature_idx]) + tangent_grad / batch_size as f32;
+            grad.set(&[sample, feature_idx], grad_value);
+        }
+    }
+
+    let loss = (gap_loss_sum + parallel_loss_sum) / batch_size as f32;
+    (
+        ProjectedSignedRayDirectionRepairReport {
+            loss,
+            gap_loss: gap_loss_sum / batch_size as f32,
+            parallel_loss: parallel_loss_sum / batch_size as f32,
+            active_rate: active_count as f32 / batch_size as f32,
+            cosine: cosine_sum / batch_size as f32,
+            current_radius: current_radius_sum / batch_size as f32,
+            target_radius: target_radius_sum / batch_size as f32,
+            samples: batch_size,
+            active_count,
+            gap_active_count,
+            parallel_active_count,
+            zero_direction_skipped,
+        },
+        grad,
     )
 }
 

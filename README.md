@@ -204,6 +204,8 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `--signed-true-target-mse-amplification-weight <float>` adds default-off extra true-target MSE loss/grad on projected `signed-velocity-trail` runs. It is a control for MSE underpowering, not a promoted objective.
 - `--signed-direct-candidate-margin-weight <float>` adds default-off direct hard-negative candidate-margin loss/grad on projected `signed-velocity-trail` runs. The first full-projection v23 config is rejected; keep this as a diagnostic/control until a radius-aware variant exists.
 - `--signed-direct-candidate-margin <float>` sets the required true-vs-nearest-wrong candidate gap for direct candidate-margin loss (`0.05` default).
+- `--signed-ray-direction-weight <float>` adds the current default-off ray-direction repair objective for projected `signed-velocity-trail` runs. It optimizes ray-feasibility through the bank-centered unit direction only, so it attacks infeasible candidate rays without one-sided radius inflation.
+- `--signed-ray-direction-margin <float>` sets the near-parallel denominator margin for ray-direction repair (`0.05` default).
 - `--target-momentum` (or `--target-projection-momentum`) sets EMA momentum for the projected path target projector (`1.0` keeps target projector frozen)
 - `--target-momentum-start` sets the starting EMA momentum when warmup is enabled
 - `--target-momentum-end` sets the final EMA momentum target (defaults to `--target-momentum`)
@@ -223,6 +225,7 @@ Temporal examples accept shared args via `TemporalRunConfig`:
 - `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_COUPLING_WEIGHT`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_WARMUP_STEPS`, `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_FREEZE_SELECTOR_AFTER_WARMUP`, and `JEPRA_SIGNED_CANDIDATE_SELECTOR_OUTPUT_MIN_CONFIDENCE` are environment fallbacks for default-off selector-to-output coupling
 - `JEPRA_SIGNED_TRUE_TARGET_MSE_AMPLIFICATION_WEIGHT` is the environment fallback for the true-target MSE amplification control
 - `JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN_WEIGHT` and `JEPRA_SIGNED_DIRECT_CANDIDATE_MARGIN` are environment fallbacks for the direct hard-negative candidate-margin control
+- `JEPRA_SIGNED_RAY_DIRECTION_WEIGHT` and `JEPRA_SIGNED_RAY_DIRECTION_MARGIN` are environment fallbacks for ray-direction repair
 - `JEPRA_TARGET_MOMENTUM` is an environment fallback for projected target-projector momentum
 
 ### Evidence Snapshot

@@ -26,6 +26,7 @@ use projected_temporal::{
     projected_signed_prediction_geometry_counterfactual_from_base_seed,
     projected_signed_prediction_ray_boundary_from_base_seed,
     projected_signed_radial_calibration_report_from_base_seed,
+    projected_signed_ray_direction_repair_loss_and_grad,
     projected_signed_state_separability_from_base_seed,
     projected_signed_target_bank_separability_from_base_seed,
     projected_signed_true_target_mse_amplification_loss_and_grad,
@@ -1079,6 +1080,44 @@ fn projected_signed_prediction_ray_boundary_is_finite_and_bounded() {
     );
     assert_eq!(boundary.samples, BATCH_SIZE * 2);
     assert_eq!(boundary.candidates, 4);
+}
+
+#[test]
+fn projected_signed_ray_direction_repair_is_finite_and_shaped() {
+    let encoder = make_frozen_encoder();
+    let projector = make_projector();
+    let target_projector = projector.clone();
+    let model = ProjectedVisionJepa::new(encoder, projector, target_projector, make_predictor());
+    let (x_t, x_t1) = temporal_vision::make_temporal_batch_for_task(
+        BATCH_SIZE,
+        TRAIN_BASE_SEED,
+        TemporalTaskMode::SignedVelocityTrail,
+    );
+
+    let (report, grad) =
+        projected_signed_ray_direction_repair_loss_and_grad(&model, &x_t, &x_t1, 0.05);
+
+    for value in [
+        report.loss,
+        report.gap_loss,
+        report.parallel_loss,
+        report.active_rate,
+        report.cosine,
+        report.current_radius,
+        report.target_radius,
+    ] {
+        assert!(value.is_finite());
+    }
+    assert!(report.loss >= 0.0);
+    assert!((0.0..=1.0).contains(&report.active_rate));
+    assert!((-1.0..=1.0).contains(&report.cosine));
+    assert_eq!(report.samples, BATCH_SIZE);
+    assert!(report.active_count <= report.samples);
+    assert!(report.gap_active_count <= report.samples);
+    assert!(report.parallel_active_count <= report.samples * 3);
+    assert!(report.zero_direction_skipped <= report.samples);
+    assert_eq!(grad.shape, vec![BATCH_SIZE, PROJECTION_DIM]);
+    assert!(grad.data.iter().all(|value| value.is_finite()));
 }
 
 #[test]
